@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Huddle</title>
+  <meta name="description" content="Huddle - team chat with channels, threads, reactions and calls.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <div class="app" id="app">
+    <nav class="rail" aria-label="Sections">
+      <a class="mark" href="../" title="Back to all projects">H</a>
+      <button class="rail-btn" data-section="activity" title="Activity"><i data-lucide="bell"></i><span>Activity</span><b class="badge" id="badgeActivity"></b></button>
+      <button class="rail-btn" data-section="chat" title="Chat"><i data-lucide="message-square"></i><span>Chat</span><b class="badge" id="badgeChat"></b></button>
+      <button class="rail-btn" data-section="teams" title="Teams"><i data-lucide="users"></i><span>Teams</span><b class="badge" id="badgeTeams"></b></button>
+      <button class="rail-btn" data-section="calls" title="Calls"><i data-lucide="phone"></i><span>Calls</span></button>
+      <div class="rail-fill"></div>
+      <button class="rail-btn me" id="meBtn" title="Your status"></button>
+    </nav>
+
+    <aside class="side" id="side"></aside>
+
+    <main class="main" id="main"></main>
+
+    <aside class="thread" id="thread" hidden></aside>
+  </div>
+
+  <div class="call" id="call" hidden></div>
+
+  <div class="palette" id="palette" hidden>
+    <div class="palette-box">
+      <div class="palette-input"><i data-lucide="search"></i><input id="paletteInput" placeholder="Search messages, channels and people" autocomplete="off"><kbd>ESC</kbd></div>
+      <div class="palette-results" id="paletteResults"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal" hidden></div>
+  <div class="toasts" id="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
