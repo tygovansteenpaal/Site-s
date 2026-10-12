@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blokbrawl</title>
+  <meta name="description" content="Cartoon 1v1 build-and-shoot game in the browser.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" hidden>
+    <div class="score">
+      <span class="score-you" id="scoreYou">0</span>
+      <span class="score-mid">FIRST TO <b id="scoreGoal">5</b></span>
+      <span class="score-bot" id="scoreBot">0</span>
+    </div>
+    <div class="feed" id="feed"></div>
+    <div class="crosshair" id="crosshair"><i></i><i></i><i></i><i></i></div>
+    <div class="hitmarker" id="hitmarker"></div>
+    <div class="dmg-layer" id="dmgLayer"></div>
+
+    <div class="vitals">
+      <div class="bar shield"><span id="shieldFill"></span><em id="shieldNum">50</em></div>
+      <div class="bar health"><span id="healthFill"></span><em id="healthNum">100</em></div>
+    </div>
+
+    <div class="loadout">
+      <div class="mats"><span>WOOD</span><b id="mats">500</b></div>
+      <div class="ammo" id="ammo"><b id="ammoMag">30</b><span id="ammoName">AR</span></div>
+      <div class="slots" id="slots">
+        <div class="slot" data-slot="ar"><kbd>1</kbd>AR</div>
+        <div class="slot" data-slot="sg"><kbd>2</kbd>SHOTGUN</div>
+        <div class="slot" data-slot="wall"><kbd>Q</kbd>WALL</div>
+        <div class="slot" data-slot="ramp"><kbd>E</kbd>RAMP</div>
+        <div class="slot" data-slot="floor"><kbd>C</kbd>FLOOR</div>
+      </div>
+    </div>
+    <div class="banner" id="banner"></div>
+    <div class="vignette" id="vignette"></div>
+  </div>
+
+  <div id="menu" class="screen">
+    <div class="menu-inner">
+      <header class="menu-top">
+        <span>BLOKBRAWL / 1V1 BOX FIGHT</span>
+        <a href="../">BY TYGO VAN STEENPAAL</a>
+      </header>
+      <h1 class="title">BLOK<span>BRAWL</span></h1>
+      <p class="tag">Build. Shoot. Box them in. First to five wins.</p>
+
+      <div class="menu-grid">
+        <section>
+          <h2>DIFFICULTY</h2>
+          <div class="seg" id="difficulty">
+            <button data-v="easy">EASY</button>
+            <button data-v="normal" class="on">NORMAL</button>
+            <button data-v="hard">HARD</button>
+          </div>
+          <h2>SENSITIVITY <output id="sensOut">1.0</output></h2>
+          <input type="range" id="sens" min="0.2" max="3" step="0.1" value="1">
+          <button class="play" id="play">PLAY</button>
+          <p class="note" id="note"></p>
+        </section>
+        <section class="keys">
+          <h2>CONTROLS</h2>
+          <dl>
+            <dt>WASD</dt><dd>Move</dd>
+            <dt>SPACE</dt><dd>Jump</dd>
+            <dt>MOUSE</dt><dd>Aim / fire / place</dd>
+            <dt>1 / 2</dt><dd>Assault rifle / shotgun</dd>
+            <dt>Q</dt><dd>Wall</dd>
+            <dt>E</dt><dd>Ramp</dd>
+            <dt>C</dt><dd>Floor</dd>
+            <dt>R</dt><dd>Reload</dd>
+            <dt>ESC</dt><dd>Pause</dd>
+          </dl>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="end" class="screen" hidden>
+    <div class="menu-inner center">
+      <span class="kicker" id="endKicker">MATCH OVER</span>
+      <h1 class="title" id="endTitle">VICTORY</h1>
+      <p class="tag" id="endScore">5 - 2</p>
+      <button class="play" id="again">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <script type="module" src="game.js"></script>
+</body>
+</html>
