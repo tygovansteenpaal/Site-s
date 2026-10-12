@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stash</title>
+  <meta name="description" content="Stash - game accounts, currency, items and boosting from one seller.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <div class="ribbon" id="ribbon" hidden>Sample listings while stock is being added. Order requests are still read.</div>
+
+  <header class="top">
+    <div class="wrap top-row">
+      <a href="#/" class="logo">STASH<span>.</span></a>
+      <div class="search" id="search">
+        <i data-lucide="search"></i>
+        <input id="searchInput" placeholder="Search games, accounts, coins" autocomplete="off">
+        <div class="suggest" id="suggest" hidden></div>
+      </div>
+      <a href="#/cart" class="cart-btn" id="cartBtn"><i data-lucide="shopping-bag"></i><span>Cart</span><b id="cartCount"></b></a>
+    </div>
+    <nav class="wrap cats" id="cats"></nav>
+  </header>
+
+  <main id="view"></main>
+
+  <footer class="foot">
+    <div class="wrap foot-grid">
+      <div>
+        <a href="#/" class="logo">STASH<span>.</span></a>
+        <p>One seller. Every order handled by hand.</p>
+      </div>
+      <div><span class="label">Shop</span><nav id="footCats"></nav></div>
+      <div><span class="label">Help</span><nav><a href="#/faq">FAQ</a><a href="#/cart">Your cart</a><a id="footMail" href="#">Contact</a></nav></div>
+      <div><span class="label">More</span><nav><a href="../">Other projects</a><a href="https://github.com/tygovansteenpaal">GitHub</a></nav></div>
+    </div>
+    <div class="wrap foot-bottom"><span>&copy; 2026 Tygo van Steenpaal</span><span>Not affiliated with any game publisher.</span></div>
+  </footer>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
