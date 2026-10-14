@@ -579,6 +579,8 @@
         avatar.update(dt);
         camera.update(dt);
         if (inspectFollow) { const m = localPlayer(); inspect = [m.pos.x + inspectFollow[0], m.pos.y + inspectFollow[1], m.pos.z + inspectFollow[2], m.pos.x, m.pos.y + inspectFollow[3], m.pos.z, inspectFollow[4]]; }
+        // Photo mode looks at the local soldier from outside, so draw the whole body even while ADS hides it.
+        if (inspect) avatar.setLocalViewMode('full');
         if (inspect) { gfx.camera.position.set(inspect[0], inspect[1], inspect[2]); gfx.camera.lookAt(inspect[3], inspect[4], inspect[5]); if (inspect[6]) { gfx.camera.fov = inspect[6]; gfx.camera.updateProjectionMatrix(); } gfx.camera.updateMatrixWorld(); }
         vml.update(dt);
         world.update(dt, gfx.camera.position);

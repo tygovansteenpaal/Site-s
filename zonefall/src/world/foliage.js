@@ -30,6 +30,7 @@ const TUNE = {
   update: 0.2,
   grassTile: 8,
   grassRadius: { 0.5: 26, 1: 40 },
+  grassBudgetMs: 3,             // new grass tiles generated per frame, by time
   grassSpacing: 0.58,
   windSpeed: 1.0,
 };
@@ -336,10 +337,24 @@ function blockedByStructures(layout, margin = 1) {
   for (const b of layout.buildings) rects.push({ x: b.x, z: b.z, w: b.w + 6 * margin, d: b.d + 6 * margin, yaw: b.yaw });
   for (const s of layout.slabs) rects.push({ x: s.x, z: s.z, w: s.w + 4 * margin, d: s.d + 4 * margin, yaw: s.yaw || 0 });
   for (const f of layout.footprints) rects.push({ x: f.x, z: f.z, w: f.w + 5 * margin, d: f.d + 5 * margin, yaw: f.rot || 0 });
+  // bucket the rectangles on a 32 m grid so a test only visits the few nearby
+  const CELL = 32, grid = new Map();
+  for (const r of rects) {
+    r.c = Math.cos(r.yaw); r.s = Math.sin(r.yaw);
+    const e = Math.hypot(r.w, r.d) / 2;
+    for (let cx = Math.floor((r.x - e) / CELL); cx <= Math.floor((r.x + e) / CELL); cx++) {
+      for (let cz = Math.floor((r.z - e) / CELL); cz <= Math.floor((r.z + e) / CELL); cz++) {
+        const k = cx * 4096 + cz;
+        if (!grid.has(k)) grid.set(k, []);
+        grid.get(k).push(r);
+      }
+    }
+  }
   return (x, z) => {
-    for (const r of rects) {
-      const c = Math.cos(r.yaw), s = Math.sin(r.yaw);
-      const lx = (x - r.x) * c - (z - r.z) * s, lz = (x - r.x) * s + (z - r.z) * c;
+    const list = grid.get(Math.floor(x / CELL) * 4096 + Math.floor(z / CELL));
+    if (!list) return false;
+    for (const r of list) {
+      const lx = (x - r.x) * r.c - (z - r.z) * r.s, lz = (x - r.x) * r.s + (z - r.z) * r.c;
       if (Math.abs(lx) < r.w / 2 && Math.abs(lz) < r.d / 2) return true;
     }
     return false;
@@ -676,16 +691,26 @@ function updateGrass(viewPos) {
   const alt = viewPos.y - heightAt(viewPos.x, viewPos.z);
   if (alt > 60) { grass.mesh.count = 0; grass.lastKey = ''; return; }
   if (key === grass.lastKey) return;
-  grass.lastKey = key;
-  let c = 0;
-  const density = qual.grass >= 1 ? 1 : 0.55;
+  // tiles nearest the viewer first; new tiles are generated within a per-frame time budget and the rest next frame
+  const want = [];
   for (let tx = tx0; tx <= tx1; tx++) for (let tz = tz0; tz <= tz1; tz++) {
-    const cx = (tx + 0.5) * S, cz = (tz + 0.5) * S;
-    if (Math.hypot(cx - viewPos.x, cz - viewPos.z) > R + S * 0.71) continue;
-    const t = grassTile(tx, tz);
-    const step = density >= 1 ? 1 : 2;
+    const dd = Math.hypot((tx + 0.5) * S - viewPos.x, (tz + 0.5) * S - viewPos.z);
+    if (dd <= R + S * 0.71) want.push([dd, tx, tz]);
+  }
+  want.sort((a, b) => a[0] - b[0]);
+  const t0 = performance.now();
+  let complete = true;
+  let c = 0;
+  const step = qual.grass >= 1 ? 1 : 2;
+  for (const [, tx, tz] of want) {
+    let t = grass.tiles.get(tx * 10000 + tz);
+    if (!t) {
+      if (performance.now() - t0 > TUNE.grassBudgetMs) { complete = false; continue; }
+      t = grassTile(tx, tz);
+    }
     for (let i = 0; i < t.mats.length && c < grass.cap; i += step) grass.mesh.setMatrixAt(c++, t.mats[i]);
   }
+  grass.lastKey = complete ? key : '';
   grass.mesh.count = c;
   grass.mesh.instanceMatrix.needsUpdate = true;
   stats.grass = c;

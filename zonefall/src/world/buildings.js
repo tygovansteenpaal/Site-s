@@ -508,7 +508,7 @@ function block(ctx, spec) {
   const stZ0 = -hd + WT, stW = TUNE.stairW;
   const stairRect = st ? [st.x0 - 0.1, stZ0, st.x0 + RUN, stZ0 + stW] : null;
   // partitions (perpendicular to x), kept clear of the stairs
-  const parts = (spec.partitions || []).filter((px) => !stairRect || px < stairRect[0] - 0.4 || px > stairRect[2] + 0.9);
+  const parts = (spec.partitions || []).filter((px) => !stairRect || px < stairRect[0] - 0.4 || px > stairRect[2] + 0.85);
   // openings per side
   const sides = { front: [], back: [], left: [], right: [] };
   const doorH = TUNE.door.h, doorW = TUNE.door.w;
@@ -607,12 +607,27 @@ function block(ctx, spec) {
     g.box(cx - 0.35, top - 0.5, cz - 0.35, cx + 0.35, ridge + 0.9, cz + 0.35, MAT.brickDark, { col: false });
     g.box(cx - 0.42, ridge + 0.85, cz - 0.42, cx + 0.42, ridge + 1.0, cz + 0.42, MAT.concrete, { col: false });
   }
-  // rooms
+  // rooms; furniture and loot keep clear of the stairs and of a 1.4 m apron inside every doorway
+  const clear = (k) => {
+    const out = st ? [stairRect] : [];
+    for (const [side, list] of Object.entries(sides)) {
+      for (const o of list) {
+        if (!o.door || Math.abs(o.y0 - k * sh) > 0.1) continue;
+        const a0 = o.c - o.w / 2 - 0.3, a1 = o.c + o.w / 2 + 0.3;
+        if (side === 'front') out.push([a0, hd - 1.6, a1, hd]);
+        else if (side === 'back') out.push([a0, -hd, a1, -hd + 1.6]);
+        else if (side === 'right') out.push([hw - 1.6, a0, hw, a1]);
+        else out.push([-hw, a0, -hw + 1.6, a1]);
+      }
+    }
+    const dz = spec.partDoorZ ?? (hd - WT - 1.4);
+    for (const px of parts) out.push([px - 1.3, dz - 0.8, px + 1.3, dz + 0.8]);
+    return out;
+  };
   const xs = [-hw + WT, ...parts.slice().sort((a, b) => a - b), hw - WT];
   for (let k = 0; k < ns; k++) {
     for (let i = 0; i < xs.length - 1; i++) {
-      const avoid = st ? [stairRect] : [];
-      addRoom(ctx, xs[i] + (i ? 0.06 : 0), -hd + WT, xs[i + 1] - (i < xs.length - 2 ? 0.06 : 0), hd - WT, k * sh, avoid);
+      addRoom(ctx, xs[i] + (i ? 0.06 : 0), -hd + WT, xs[i + 1] - (i < xs.length - 2 ? 0.06 : 0), hd - WT, k * sh, clear(k));
     }
   }
   // doors for nav, steps where the ground falls away

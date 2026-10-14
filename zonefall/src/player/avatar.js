@@ -65,7 +65,7 @@ const TUNE = {
   pouch: [0.13, 1.08, 0.17],    // model space: left mag pouch on the plate carrier
   chute: { height: 5.4, forward: 0.35, span: 7.6, chord: 2.6, cells: 9, arcRadius: 5.4, thickness: 0.34 },
   freefallFrame: 0.83, freefallFlutter: 0.06,
-  swimLift: 1.16,               // model lift while swimming (the controller keeps the feet 1.3 m under the surface)
+  swimLift: 1.36,               // model lift while swimming: feet are 1.3 m under the surface, this puts the head out and the back awash
   remoteGroundSnap: 0.35,
   // Extra eye relief (m, along weapon +Z) added to WEAPONS[w].model.eye for iron sights, measured from each model's top
   // profile so the camera clears the receiver by more than the near plane: the AK's dust cover and the MP5's drum
@@ -523,7 +523,7 @@ function createAvatar(e) {
     if (!o.isMesh) return;
     o.castShadow = true;
     o.receiveShadow = true;
-    o.frustumCulled = false;          // culled by this module with a pose-independent sphere
+    o.frustumCulled = true;           // against a pose-independent sphere (set below), by the renderer's own camera
     const src = o.material;
     const kind = kindOfMaterial(src);
     const mat = tinted(modelKey, tintIdx, src);
@@ -545,6 +545,14 @@ function createAvatar(e) {
   bones.spine2.add(backHolder);
   const kickPivot = new THREE.Group(); kickPivot.name = 'kick';
   handHolder.add(kickPivot);
+  // Skinned meshes are culled by three.js with mesh.boundingSphere; give them one sphere that holds every pose
+  // (bind-pose sphere grown 1.6x: arms out, prone death, slide), so culling never depends on last frame's camera.
+  model.updateMatrixWorld(true);
+  for (const m of meshes) {
+    if (!m.mesh.isSkinnedMesh) continue;
+    m.mesh.computeBoundingSphere();
+    m.mesh.boundingSphere.radius *= 1.6;
+  }
   const mixer = new THREE.AnimationMixer(model);
   const av = {
     id: e.id, entity: e, slot: e.slot, modelKey, tintIdx, root, model, mixer, meshes, bones,
@@ -704,8 +712,8 @@ export function update(dt) {
     if (!av.root.visible) { av.prevLife = e.life; continue; }
     sphere.center.set(e.pos.x, e.pos.y + 0.9, e.pos.z);
     sphere.radius = av.canopy && av.canopy.group.visible && !av.canopy.detached ? 7.5 : 1.4;
+    // Off-screen avatars (last frame's view) animate at a low rate; drawing is culled by the renderer itself.
     av.culled = cam && !isLocal ? !frustum.intersectsSphere(sphere) : false;
-    av.model.visible = !av.culled;
     list.push(av);
   }
   list.sort(byDist);
