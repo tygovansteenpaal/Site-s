@@ -17,7 +17,7 @@ export const TUNE = {
   storey: 3.0, slab: 0.2, outer: 0.15, inner: 0.10,
   door: { w: 1.2, h: 2.2 }, win: { w: 1.2, h: 1.3, sill: 0.9 },
   rise: 3.0 / 17, tread: 0.28, stairW: 1.05,
-  ao: { floor: 0.3, wall: 0.32, ceiling: 0.24, reveal: 0.66, groundContact: 0.72 },   // sky light reaching room surfaces
+  ao: { floor: 0.44, wall: 0.46, ceiling: 0.36, reveal: 0.7, groundContact: 0.72 },   // sky light reaching room surfaces (< 0.5 marks a surface as interior for the shader)
   tintScale: 2.0,            // vertex tints are stored / 2 so tints above 1 can brighten (white plaster)
 };
 const H = TUNE.storey, SLAB = TUNE.slab, OUT = TUNE.outer, INN = TUNE.inner, WT = OUT + INN;
@@ -37,7 +37,7 @@ const MAT = {
   plasterCream: M(L.concrete_wall_008, 1.32, 1.24, 1.06), plasterWhite: M(L.concrete_wall_008, 1.45, 1.43, 1.36),
   plasterOchre: M(L.concrete_wall_008, 1.32, 1.12, 0.78), plasterSage: M(L.concrete_wall_008, 1.06, 1.14, 1.0),
   plasterRose: M(L.concrete_wall_008, 1.34, 1.08, 0.98), plasterGrey: M(L.concrete_wall_008, 1.1, 1.1, 1.08),
-  interior: M(L.concrete_wall_008, 1.38, 1.34, 1.24), interiorWarm: M(L.concrete_wall_008, 1.36, 1.24, 1.06),
+  interior: M(L.concrete_wall_008, 1.4, 1.38, 1.33), interiorWarm: M(L.concrete_wall_008, 1.36, 1.24, 1.06),
   concrete: M(L.concrete_wall_008, 1.0, 1.0, 0.97), concreteOlive: M(L.concrete_wall_008, 0.92, 0.95, 0.8),
   concreteSand: M(L.concrete_wall_008, 1.18, 1.1, 0.92), stone: M(L.red_brick_03, 1.12, 1.72, 1.92),
   floorWood: M(L.weathered_brown_planks, 1.05, 0.98, 0.92), floorConcrete: M(L.concrete_floor_worn_001, 1.62, 1.6, 1.55),
@@ -52,6 +52,9 @@ const MAT = {
   metalGreen: M(L.green_metal_rust, 1.0), metalYellow: M(L.concrete_wall_008, 2.0, 1.55, 0.32), metalWhite: M(L.concrete_wall_008, 1.75, 1.78, 1.85),
   metalGrey: M(L.asphalt_02, 1.35, 1.38, 1.45), metalRed: M(L.concrete_wall_008, 1.75, 0.42, 0.34), metalBlue: M(L.concrete_wall_008, 0.55, 0.85, 1.6),
   metalOrange: M(L.concrete_wall_008, 2.0, 0.95, 0.3),
+  canvasOlive: M(L.concrete_wall_008, 0.66, 0.72, 0.46), canvasTan: M(L.concrete_wall_008, 1.0, 0.9, 0.66),
+  carton: M(L.concrete_wall_008, 1.2, 0.9, 0.58), cartonDark: M(L.concrete_wall_008, 0.95, 0.72, 0.48),
+  fabricOlive: M(L.concrete_wall_008, 0.78, 0.84, 0.56), fabricGrey: M(L.concrete_wall_008, 1.05, 1.05, 1.02),
   turf: M(L.sparse_grass, 1.0), gravel: M(L.gravelly_sand, 0.7, 1.12, 1.75), rock: M(L.gravelly_sand, 0.58, 1.0, 1.95),
 };
 
@@ -881,8 +884,16 @@ const KINDS = {
     for (let i = 0; i < 5; i++) {
       const x = -hw + 1.2 + i * 2.2;
       if (Math.abs(x + hw / 3) < 0.9 || Math.abs(x - hw / 3) < 0.9) continue;
-      g.box(x - 0.45, 0.35, -b.d / 2 + WT + 0.05, x + 0.45, 0.5, -b.d / 2 + WT + 2.0, MAT.metalGreen);
-      g.box(x - 0.45, 1.45, -b.d / 2 + WT + 0.05, x + 0.45, 1.6, -b.d / 2 + WT + 2.0, MAT.metalGreen, { col: false });
+      const z0 = -b.d / 2 + WT + 0.05, z1 = -b.d / 2 + WT + 2.0;
+      // steel frame: four posts, two bed frames, a ladder rail; olive mattresses with a folded blanket
+      for (const [px, pz] of [[x - 0.45, z0], [x + 0.4, z0], [x - 0.45, z1 - 0.05], [x + 0.4, z1 - 0.05]]) g.box(px, 0, pz, px + 0.05, 1.82, pz + 0.05, MAT.metalGrey, { col: false });
+      g.box(x - 0.45, 0.3, z0, x + 0.45, 0.4, z1, MAT.metalGreen);
+      g.box(x - 0.45, 1.36, z0, x + 0.45, 1.46, z1, MAT.metalGreen, { col: false });
+      g.box(x - 0.45, 1.46, z1 - 0.05, x + 0.45, 1.7, z1, MAT.metalGreen, { col: false });
+      for (const y of [0.4, 1.46]) {
+        g.box(x - 0.42, y, z0 + 0.04, x + 0.42, y + 0.13, z1 - 0.04, MAT.fabricOlive, { col: false });
+        g.box(x - 0.43, y + 0.13, z1 - 0.62, x + 0.43, y + 0.19, z1 - 0.12, MAT.fabricGrey, { col: false });
+      }
     }
   },
   hangar(ctx) {
@@ -1040,6 +1051,21 @@ const KINDS = {
       g.box(x, 3.2, -d / 2 + 1, x + 4.6, 3.32, -d / 2 + 2.1, MAT.metalOrange, { col: false });
       for (const px of [x, x + 4.5]) g.box(px, 0, -d / 2 + 1, px + 0.1, 3.4, -d / 2 + 2.1, MAT.metalBlue);
       g.colBox(x + 2.3, 1.7, -d / 2 + 1.55, 2.3, 1.7, 0.55, SURFACE.METAL);
+      // stock: pallets with shrink-wrapped carton stacks, two bays per shelf level, some bays empty
+      for (const ly of [0.12, 1.72, 3.32]) {
+        for (const bx of [x + 0.2, x + 2.35]) {
+          if (ctx.rng.chance(0.28)) continue;
+          const pz0 = -d / 2 + 1.08, pz1 = -d / 2 + 2.02;
+          g.box(bx, ly, pz0, bx + 2.05, ly + 0.14, pz1, MAT.planks, { col: false });
+          const n = ctx.rng.int(1, 3), cw = 2.0 / n;
+          const maxH = ly > 3 ? 0.9 : 1.32;
+          for (let k = 0; k < n; k++) {
+            const hh = Math.min(maxH, ctx.rng.range(0.5, 1.3));
+            const inset = ctx.rng.range(0.02, 0.08);
+            g.box(bx + k * cw + inset, ly + 0.14, pz0 + inset, bx + (k + 1) * cw - inset, ly + 0.14 + hh, pz1 - inset, ctx.rng.chance(0.3) ? MAT.cartonDark : MAT.carton, { col: false });
+          }
+        }
+      }
     }
     addRoom(ctx, -w / 2 + 1, -d / 2 + 2.6, w / 2 - 1, d / 2 - 1, 0, []);
     if (b.mezzanine) {
@@ -1660,6 +1686,45 @@ function special(ctx, sp) {
         g.boxB(x, 11.75, 0.12, [1, 0, 0], [0, Math.cos(0.5), Math.sin(0.5)], null, 0.26, 0.2, 0.08, MAT.metalGrey, { col: false });
         g.boxB(x, 11.75 - 0.05, 0.21, [1, 0, 0], [0, Math.cos(0.5), Math.sin(0.5)], null, 0.22, 0.16, 0.01, MAT.trimWhite, { col: false });
       }
+      break;
+    }
+    case 'tent': {
+      // frame tent: olive canvas over a steel ridge frame on a plank floor; closed back, open front with the flaps
+      // rolled up, two cots and a crate inside. Enterable; the floor, walls and back are colliders.
+      const y = heightAt(sp.x, sp.z);
+      g.frame(sp.x, y, sp.z, sp.yaw);
+      const W = 5.0, Ln = 8.0, eave = 1.75, ridge = 3.05, hw = W / 2, hl = Ln / 2;
+      const canvas = sp.seed % 3 === 0 ? MAT.canvasTan : MAT.canvasOlive;
+      g.aoFn = (x, yy, z, nx, ny, nz) => (Math.abs(x) < hw - 0.06 && Math.abs(z) < hl - 0.06 && yy < ridge ? (ny > 0.5 ? 0.62 : 0.7) : 1);
+      g.box(-hw - 0.1, -0.25, -hl - 0.1, hw + 0.1, 0.12, hl + 0.1, MAT.planksDark, { mats: { py: MAT.planks }, skip: NY, surf: SURFACE.WOOD });
+      for (const sx of [-1, 1]) g.box(sx > 0 ? hw - 0.04 : -hw, 0.12, -hl, sx > 0 ? hw : -hw + 0.04, eave, hl, canvas, { surf: SURFACE.DIRT });
+      g.box(-hw, 0.12, -hl, hw, eave, -hl + 0.04, canvas, { surf: SURFACE.DIRT });
+      // roof planes (thin oriented boxes: both faces shaded)
+      const sl = Math.hypot(hw, ridge - eave), ux = hw / sl, uy = (ridge - eave) / sl;
+      for (const sx of [-1, 1]) {
+        g.boxB(sx * hw / 2, (eave + ridge) / 2, 0, [-sx * ux, uy, 0], [sx * uy, ux, 0], [0, 0, 1], sl / 2 + 0.18, 0.025, hl + 0.2, canvas, { surf: SURFACE.DIRT });
+      }
+      // gables: back closed, front gable only (doorway below the eave)
+      for (const [z, n] of [[-hl + 0.02, -1], [-hl + 0.06, 1], [hl, 1], [hl - 0.04, -1]]) {
+        const P = n > 0 ? [[-hw, eave, z], [hw, eave, z], [0, ridge, z]] : [[hw, eave, z], [-hw, eave, z], [0, ridge, z]];
+        g.poly(P, [0, 0, n], canvas, { col: z < 0 });
+      }
+      // rolled flaps, ridge pole and end poles, guy stakes
+      g.box(-hw + 0.04, eave - 0.26, hl - 0.04, hw - 0.04, eave - 0.02, hl + 0.16, canvas, { col: false, skip: NZ });
+      g.box(-0.05, ridge - 0.08, -hl, 0.05, ridge + 0.02, hl, MAT.metalGrey, { col: false });
+      for (const z of [-hl + 0.1, hl - 0.1, 0]) g.box(-0.04, 0.12, z - 0.04, 0.04, ridge - 0.08, z + 0.04, MAT.metalGrey, { col: z === 0 });
+      for (const sx of [-1, 1]) for (const z of [-hl + 0.6, 0, hl - 0.6]) g.boxB(sx * (hw + 0.9), eave / 2, z, [-sx * 1.8, eave, 0], [0, 0, 1], null, Math.hypot(0.9, eave / 2), 0.008, 0.008, MAT.trimWhite, { col: false });
+      // cots and a crate
+      for (const sx of [-1, 1]) for (const z of [-2.2, 0.9]) {
+        const cx = sx * (hw - 0.75);
+        g.box(cx - 0.38, 0.42, z - 0.95, cx + 0.38, 0.5, z + 0.95, MAT.fabricOlive, { col: false });
+        for (const [lx, lz] of [[-0.34, -0.9], [0.3, -0.9], [-0.34, 0.86], [0.3, 0.86]]) g.box(cx + lx, 0.12, z + lz, cx + lx + 0.04, 0.42, z + lz + 0.04, MAT.metalGreen, { col: false });
+      }
+      g.box(-0.45, 0.12, -hl + 0.3, 0.45, 0.62, -hl + 0.9, MAT.planks);
+      ctx.rooms.push({ x0: -hw + 1.3, z0: -hl + 1.2, x1: hw - 1.3, z1: hl - 0.6, y: y + 0.12, frame: { x: g.ox, z: g.oz, c: g.c, s: g.s }, avoid: [], site: sp.site, indoor: true });
+      ctx.doors.push({ pos: [g.wx(0, hl + 0.6), y + 0.12, g.wz(0, hl + 0.6)], dir: [g.s, 0, g.c], site: sp.site });
+      ctx.covers.push([g.wx(hw + 0.6, 0), y, g.wz(hw + 0.6, 0)]);
+      g.aoFn = null;
       break;
     }
     case 'firepit': {

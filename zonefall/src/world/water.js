@@ -105,6 +105,7 @@ export function buildWater(scene, quality) {
   uniforms.tDepth.value = depthTexture();
   uniforms.uShallow = { value: TUNE.shallow };
   uniforms.uDeep = { value: TUNE.deep };
+  uniforms.uEdge = { value: RENDER.far };
   mat = new THREE.MeshStandardMaterial({ name: 'zf-water', color: 0xffffff, roughness: TUNE.roughness, metalness: 0, transparent: true, depthWrite: false });
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
@@ -112,7 +113,7 @@ export function buildWater(scene, quality) {
       .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
       .replace('#include <fog_vertex>', '#include <fog_vertex>\nvWPos = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\n' + WATER_PARS)
+      .replace('#include <common>', '#include <common>\nuniform float uEdge;\n' + WATER_PARS)
       .replace('#include <map_fragment>', /* glsl */`
         vec2 duv = ( vWPos.xz + uWorld * 0.5 ) / uWorld;
         vec4 dz = texture2D( tDepth, duv );
@@ -135,7 +136,15 @@ export function buildWater(scene, quality) {
       .replace('#include <opaque_fragment>', /* glsl */`
         #include <opaque_fragment>
         float zfFres = pow( 1.0 - saturate( dot( normal, normalize( vViewPosition ) ) ), 5.0 );
-        gl_FragColor.a = mix( gl_FragColor.a, 1.0, zfFres * 0.9 );`);
+        gl_FragColor.a = mix( gl_FragColor.a, 1.0, zfFres * 0.9 );`)
+      .replace('#include <fog_fragment>', /* glsl */`
+        #include <fog_fragment>
+        #ifdef USE_FOG
+          // the plane ends before the true horizon: fade its far edge fully into the fog colour the sky dome uses
+          float zfEdge = smoothstep( uEdge * 0.45, uEdge * 0.92, max( length( vWPos.xz - cameraPosition.xz ), vFogDepth ) );
+          gl_FragColor.rgb = mix( gl_FragColor.rgb, zfgFogCol, zfEdge );
+          gl_FragColor.a = mix( gl_FragColor.a, 1.0, zfEdge );
+        #endif`);
   };
   mat.customProgramCacheKey = () => 'zf-water';
   const size = RENDER.far * 2;

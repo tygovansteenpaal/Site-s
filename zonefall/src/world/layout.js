@@ -381,6 +381,16 @@ function kessler(L) {
   // concrete roads from both gates into the yard
   L.slabs.push({ site: s.id, kind: 'panels', x: 230, z: -201, w: 7, d: 54, yaw: 0, panel: 7 });
   L.slabs.push({ site: s.id, kind: 'panels', x: 316, z: -250, w: 44, d: 7, yaw: 0, panel: 7 });
+  // tent lines south of the command post and by the east road: shelter and indoor loot in the open yard
+  [[238, -290, 0], [247, -290, 0], [256, -290, 0], [300, -271, 0], [309, -271, 0]].forEach(([x, z, yaw], i) => {
+    L.special.push({ kind: 'tent', site: s.id, x, z, yaw, seed: 40 + i });
+    L.footprints.push({ x, z, w: 5.2, d: 8.4, rot: yaw, fill: 'rgba(98,106,72,0.95)' });
+  });
+  // more container cover in the north-west yard
+  for (const [x, z, yaw, lay, seed] of [[190, -190, 0.2, 'L', 931], [190, -236, Math.PI / 2, 'row', 932]]) {
+    L.special.push({ kind: 'containers', site: s.id, x, z, yaw, layout: lay, seed });
+    L.footprints.push({ x, z, w: 7, d: 6, rot: yaw });
+  }
   crateSpots(L, s, 8, rng);
 }
 

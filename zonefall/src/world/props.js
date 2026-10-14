@@ -14,6 +14,7 @@ const SIMPLIFIER_URL = 'https://cdn.jsdelivr.net/npm/meshoptimizer@1.2.0/meshopt
 const TUNE = {
   lodDist: [24, 70],           // LOD0 below, LOD1 below, LOD2 beyond (up to quality.propDistance)
   lodRatio: [0.3, 0.07],
+  maxTris0: 7000,              // LOD0 of a prop part is simplified to at most this many triangles (scans run 2k-26k)
   updateEvery: 0.2,            // seconds between bucket rebuilds
   shadowDist: 60,
 };
@@ -74,12 +75,12 @@ function mergeFloat(list) {
   return g;
 }
 
-function simplify(g, ratio) {
+function simplify(g, ratio, maxErr = 0.04) {
   if (!simplifier) return null;
   const idx = g.index.array;
   const target = Math.max(36, Math.floor((idx.length * ratio) / 3) * 3);
   try {
-    const [out] = simplifier.simplify(idx, g.attributes.position.array, 3, target, 0.04, []);
+    const [out] = simplifier.simplify(idx, g.attributes.position.array, 3, target, maxErr, []);
     if (!out || out.length < 12 || out.length > idx.length * 0.9) return null;
     const s = new THREE.BufferGeometry();
     for (const k of ['position', 'normal', 'uv']) s.setAttribute(k, g.attributes[k]);
@@ -130,7 +131,11 @@ function extract(key, filter = null, offset = null) {
 function makeLods(parts, capacity, name) {
   return parts.map(({ material, geometry }) => {
     geometry.computeBoundingSphere();
-    const lods = [geometry, simplify(geometry, TUNE.lodRatio[0]) || geometry, simplify(geometry, TUNE.lodRatio[1]) || simplify(geometry, TUNE.lodRatio[0]) || geometry];
+    const tris = geometry.index.count / 3;
+    const r0 = Math.min(1, TUNE.maxTris0 / tris);
+    const base = r0 < 0.95 ? simplify(geometry, r0, 0.012) || geometry : geometry;
+    const k = (base.index.count / 3) / tris;   // ratios below stay relative to the source scan
+    const lods = [base, simplify(geometry, Math.min(TUNE.lodRatio[0], k * 0.45)) || base, simplify(geometry, Math.min(TUNE.lodRatio[1], k * 0.12)) || simplify(geometry, TUNE.lodRatio[0]) || base];
     const meshes = lods.map((lg, li) => {
       const im = new THREE.InstancedMesh(lg, material, Math.max(1, capacity));
       im.name = `${name}_lod${li}`;

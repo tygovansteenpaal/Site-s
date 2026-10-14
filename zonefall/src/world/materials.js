@@ -123,6 +123,9 @@ function arrayUniforms(a) {
 }
 
 // ------------------------------------------------------------------------------------------ surface (buildings, slabs, walls)
+const TUNE_SURF = {
+  bounce: [0.12, 0.112, 0.098],   // linear irradiance of the warm interior bounce (scaled by albedo and texture AO)
+};
 /**
  * Material for merged static geometry with attributes: position, normal, uv (metres / tile), color (tint, u8 x3),
  * aSurf (layer, ambient occlusion). One instance serves every building, slab and wall in the world.
@@ -131,7 +134,7 @@ export function surfaceMaterial(opts = {}) {
   const a = arrays;
   if (!a) throw new Error('[WORLD/materials] buildArrays first');
   const m = new THREE.MeshStandardMaterial({ name: 'zf-surface', vertexColors: true, roughness: 1, metalness: 1, side: opts.side || THREE.FrontSide });
-  const uniforms = { ...arrayUniforms(a), uNormalScale: { value: opts.normalScale ?? 1.0 }, tNoise: { value: noiseTexture() } };
+  const uniforms = { ...arrayUniforms(a), uNormalScale: { value: opts.normalScale ?? 1.0 }, tNoise: { value: noiseTexture() }, uBounce: { value: new THREE.Color(TUNE_SURF.bounce[0], TUNE_SURF.bounce[1], TUNE_SURF.bounce[2]) } };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
@@ -145,7 +148,7 @@ export function surfaceMaterial(opts = {}) {
         vZfW = ( modelMatrix * zfW4 ).xyz;
         vZfN = normalize( mat3( modelMatrix ) * zfN3 );`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vSurf;\nvarying vec2 vZfUv;\nvarying vec3 vZfW;\nvarying vec3 vZfN;\nuniform float uNormalScale;\nuniform sampler2D tNoise;\n' + GLSL_ARRAYS)
+      .replace('#include <common>', '#include <common>\nvarying vec2 vSurf;\nvarying vec2 vZfUv;\nvarying vec3 vZfW;\nvarying vec3 vZfN;\nuniform float uNormalScale;\nuniform sampler2D tNoise;\nuniform vec3 uBounce;\n' + GLSL_ARRAYS)
       .replace('#include <map_fragment>', /* glsl */`
         vec3 zfTc = vec3( vZfUv, floor( vSurf.x + 0.5 ) );
         diffuseColor.rgb *= texture( tDiff, zfTc ).rgb * 2.0;   // vertex tints are stored halved (buildings.js TUNE.tintScale)
@@ -165,7 +168,10 @@ export function surfaceMaterial(opts = {}) {
         vec3 zfMapN = texture( tNor, zfTc ).xyz * 2.0 - 1.0;
         zfMapN.xy *= uNormalScale;
         normal = normalize( zfTangentFrame( - vViewPosition, normal, vZfUv ) * zfMapN );`)
-      .replace('#include <aomap_fragment>', AO_CHUNK('mix( 1.0, zfArm.r, 0.8 ) * vSurf.y'));
+      .replace('#include <aomap_fragment>', AO_CHUNK('mix( 1.0, zfArm.r, 0.8 ) * vSurf.y') + /* glsl */`
+        // rooms: warm light bounced in through doors and windows off sunlit ground, so interiors stay readable and
+        // do not take the cold blue cast of a sky-only ambient
+        reflectedLight.indirectDiffuse += material.diffuseColor * uBounce * ( 1.0 - zfOut ) * mix( 1.0, zfArm.r, 0.6 );`);
   };
   m.customProgramCacheKey = () => 'zf-surface';
   return m;
