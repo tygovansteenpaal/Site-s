@@ -554,19 +554,19 @@ const GRASS_VERT = /* glsl */`
 function grassClump() {
   const rng = new Rng(4242);
   const pos = [], nrm = [], idx = [];
-  const blades = 12, segs = 2;
+  const blades = 15, segs = 2;
   for (let b = 0; b < blades; b++) {
     const a = rng.range(0, Math.PI * 2), r = Math.sqrt(rng.next()) * 0.42;
     const bx = Math.cos(a) * r, bz = Math.sin(a) * r;
     const yaw = rng.range(0, Math.PI * 2);
-    const h = rng.range(0.26, 0.55), w = rng.range(0.03, 0.055);
-    const lean = rng.range(0.06, 0.24);
+    const h = rng.range(0.2, 0.48), w = rng.range(0.014, 0.026);
+    const lean = rng.range(0.08, 0.3);
     const dx = Math.cos(yaw), dz = Math.sin(yaw);
     const lx = -dz, lz = dx;
     const base = pos.length / 3;
     for (let s = 0; s <= segs; s++) {
       const t = s / segs;
-      const ww = w * (1 - t * 0.9);
+      const ww = w * (1 - t * 0.75);
       const off = lean * t * t;
       const cx = bx + dx * off, cz = bz + dz * off, cy = h * t;
       pos.push(cx - lx * ww, cy, cz - lz * ww, cx + lx * ww, cy, cz + lz * ww);
@@ -595,7 +595,7 @@ function grassMaskFn(layout) {
     paintAt(x, z, pw);
     if (pw[4] < 1.2) return 0;
     let d = 1 - Math.max(pw[0], pw[3]) * 1.9 - pw[2] * 0.6 - pw[1] * 0.25;
-    if (d <= 0.12) return 0;
+    if (d <= 0.4) return 0;
     if (blocked(x, z)) return 0;
     return Math.min(1, d);
   };

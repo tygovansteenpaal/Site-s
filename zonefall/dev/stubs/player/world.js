@@ -5,6 +5,7 @@
 // damage), containers, and surface pads (concrete, asphalt, gravel, wood, metal, sand) for footsteps.
 // Lit like the real island: the RENDER.sky HDRI through PMREM, one shadowed sun following the view, exp2 fog.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SURFACE, RENDER, ASSETS } from '../../../src/config.js';
 import * as assets from '../../../src/engine/assets.js';
 import { gfx } from '../../../src/core/state.js';
@@ -228,6 +229,7 @@ function addBox(cx, cy, cz, sx, sy, sz, matId, surface, opts = {}) {
   const mesh = new THREE.Mesh(boxGeo(sx, sy, sz, tile), assets.pbr(matId, { tint: opts.tint, roughness: opts.roughness, metalness: opts.metalness }));
   mesh.position.set(cx, cy + sy / 2, cz);
   mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.userData.mergeable = true;
   scene.add(mesh);
   if (opts.collide !== false) boxes.push({ min: new THREE.Vector3(cx - sx / 2, cy, cz - sz / 2), max: new THREE.Vector3(cx + sx / 2, cy + sy, cz + sz / 2), surface });
   return mesh;
@@ -413,12 +415,35 @@ export async function build({ scene: sc, quality: q, onProgress = () => {} }) {
   placeProp('utility_box', 18, 20.5, Math.PI);
   placeProp('tyre', 24, 9, 0, false);
   placeProp('jerrycan', 15, 9.2, 0.4, false);
+  mergeStatic();
   onProgress(1, 'Ready');
+}
+
+/** One draw call per material for the course's boxes and steps (the real world merges per site and material too). */
+function mergeStatic() {
+  const groups = new Map();
+  for (const o of scene.children.slice()) {
+    if (!o.isMesh || !o.userData.mergeable) continue;
+    if (!groups.has(o.material)) groups.set(o.material, []);
+    groups.get(o.material).push(o);
+  }
+  for (const [material, list] of groups) {
+    if (list.length < 2) continue;
+    const geos = list.map((m) => { m.updateMatrixWorld(true); const g = m.geometry.clone().applyMatrix4(m.matrixWorld); m.geometry.dispose(); return g; });
+    const merged = mergeGeometries(geos, false);
+    if (!merged) continue;
+    for (const m of list) m.removeFromParent();
+    const mesh = new THREE.Mesh(merged, material);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
 }
 
 const shadowFollow = new THREE.Vector3();
 export function update(dt, viewPos) {
   if (!sun || !viewPos) return;
+  // Thinner haze for a high camera (plane, freefall) so the course stays readable from 380 m.
+  if (scene.fog && quality) scene.fog.density = quality.fogDensity * 1.4 / (1 + Math.max(0, viewPos.y - 25) / 45);
   // texel-snapped shadow camera following the view
   const r = sun.shadow.camera.right;
   const texel = (2 * r) / sun.shadow.mapSize.x;
