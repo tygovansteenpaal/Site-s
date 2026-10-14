@@ -216,29 +216,42 @@ function roomPoints(room, rng) {
   return pts.map(({ lx, lz }) => ({ x: f.x + lx * f.c + lz * f.s, z: f.z - lx * f.s + lz * f.c, y: room.y + TUNE.lootLift }));
 }
 
-function outdoorAround(siteId, rng, n) {
+const _la = new THREE.Vector3(), _lb = new THREE.Vector3();
+/**
+ * Outdoor loot points next to cover for sites with few rooms. Candidates, in priority order: the layout's outdoor
+ * points, both sides of every cover prop, a ring around every building and structure footprint, rocks inside the
+ * site, then ring samples around the centre. A candidate is dropped on roads, in water, inside geometry (capsule
+ * test) or within lootSpacing of an earlier point. Deterministic from MAP.seed.
+ */
+function outdoorAround(siteId, rng, n, taken) {
+  const site = ALL_SITES.find((q) => q.id === siteId);
   const out = [];
   const cands = [];
   for (const o of layout.outdoor) if (o.site === siteId) cands.push([o.x, o.z]);
-  for (const p of layout.props) if (p.site === siteId && ['barrier', 'covered_car', 'generator', 'crate_wood', 'utility_box'].includes(p.key)) {
-    const a = rng.range(0, Math.PI * 2);
-    cands.push([p.x + Math.cos(a) * 1.4, p.z + Math.sin(a) * 1.4]);
+  for (const p of layout.props) if (p.site === siteId && ['barrier', 'covered_car', 'generator', 'crate_wood', 'crate_military', 'utility_box', 'barrel_blue', 'barrel_red'].includes(p.key)) {
+    const a = (p.yaw || 0) + rng.range(-0.3, 0.3);
+    cands.push([p.x + Math.cos(a) * 1.5, p.z - Math.sin(a) * 1.5], [p.x - Math.cos(a) * 1.5, p.z + Math.sin(a) * 1.5]);
   }
-  for (const b of layout.buildings) if (b.site === siteId) {
-    for (let k = 0; k < 3; k++) {
-      const c = Math.cos(b.yaw), s = Math.sin(b.yaw);
-      const side = rng.int(0, 3);
-      const lx = side < 2 ? (side ? 1 : -1) * (b.w / 2 + 1.3) : rng.range(-b.w / 2, b.w / 2);
-      const lz = side >= 2 ? (side === 2 ? 1 : -1) * (b.d / 2 + 1.3) : rng.range(-b.d / 2, b.d / 2);
-      cands.push([b.x + lx * c + lz * s, b.z - lx * s + lz * c]);
+  const ring = (x, z, w, d, yaw, gap) => {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    for (const [lx, lz] of [[w / 2 + gap, 0], [-w / 2 - gap, 0], [0, d / 2 + gap], [0, -d / 2 - gap], [w / 2 + gap, d / 2 + gap], [-w / 2 - gap, -d / 2 - gap], [w / 2 + gap, -d / 2 - gap], [-w / 2 - gap, d / 2 + gap]]) {
+      cands.push([x + lx * c + lz * s, z - lx * s + lz * c]);
     }
-  }
+  };
+  for (const b of layout.buildings) if (b.site === siteId) ring(b.x, b.z, b.w, b.d, b.yaw, 1.3);
+  for (const f of layout.footprints) if (Math.hypot(f.x - site.x, f.z - site.z) < site.r) ring(f.x, f.z, f.w, f.d, f.rot || 0, 1.2);
+  for (const r of foliage.rockPositions()) if (Math.hypot(r[0] - site.x, r[2] - site.z) < site.r * 0.9) { const a = rng.range(0, Math.PI * 2); cands.push([r[0] + Math.cos(a) * 1.6, r[2] + Math.sin(a) * 1.6]); }
+  for (let k = 0; k < 160; k++) cands.push(rng.inDisc(site.x, site.z, site.r * 0.8));
   for (const [x, z] of cands) {
     if (out.length >= n) break;
-    if (hf.heightAt(x, z) < 0.3 || hf.onRoad(x, z, 0.5)) continue;
-    const y = collision.groundBelow(x, z, hf.heightAt(x, z) + 3);
-    const gy = Math.max(hf.heightAt(x, z), y && y.y < hf.heightAt(x, z) + 1.2 ? y.y : -Infinity);
-    if (out.some((p) => Math.hypot(p.x - x, p.z - z) < TUNE.lootSpacing)) continue;
+    if (Math.hypot(x - site.x, z - site.z) > site.r) continue;
+    const th = hf.heightAt(x, z);
+    if (th < 0.3 || hf.onRoad(x, z, 0.5)) continue;
+    if (out.some((p) => Math.hypot(p.x - x, p.z - z) < TUNE.lootSpacing) || taken.some((p) => Math.hypot(p.x - x, p.z - z) < TUNE.lootSpacing)) continue;
+    const st = collision.groundBelow(x, z, th + 2.5);
+    const gy = Math.max(th, st && st.y < th + 1.2 ? st.y : -Infinity);
+    _la.set(x, gy + 0.45, z); _lb.set(x, gy + 1.5, z);
+    if (collision.capsule(_la, _lb, 0.3).hit) continue;
     out.push({ x, z, y: gy + TUNE.lootLift });
   }
   return out;
@@ -269,7 +282,7 @@ function buildLoot() {
       for (const pts of perRoom) { if (chosen.length >= g.target) break; if (pts[pass]) chosen.push({ ...pts[pass], indoor: true }); }
     }
     const minCount = Math.ceil(g.target * (1 - TUNE.lootTolerance));
-    if (chosen.length < minCount && g.site) chosen.push(...outdoorAround(g.site, rng, g.target - chosen.length).map((p) => ({ ...p, indoor: false })));
+    if (chosen.length < minCount && g.site) chosen.push(...outdoorAround(g.site, rng, g.target - chosen.length, chosen).map((p) => ({ ...p, indoor: false })));
     for (const p of chosen) push(p, g.site, g.tier, 'floor', p.indoor);
     if (g.site) {
       for (const c of layout.crates.filter((q) => q.site === g.site)) {
