@@ -65,8 +65,14 @@ const TUNE = {
   pouch: [0.13, 1.08, 0.17],    // model space: left mag pouch on the plate carrier
   chute: { height: 5.4, forward: 0.35, span: 7.6, chord: 2.6, cells: 9, arcRadius: 5.4, thickness: 0.34 },
   freefallFrame: 0.83, freefallFlutter: 0.06,
+  swimLift: 1.16,               // model lift while swimming (the controller keeps the feet 1.3 m under the surface)
   remoteGroundSnap: 0.35,
-  adsEyeBack: 0.045,            // camera this far behind the configured sight eye point (iron sights), shows more receiver
+  // Extra eye relief (m, along weapon +Z) added to WEAPONS[w].model.eye for iron sights, measured from each model's top
+  // profile so the camera clears the receiver by more than the near plane: the AK's dust cover and the MP5's drum
+  // would otherwise be cut open by it.
+  adsEyeBack: { ak47: 0.17, m4a1: 0.045, mp5: 0.12, m1911: 0.045 },
+  adsArmBones: /Forearm|Hand|Finger/,   // bones whose skin stays visible while the camera looks through the sights
+  adsArmCut: 0.4,               // vertices with less than this weight on those bones are discarded in ADS
 };
 const UPPER_RE = /Spine1|Spine2|Neck|Head|Clavicle|UpperArm|Forearm|Hand|Finger/;
 const NO_ROOT_STRIP = new Set(['Death', 'Hit_Knockback']);
@@ -184,6 +190,37 @@ function shadowOnly(m) {
   s.depthWrite = false;
   s.name = m.name + '#shadow';
   return s;
+}
+
+/**
+ * ADS body material: draws only the forearms, hands and fingers (the skin weights of those bones decide per vertex,
+ * so the sleeve ends cleanly above the wrist and elbow), everything else of the body is discarded. The shadow map
+ * still receives the whole body because shadows use the depth material, not this one.
+ */
+const armsCache = new Map();
+function armsOnly(m, skeleton) {
+  const key = m.uuid + '|' + skeleton.bones.length;
+  let a = armsCache.get(key);
+  if (a) return a;
+  const n = skeleton.bones.length;
+  const mask = new Float32Array(n);
+  for (let i = 0; i < n; i++) mask[i] = TUNE.adsArmBones.test(skeleton.bones[i].name) ? 1 : 0;
+  a = m.clone();
+  a.name = m.name + '#arms';
+  a.onBeforeCompile = (shader) => {
+    shader.uniforms.zfBoneMask = { value: mask };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>\nuniform float zfBoneMask[${n}];\nvarying float vZfArm;`)
+      .replace('#include <skinbase_vertex>', `#include <skinbase_vertex>
+  vZfArm = zfBoneMask[int(skinIndex.x)] * skinWeight.x + zfBoneMask[int(skinIndex.y)] * skinWeight.y
+         + zfBoneMask[int(skinIndex.z)] * skinWeight.z + zfBoneMask[int(skinIndex.w)] * skinWeight.w;`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vZfArm;')
+      .replace('void main() {', `void main() {\n  if (vZfArm < ${TUNE.adsArmCut.toFixed(3)}) discard;`);
+  };
+  a.customProgramCacheKey = () => 'zf-arms-' + n;
+  armsCache.set(key, a);
+  return a;
 }
 
 // ------------------------------------------------------------------------------------------ probe measurements
@@ -674,7 +711,7 @@ export function update(dt) {
   list.sort(byDist);
   const full = Math.max(1, qual.maxAnimatedAvatars | 0);
   const shadowRange = (qual.shadowRange || 90) * 0.85;
-  let fullUsed = 0;
+  let fullUsed = 0, shadowsUsed = 0;
   const now = performance.now();
   for (const av of list) {
     const isLocal = av.entity.id === state.selfId;
@@ -684,7 +721,10 @@ export function update(dt) {
     else if (fullUsed < full) { hz = 0; fullUsed++; }
     else hz = av.dist > TUNE.farMixerDistance ? TUNE.farRateHz : TUNE.midRateHz;
     av.acc += dt;
-    const cast = av.dist < shadowRange;
+    // Shadow casters: the local player plus the nearest avatars up to the tier's animated budget (each caster costs
+    // its draw calls a second time in the shadow pass).
+    const cast = isLocal || (av.dist < shadowRange && shadowsUsed < full);
+    if (cast && !isLocal) shadowsUsed++;
     if (cast !== av.castShadow) setCastShadow(av, cast);
     if (hz > 0 && av.acc < 1 / hz) { placeRoot(av, dt); continue; }
     const step = Math.min(av.acc, 0.25);
@@ -765,10 +805,12 @@ function applyLocalMode(av) {
   for (const m of av.meshes) {
     let hide = false;
     if (mode === 'hidden') hide = true;
-    else if (mode === 'ads') hide = m.kind === 'head' || m.kind === 'helmet' || m.kind === 'equipment';
+    else if (mode === 'ads') hide = m.kind !== 'body' || !m.mesh.isSkinnedMesh;
     if (hide) {
       if (!m.shadow) m.shadow = shadowOnly(m.base);
       m.mesh.material = m.shadow;
+    } else if (mode === 'ads') {
+      m.mesh.material = armsOnly(m.base, m.mesh.skeleton);
     } else {
       m.mesh.material = av.ghost ? ghostOf(m.base) : m.base;
     }
@@ -922,7 +964,9 @@ function animate(av, dt, isLocal) {
   av.model.rotation.set(0, 0, 0);
   av.model.position.set(0, 0, 0);
   if (av.lsw[LS.freefall] > 0.01) freefallBody(av, e, av.lsw[LS.freefall]);
-  if (ls === LS.swim) av.model.position.y = -0.06 + 0.04 * Math.sin(av.upT * 2.2);
+  // Swimming: the entity's feet are PLAYER-controller swimDepth below the surface; lift the horizontal Swim pose so
+  // the back rides at the water line and the head breaks the surface, bobbing with the stroke.
+  if (av.lsw[LS.swim] > 0.01) av.model.position.y += av.lsw[LS.swim] * (TUNE.swimLift + 0.04 * Math.sin(av.upT * 2.2));
   av.root.updateMatrixWorld(true);
 
   procedural(av, e, dt, isLocal, ls, pistol);
@@ -1237,11 +1281,17 @@ function procedural(av, e, dt, isLocal, ls, pistol) {
     rotateBoneWorld(av.bones.spine2, q1);
   }
   // ---- weapon kick (spring) and cant
+  // Semi-implicit Euler in fixed sub-steps: far avatars animate at 6 to 15 Hz, where one big explicit step of this
+  // stiff spring would diverge and pin the weapon at its clamp.
   const K = TUNE.kick;
-  av.kickZv += (-K.k * av.kickZ - K.c * av.kickZv) * dt;
-  av.kickZ += av.kickZv * dt;
-  av.kickRv += (-K.k * av.kickR - K.c * av.kickRv) * dt;
-  av.kickR += av.kickRv * dt;
+  const ns = Math.min(64, Math.ceil(dt / (1 / 240)));
+  const h = ns > 0 ? dt / ns : 0;
+  for (let i = 0; i < ns; i++) {
+    av.kickZv += (-K.k * av.kickZ - K.c * av.kickZv) * h;
+    av.kickZ += av.kickZv * h;
+    av.kickRv += (-K.k * av.kickR - K.c * av.kickRv) * h;
+    av.kickR += av.kickRv * h;
+  }
   const rl = reloadPose(av, W);
   av.kickPivot.position.set(0, -0.012 * rl.dip, clamp(av.kickZ, -0.02, 0.12));
   av.kickPivot.rotation.set(clamp(av.kickR, -0.1, 0.35) - rl.dip * 0.12, rl.dip * 0.05, rl.cant);
@@ -1249,7 +1299,7 @@ function procedural(av, e, dt, isLocal, ls, pistol) {
   if (av.weapon && !av.weaponOnBack) {
     av.handHolder.updateWorldMatrix(true, false);
     av.adsEye.copy(av.weapon.proto.eye);
-    if (!av.weapon.proto.W.scope) av.adsEye.z += TUNE.adsEyeBack;
+    if (!av.weapon.proto.W.scope) av.adsEye.z += TUNE.adsEyeBack[av.weapon.id] || 0.045;
     av.adsEye.applyMatrix4(av.handHolder.matrixWorld);
     av.adsValid = true;
   } else av.adsValid = false;

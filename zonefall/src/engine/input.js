@@ -7,7 +7,7 @@
 // pressing a 'pause' key while locked releases the lock, which main.js and the UI treat as "open the pause menu".
 // Bindings are persisted per browser under STORAGE_KEY; rebind()/resetBindings()/captureNext() serve the settings UI.
 import { BINDINGS, ACTION_LABELS } from '../config.js';
-import { emit, on, EV } from '../core/bus.js';
+import { emit, on, EV, registerEvents } from '../core/bus.js';
 import { state, debug, APP } from '../core/state.js';
 import { storage } from '../core/util.js';
 
@@ -22,6 +22,9 @@ const TUNE = {
   padLookRate: 3.4,           // rad/s at full right-stick deflection (sensitivity 1.0), applied by camera.look via stick('look')
 };
 const STORAGE_KEY = 'zonefall.bindings.v1';
+
+/** PLAYER input events. BINDINGS {bindings: {action: codes[]}} after rebind() or resetBindings(). */
+export const IEV = registerEvents({ BINDINGS: 'input:bindings' });
 
 // Standard-mapping gamepad buttons -> actions.
 const PAD_BUTTONS = {
@@ -406,7 +409,7 @@ export function rebind(action, codes) {
   active[action] = list;
   codeToActions = buildReverse(active);
   storage.set(STORAGE_KEY, active);
-  emit(EV.SETTINGS_CHANGED, { key: 'bindings', value: cloneMap(active) });
+  emit(IEV.BINDINGS, { bindings: cloneMap(active) });
   return cloneMap(active);
 }
 
@@ -415,7 +418,7 @@ export function resetBindings() {
   active = cloneMap(DEFAULTS);
   codeToActions = buildReverse(active);
   storage.set(STORAGE_KEY, active);
-  emit(EV.SETTINGS_CHANGED, { key: 'bindings', value: cloneMap(active) });
+  emit(IEV.BINDINGS, { bindings: cloneMap(active) });
   return cloneMap(active);
 }
 

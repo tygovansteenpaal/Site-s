@@ -88,6 +88,9 @@ function createLayout() {
     outdoor: [],     // outdoor loot/cover candidates {x, z, site}
     poles: [],       // power poles {x, z, yaw}
     special: [],     // site set pieces: {kind, ...}
+    sidewalks: [],   // town pavements: {road, s0, s1, side, site}
+    lamps: [],       // street lamps: {x, z, yaw (arm points along -local z toward the road), road, s}
+    gardenTrees: [], // {x, z, s, site}
     footprints: [],  // for the map image {x, z, w, d, rot, round}
   };
 }
@@ -200,7 +203,79 @@ function harrow(L) {
     }
     L.outdoor.push({ x: b.x + fx * (b.d / 2 + 1.6), z: b.z + fz * (b.d / 2 + 1.6), site: s.id });
   }
+  townStreets(L, s, ['R1', 'R2', 'R3'], rng);
+  for (const b of L.buildings.filter((q) => q.site === s.id && q.kind === 'house')) yard(L, b, rng);
   crateSpots(L, s, 3, rng);
+}
+
+// ------------------------------------------------------------------------------------------ town dressing
+const SIDEWALK = { inner: 0.12, outer: 2.1, step: 2, junction: 3.5, lampEvery: 26 };
+/** Pavement runs on both sides of the given roads inside the town core, broken at junctions; lamps along them. */
+function townStreets(L, site, roadIds, rng) {
+  for (const id of roadIds) {
+    const r = roads.find((q) => q.id === id);
+    const others = roads.filter((q) => q !== r);
+    for (const side of [1, -1]) {
+      let run = null;
+      const flush = () => { if (run && run.s1 - run.s0 >= 6) L.sidewalks.push(run); run = null; };
+      for (let sa = 0; sa <= r.len; sa += SIDEWALK.step) {
+        const p = roadPoint(r, sa);
+        const nx = -p.tz * side, nz = p.tx * side;
+        const ox = p.x + nx * (r.half + 1.1), oz = p.z + nz * (r.half + 1.1);
+        let ok = Math.hypot(p.x - site.x, p.z - site.z) < site.r * 0.74;
+        if (ok) for (const o of others) { const q = nearestOn(o, ox, oz); if (q < o.half + SIDEWALK.junction) { ok = false; break; } }
+        if (ok) for (const b of L.buildings) if (obbOverlap({ x: ox, z: oz, w: 2.4, d: 2.4, yaw: 0 }, { ...b, pad: 0.2 })) { ok = false; break; }
+        if (ok) { if (!run) run = { road: id, s0: sa, s1: sa, side, site: site.id }; run.s1 = sa; } else flush();
+      }
+      flush();
+    }
+  }
+  // lamps: alternate sides along each run, on the outer pavement edge
+  let k = 0;
+  for (const w of L.sidewalks.filter((q) => q.site === site.id)) {
+    const r = roads.find((q) => q.id === w.road);
+    for (let sa = w.s0 + 4 + ((k++ * 7) % 11); sa < w.s1 - 3; sa += SIDEWALK.lampEvery) {
+      const p = roadPoint(r, sa);
+      const nx = -p.tz * w.side, nz = p.tx * w.side;
+      const x = p.x + nx * (r.half + SIDEWALK.outer - 0.35), z = p.z + nz * (r.half + SIDEWALK.outer - 0.35);
+      L.lamps.push({ x, z, yaw: yawFacing(nx, nz), road: r.id, s: sa });
+    }
+  }
+}
+
+function nearestOn(r, x, z) {
+  let best = Infinity;
+  for (let i = 0; i < r.xs.length - 1; i++) {
+    const ax = r.xs[i], az = r.zs[i], ex = r.xs[i + 1] - ax, ez = r.zs[i + 1] - az;
+    const l2 = ex * ex + ez * ez;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / l2)) : 0;
+    best = Math.min(best, Math.hypot(ax + ex * t - x, az + ez * t - z));
+  }
+  return best;
+}
+
+/**
+ * Front and back yard for a house: style picked here, geometry built with the house (the gate lines up with the
+ * front door chosen there). The back garden is dropped when it would run into another building or a road.
+ */
+function yard(L, b, rng) {
+  const style = rng.pick(['picket', 'picket', 'wall', 'hedge', 'hedge', 'rail']);
+  const front = 3.6;
+  const back = 6.5;
+  const c = Math.cos(b.yaw), sn = Math.sin(b.yaw);
+  const at = (lx, lz) => [b.x + lx * c + lz * sn, b.z - lx * sn + lz * c];
+  const [fx, fz] = at(0, b.d / 2 + front / 2);
+  const frontOk = clearOfRoads(fx, fz, b.w + 1.2, front, b.yaw, -1.2) &&
+    !L.buildings.some((o) => o !== b && obbOverlap({ x: fx, z: fz, w: b.w + 1.2, d: front, yaw: b.yaw, pad: 0.4 }, o));
+  const [bx, bz] = at(0, -b.d / 2 - back / 2);
+  let backOk = clearOfRoads(bx, bz, b.w + 1.2, back, b.yaw, 0.5) && !L.slabs.some((q) => obbOverlap({ x: bx, z: bz, w: b.w + 1.2, d: back, yaw: b.yaw }, q));
+  if (backOk) for (const o of L.buildings) if (o !== b && obbOverlap({ x: bx, z: bz, w: b.w + 1.2, d: back, yaw: b.yaw, pad: 0.6 }, o)) { backOk = false; break; }
+  b.yard = { style, front: frontOk ? front : 0, back: backOk ? back : 0, rear: rng.pick(['picket', 'rail', 'wire']) };
+  if (backOk && rng.chance(0.75)) {
+    const side = rng.chance(0.5) ? 1 : -1;
+    const [tx, tz] = at(side * rng.range(0.6, b.w / 2 - 1.2), -b.d / 2 - back * rng.range(0.5, 0.7));
+    L.gardenTrees.push({ x: tx, z: tz, s: rng.range(0.7, 0.95), site: b.site });
+  }
 }
 
 function millbrook(L) {
@@ -282,6 +357,30 @@ function kessler(L) {
   L.props.push({ key: 'crate_military', x: 306, z: -222, yaw: 0, site: s.id }, { key: 'crate_military', x: 306, z: -220.7, yaw: 0.05, site: s.id }, { key: 'ammo_box', x: 292, z: -224, yaw: 0.4, site: s.id });
   L.props.push({ key: 'jerrycan', x: 268, z: -268, yaw: 0, site: s.id }, { key: 'jerrycan', x: 268.6, z: -268.1, yaw: 0.2, site: s.id });
   for (const [x, z] of [[230, -250], [270, -290], [320, -250], [180, -230], [240, -200], [300, -330 + 8]]) L.outdoor.push({ x, z, site: s.id });
+  // HESCO compounds: a U around the command post (open to the north), a screen east of the barracks with a gap,
+  // a line shielding the hangar apron and an L by the helipad. Each is real cover in the open yard.
+  const hesco = [
+    { pts: [[247, -273], [240, -273], [240, -250], [264, -250], [264, -273], [257, -273]], h: 1.37 },
+    { pts: [[220, -306], [220, -276]], h: 1.37 }, { pts: [[220, -266], [220, -240]], h: 1.37 },
+    { pts: [[248, -206], [276, -206]], h: 2.2 },
+    { pts: [[281, -312], [281, -283], [292, -283]], h: 1.37 },
+  ];
+  for (const hh of hesco) {
+    L.special.push({ kind: 'hesco', site: s.id, ...hh });
+    for (let i = 0; i < hh.pts.length - 1; i++) {
+      const [ax, az] = hh.pts[i], [bx, bz] = hh.pts[i + 1];
+      L.footprints.push({ x: (ax + bx) / 2, z: (az + bz) / 2, w: Math.hypot(bx - ax, bz - az), d: 1.1, rot: -Math.atan2(bz - az, bx - ax), fill: 'rgba(120,108,82,0.9)' });
+    }
+  }
+  // sandbag emplacements inside both gates (horseshoes open toward the yard)
+  for (const [x, z, face] of [[219, -179, Math.PI], [241, -179, Math.PI], [331, -239, -Math.PI / 2], [331, -261, -Math.PI / 2]]) {
+    L.special.push({ kind: 'sandbags', site: s.id, x, z, yaw: face, r: 2.1 });
+    L.footprints.push({ x, z, w: 4.6, d: 4.6, rot: 0, round: true, fill: 'rgba(120,108,82,0.8)' });
+  }
+  for (const [x, z] of [[206, -238], [276, -244], [286, -322], [312, -258]]) L.special.push({ kind: 'floodlight', site: s.id, x, z });
+  // concrete roads from both gates into the yard
+  L.slabs.push({ site: s.id, kind: 'panels', x: 230, z: -201, w: 7, d: 54, yaw: 0, panel: 7 });
+  L.slabs.push({ site: s.id, kind: 'panels', x: 316, z: -250, w: 44, d: 7, yaw: 0, panel: 7 });
   crateSpots(L, s, 8, rng);
 }
 
@@ -431,6 +530,7 @@ function roadside(L) {
     if (!fits(L, b, 6) || !clearOfRoads(x, z, sz.w, sz.d, yaw)) continue;
     const rec = addBuilding(L, b);
     rec.lootTarget = ROADSIDE.lootPointsEach;
+    yard(L, rec, rng);
     if (rng.chance(0.6)) L.props.push({ key: 'covered_car', x: x + Math.cos(yaw) * (sz.w / 2 + 3), z: z - Math.sin(yaw) * (sz.w / 2 + 3), yaw: yaw + Math.PI / 2, site: null });
     placed++;
   }

@@ -181,14 +181,32 @@ export async function loadCore(onProgress = () => {}) {
   });
   skies.set(skyKey, { hdr: hdrParts.hdr, bg: hdrParts.bg });
 
-  // Every soldier and weapon shares one material instance per glTF; mark them so tint clones are cheap to spot.
+  // Shadows on, and no transmissive materials: one visible KHR_materials_transmission surface (the generator's
+  // glass, scope lenses) makes three.js re-render every opaque object into a transmission buffer, doubling the
+  // whole frame. Glass becomes a glossy, slightly see-through standard surface instead.
   for (const gltf of models.values()) {
     gltf.scene.traverse((o) => {
-      if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; }
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) if (m && m.transmission > 0) glassify(m);
     });
   }
   loaded = true;
   onProgress(1, 'Assets ready');
+}
+
+function glassify(m) {
+  m.transmission = 0;
+  m.thickness = 0;
+  m.transparent = true;
+  m.opacity = 0.42;
+  m.depthWrite = false;
+  m.roughness = Math.min(m.roughness ?? 0.1, 0.12);
+  m.metalness = 0;
+  m.color.multiplyScalar(0.35);
+  m.forceSinglePass = true;
+  m.needsUpdate = true;
 }
 
 /** Loaded GLTF ({scene, animations}) for an ASSETS.models key. Shared: never mutate or add it to the scene. */

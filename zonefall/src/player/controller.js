@@ -358,7 +358,12 @@ export function gait() {
 }
 
 /** Current stance 'stand' | 'crouch' | 'slide' | 'swim', capsule height and smoothed eye height. */
-export function stanceInfo() { return { stance: st.stance, height: st.height, eye: st.eye, grounded: st.grounded, mantle: !!st.mantle, chuteT: st.chuteT }; }
+const stanceOut = { stance: 'stand', height: PLAYER.height, eye: PLAYER.eyeHeight, grounded: false, mantle: false, chuteT: 0 };
+export function stanceInfo() {
+  stanceOut.stance = st.stance; stanceOut.height = st.height; stanceOut.eye = st.eye;
+  stanceOut.grounded = st.grounded; stanceOut.mantle = !!st.mantle; stanceOut.chuteT = st.chuteT;
+  return stanceOut;
+}
 
 /** Freefall / chute state for the avatar and camera: {chuteT 0..1 canopy opening, brake 0..1, heading rad}. */
 const airOut = { chuteT: 0, brake: 0, heading: 0 };
