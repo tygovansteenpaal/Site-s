@@ -206,6 +206,7 @@ export function init(camera) {
       pos: camObj.position.toArray().map((v) => +v.toFixed(3)) }),
     setView: (v) => setView(v),
     swapShoulder: () => { shoulder = -shoulder; },
+    cameraTune: TUNE,
   });
 }
 

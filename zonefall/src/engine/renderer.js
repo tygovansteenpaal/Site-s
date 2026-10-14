@@ -82,8 +82,16 @@ function writeFogChunks() {
     '\t#endif',
     '\tfloat zfgSun = pow( max( dot( zfgDir, zfSunDir ), 0.0 ), 6.0 );',
     '\tfloat zfgAway = 1.0 - max( dot( zfgDir, zfSunDir ), 0.0 );',
-    `\tvec3 zfgFogCol = fogColor * mix( vec3( 1.0 ), vec3( 0.93, 0.98, 1.07 ), zfgAway * zfgAway );`,
-    `\tzfgFogCol = mix( zfgFogCol, fogColor * zfScatter * 1.35, zfgSun * ${f(TUNE.fogScatter)} );`,
+    // three.js uploads fogColor in the output colour space (sRGB when drawing straight to the screen, linear into
+    // a render target) and mixes fog after tone mapping. Work in linear, then tone map and encode exactly like the
+    // sky dome, so fogged terrain and sea meet the sky without a seam on every tier.
+    '\tvec3 zfgLin = linearToOutputTexel( vec4( 0.5 ) ).r > 0.6 ? sRGBTransferEOTF( vec4( fogColor, 1.0 ) ).rgb : fogColor;',
+    `\tvec3 zfgFogCol = zfgLin * mix( vec3( 1.0 ), vec3( 0.93, 0.98, 1.07 ), zfgAway * zfgAway );`,
+    `\tzfgFogCol = mix( zfgFogCol, zfgLin * zfScatter * 1.35, zfgSun * ${f(TUNE.fogScatter)} );`,
+    '\t#ifdef TONE_MAPPING',
+    '\t\tzfgFogCol = toneMapping( zfgFogCol );',
+    '\t#endif',
+    '\tzfgFogCol = linearToOutputTexel( vec4( zfgFogCol, 1.0 ) ).rgb;',
     '\tgl_FragColor.rgb = mix( gl_FragColor.rgb, zfgFogCol, fogFactor );',
     '#endif',
   ].join('\n');
@@ -98,6 +106,9 @@ export function setAtmosphere({ sunDir, scatter } = {}) {
   if (scatter != null) fogState.scatter.set(scatter);
   writeFogChunks();
 }
+
+/** Fog colour model constants (scatter colour, sun-side scatter strength) so the sky dome can match the fog exactly. */
+export function fogParams() { return { scatter: fogState.scatter.clone(), scatterK: TUNE.fogScatter }; }
 
 // ------------------------------------------------------------------------------------------ init and sizing
 /**

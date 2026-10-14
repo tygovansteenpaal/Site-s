@@ -25,6 +25,7 @@ const TUNE = {
   nearFrac: 0.22,               // LOD0 radius as a fraction of quality.treeLodDistance ...
   nearMin: 26, nearMax: 48,     // ... clamped to this range (m)
   shadowPad: 1.0,              // LOD1 trees cast shadows within this multiple of the shadow box half extent
+  treeBudget: 0.3,              // share of quality.budgetTris for tree meshes (nearest first; the rest become impostors)
   rockCull: 1.15,               // rocks drawn within quality.propDistance x this
   impostorFrame: [128, 256],
   update: 0.2,
@@ -57,6 +58,8 @@ let grass = null;
 let windUniform = { value: 0 };
 let qual = null;
 let acc = 1;
+let lodKeys = null;         // Float64Array: quantised distance * KEY_SPAN + tree index, sorted nearest first
+const KEY_SPAN = 8192;
 const lastView = new THREE.Vector3(1e9, 0, 0);
 const stats = { trees: 0, near: 0, mid: 0, far: 0, bushes: 0, grass: 0, rocks: 0 };
 
@@ -833,16 +836,28 @@ export function updateFoliage(dt, viewPos, camera) {
   for (const tm of treeMeshes) { tm.l0b.count = tm.l0l.count = tm.l1b.count = tm.l1l.count = tm.l1bn.count = tm.l1ln.count = 0; }
   let far = 0, near = 0, mid = 0;
   const vattr = impostor.attr.array;
-  for (const t of trees) {
+  // visible trees sorted nearest first, then LODs assigned against a triangle budget (shadow casters count twice)
+  if (!lodKeys || lodKeys.length < trees.length) lodKeys = new Float64Array(trees.length);
+  let m = 0;
+  for (let i = 0; i < trees.length; i++) {
+    const t = trees[i];
     const d = Math.hypot(t.x - viewPos.x, t.y - viewPos.y, t.z - viewPos.z);
     if (d > view) continue;
     const v = variants[t.v];
     if (camera) { _sph.center.set(t.x, t.y + v.h * 0.5 * t.s, t.z); _sph.radius = v.h * 0.6 * t.s + 2; if (!_frustum.intersectsSphere(_sph)) continue; }
-    const tm = treeMeshes[t.v];
-    if (d < lodNear) { tm.l0b.setMatrixAt(tm.l0b.count++, t.m); tm.l0l.setMatrixAt(tm.l0l.count++, t.m); near++; }
-    else if (d < lodFar) {
-      if (d < shadowR) { tm.l1b.setMatrixAt(tm.l1b.count++, t.m); tm.l1l.setMatrixAt(tm.l1l.count++, t.m); }
-      else { tm.l1bn.setMatrixAt(tm.l1bn.count++, t.m); tm.l1ln.setMatrixAt(tm.l1ln.count++, t.m); }
+    lodKeys[m++] = Math.floor(d * 8) * KEY_SPAN + i;
+  }
+  lodKeys.fill(Infinity, m);
+  lodKeys.sort();
+  let budget = qual.budgetTris * TUNE.treeBudget;
+  for (let k = 0; k < m; k++) {
+    const key = lodKeys[k];
+    const i = key % KEY_SPAN, d = Math.floor(key / KEY_SPAN) / 8;
+    const t = trees[i], v = variants[t.v], tm = treeMeshes[t.v];
+    if (d < lodNear && budget >= v.tris0 * 2) { tm.l0b.setMatrixAt(tm.l0b.count++, t.m); tm.l0l.setMatrixAt(tm.l0l.count++, t.m); near++; budget -= v.tris0 * 2; }
+    else if (d < lodFar && budget >= v.tris1 * (d < shadowR ? 2 : 1)) {
+      if (d < shadowR) { tm.l1b.setMatrixAt(tm.l1b.count++, t.m); tm.l1l.setMatrixAt(tm.l1l.count++, t.m); budget -= v.tris1 * 2; }
+      else { tm.l1bn.setMatrixAt(tm.l1bn.count++, t.m); tm.l1ln.setMatrixAt(tm.l1ln.count++, t.m); budget -= v.tris1; }
       mid++;
     }
     else { impostor.mesh.setMatrixAt(far, t.m); vattr[far] = t.v; far++; }

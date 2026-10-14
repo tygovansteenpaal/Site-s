@@ -65,7 +65,8 @@ const TUNE = {
   pouch: [0.13, 1.08, 0.17],    // model space: left mag pouch on the plate carrier
   chute: { height: 5.4, forward: 0.35, span: 7.6, chord: 2.6, cells: 9, arcRadius: 5.4, thickness: 0.34 },
   freefallFrame: 0.83, freefallFlutter: 0.06,
-  swimLift: 1.36,               // model lift while swimming: feet are 1.3 m under the surface, this puts the head out and the back awash
+  swimLift: 1.25,               // model lift while swimming: feet are 1.3 m under the surface, this puts the head out and the back awash
+  swimPitchDeg: 11,             // head up, legs trailing under the surface
   remoteGroundSnap: 0.35,
   // Extra eye relief (m, along weapon +Z) added to WEAPONS[w].model.eye for iron sights, measured from each model's top
   // profile so the camera clears the receiver by more than the near plane: the AK's dust cover and the MP5's drum
@@ -675,6 +676,7 @@ export function init(sc) {
     avatars: () => [...avatars.values()].map((a) => ({ id: a.id, ls: LOWER_STATES[a.ls], visible: a.root.visible, culled: a.culled,
       weapon: a.weaponId, near: a.weaponNear, raise: +a.raise.toFixed(2), follow: +a.follow.toFixed(2), dist: +a.dist.toFixed(1) })),
     avatarObject: (id) => avatars.get(id) || null,
+    avatarTune: TUNE,
   });
 }
 
@@ -974,7 +976,11 @@ function animate(av, dt, isLocal) {
   if (av.lsw[LS.freefall] > 0.01) freefallBody(av, e, av.lsw[LS.freefall]);
   // Swimming: the entity's feet are PLAYER-controller swimDepth below the surface; lift the horizontal Swim pose so
   // the back rides at the water line and the head breaks the surface, bobbing with the stroke.
-  if (av.lsw[LS.swim] > 0.01) av.model.position.y += av.lsw[LS.swim] * (TUNE.swimLift + 0.04 * Math.sin(av.upT * 2.2));
+  if (av.lsw[LS.swim] > 0.01) {
+    const sw = av.lsw[LS.swim];
+    av.model.position.y += sw * (TUNE.swimLift + 0.03 * Math.sin(av.upT * 2.2));
+    av.model.rotation.x -= sw * (TUNE.swimPitchDeg + 2.5 * Math.sin(av.upT * 2.2 + 0.8)) * DEG;
+  }
   av.root.updateMatrixWorld(true);
 
   procedural(av, e, dt, isLocal, ls, pistol);

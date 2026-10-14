@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZONEFALL - Combat range</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script>
+    // Import map: the six standard entries of index.html plus the COMBAT stand-ins (dev/stubs/combat) for the groups
+    // this harness does not need: a firing range instead of the island, target bots, loot drop recorder, an offline
+    // session/sync with pose history, and match/plane clocks.
+    (() => {
+      const imports = {
+        'three': 'https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js',
+        'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/',
+        'three-mesh-bvh': 'https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js',
+        'trystero': 'https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm',
+        'postprocessing': 'https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js',
+        'ez-tree': 'https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js',
+        '../src/world/world.js': './stubs/combat/world.js',
+        '../src/game/bots.js': './stubs/combat/bots.js',
+        '../src/game/loot.js': './stubs/combat/loot.js',
+        '../src/game/match.js': './stubs/combat/match.js',
+        '../src/game/plane.js': './stubs/combat/plane.js',
+        '../src/net/session.js': './stubs/combat/session.js',
+        '../src/net/sync.js': './stubs/combat/sync.js',
+      };
+      const map = document.createElement('script');
+      map.type = 'importmap';
+      map.textContent = JSON.stringify({ imports });
+      document.currentScript.after(map);
+    })();
+  </script>
+  <style>
+    :root {
+      --ink: #e9e7e1; --ink-2: #b9bbb5; --ink-3: #80847f; --bg: #0d0f0e; --panel: rgba(13, 15, 14, 0.88);
+      --line: rgba(233, 231, 225, 0.12); --accent: #e8b23a; --danger: #e5484d; --armor: #5aa9e6;
+      --ease: cubic-bezier(.2, .7, .2, 1);
+    }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden; font: 400 13px/1.45 Barlow, system-ui, sans-serif; }
+    #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+    #panel { position: fixed; top: 12px; left: 12px; bottom: 12px; width: 300px; background: var(--panel); border: 1px solid var(--line);
+      backdrop-filter: blur(8px); overflow-y: auto; padding: 14px 14px 18px; box-sizing: border-box; z-index: 5; }
+    #panel.collapsed { bottom: auto; width: auto; overflow: hidden; }
+    #panel.collapsed > :not(header) { display: none; }
+    header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+    h1 { margin: 0; font: 700 26px/1 'Barlow Condensed', system-ui, sans-serif; letter-spacing: .06em; }
+    h1 span { color: var(--accent); }
+    .sub { color: var(--ink-3); font: 500 11px/1.4 'JetBrains Mono', monospace; letter-spacing: .08em; text-transform: uppercase; margin: 6px 0 10px; }
+    section { border-top: 1px solid var(--line); padding: 10px 0 6px; }
+    section h2 { margin: 0 0 8px; font: 600 12px/1 'Barlow Condensed', sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    .row { margin-top: 6px; }
+    button { font: 600 12px/1 'Barlow Condensed', sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--ink);
+      background: rgba(233, 231, 225, 0.06); border: 1px solid var(--line); padding: 8px 6px; cursor: pointer;
+      transition: background .15s var(--ease), border-color .15s var(--ease); }
+    button:hover { background: rgba(233, 231, 225, 0.12); border-color: rgba(233, 231, 225, 0.3); }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button.on { border-color: var(--accent); color: var(--accent); }
+    button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    #collapse { padding: 6px 8px; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font: 400 11.5px/1.4 'JetBrains Mono', monospace; }
+    dt { color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+    dd { margin: 0; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    table { width: 100%; border-collapse: collapse; font: 400 10.5px/1.5 'JetBrains Mono', monospace; }
+    th { color: var(--ink-3); font-weight: 500; text-align: right; padding: 1px 3px; }
+    th:first-child, td:first-child { text-align: left; }
+    td { text-align: right; padding: 1px 3px; border-top: 1px solid rgba(233,231,225,.06); }
+    td.hd { color: var(--accent); }
+    .hint { margin-top: 6px; font: 400 11px/1.5 'JetBrains Mono', monospace; color: var(--ink-3); }
+    pre { margin: 6px 0 0; font: 400 10.5px/1.45 'JetBrains Mono', monospace; color: var(--ink-2); white-space: pre-wrap; max-height: 150px; overflow: auto; }
+    #sounds { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    #sounds button, #events button { font-size: 11px; padding: 6px 4px; letter-spacing: .06em; text-transform: none; font-family: 'JetBrains Mono', monospace; font-weight: 500; }
+    #events { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    canvas.plot { width: 100%; height: 180px; display: block; background: rgba(0,0,0,.35); border: 1px solid var(--line); }
+    /* HUD */
+    #hud { position: fixed; inset: 0; pointer-events: none; z-index: 3; }
+    #cross { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transition: opacity .1s; }
+    #cross i { position: absolute; background: rgba(240, 238, 230, 0.92); box-shadow: 0 0 2px rgba(0,0,0,.7); }
+    #cross .dot { width: 2px; height: 2px; left: -1px; top: -1px; }
+    #cross .h { width: 9px; height: 2px; top: -1px; }
+    #cross .v { width: 2px; height: 9px; left: -1px; }
+    #hit { position: absolute; left: 50%; top: 50%; width: 0; height: 0; opacity: 0; }
+    #hit i { position: absolute; width: 11px; height: 2px; background: #f4f1ea; box-shadow: 0 0 3px rgba(0,0,0,.8); transform-origin: 0 50%; }
+    #hit.head i { background: var(--accent); }
+    #hit.kill i { background: var(--danger); width: 15px; height: 3px; }
+    #hit .ring { position: absolute; left: -16px; top: -16px; width: 32px; height: 32px; border: 2px solid var(--armor); border-radius: 50%; opacity: 0; }
+    #hit.armor .ring { opacity: 1; }
+    #nums { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+    #nums div { position: absolute; transform: translate(-50%, -100%); font: 700 18px/1 'Barlow Condensed', sans-serif; letter-spacing: .04em;
+      color: #f4f1ea; text-shadow: 0 1px 3px rgba(0,0,0,.9); white-space: nowrap; }
+    #nums div.head { color: var(--accent); font-size: 22px; }
+    #nums div.limb { color: var(--ink-2); font-size: 16px; }
+    #nums div.kill::after { content: ' KILL'; color: var(--danger); font-size: 14px; }
+    #nums div small { display: block; font: 500 10px/1.4 'JetBrains Mono', monospace; color: var(--ink-2); text-align: center; }
+    #labels { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+    #labels div { position: absolute; transform: translate(-50%, -100%); font: 500 10px/1.3 'JetBrains Mono', monospace; letter-spacing: .06em;
+      color: var(--ink); background: rgba(13, 15, 14, 0.72); padding: 2px 5px; white-space: nowrap; }
+    #labels div b { display: block; height: 3px; margin-top: 2px; background: rgba(233,231,225,.15); }
+    #labels div b i { display: block; height: 100%; background: var(--ink); }
+    #labels div b.ar i { background: var(--armor); }
+    #weapon { position: absolute; right: 22px; bottom: 18px; text-align: right; text-shadow: 0 1px 4px rgba(0,0,0,.8); }
+    #weapon .name { font: 600 13px/1 'Barlow Condensed', sans-serif; letter-spacing: .18em; color: var(--ink-2); }
+    #weapon .ammo { font: 700 44px/1 'Barlow Condensed', sans-serif; letter-spacing: .02em; }
+    #weapon .ammo small { font-size: 20px; color: var(--ink-3); }
+    #weapon .alt { font: 500 11px/1.6 'JetBrains Mono', monospace; color: var(--ink-3); letter-spacing: .08em; }
+    #vitals { position: absolute; left: 50%; transform: translateX(-50%); bottom: 20px; width: 230px; }
+    #vitals .bar { height: 6px; background: rgba(233, 231, 225, 0.12); margin-top: 4px; }
+    #vitals .bar i { display: block; height: 100%; background: var(--ink); }
+    #vitals .plates { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; }
+    #vitals .plates i { height: 5px; background: rgba(90,169,230,.18); }
+    #vitals .plates i.f { background: var(--armor); }
+    #action { position: absolute; left: 50%; top: 58%; transform: translateX(-50%); text-align: center; font: 600 12px/1 'Barlow Condensed', sans-serif; letter-spacing: .2em; color: var(--ink); text-shadow: 0 1px 3px rgba(0,0,0,.9); }
+    #action .bar { width: 120px; height: 3px; background: rgba(233,231,225,.15); margin: 6px auto 0; }
+    #action .bar i { display: block; height: 100%; background: var(--accent); }
+    #lockhint { position: absolute; left: 50%; top: 18px; transform: translateX(-50%); font: 500 11px/1 'JetBrains Mono', monospace; letter-spacing: .12em;
+      color: var(--ink-2); text-transform: uppercase; background: rgba(13,15,14,.72); padding: 8px 12px; }
+    #stats { position: absolute; right: 12px; top: 12px; font: 500 10.5px/1.5 'JetBrains Mono', monospace; color: var(--ink-2); text-align: right;
+      background: rgba(13,15,14,.6); padding: 6px 8px; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 20; }
+    #loading b { display: block; font: 700 64px/0.9 'Barlow Condensed', sans-serif; letter-spacing: .04em; }
+    #loading .bar { width: 260px; height: 4px; background: rgba(233,231,225,.12); margin: 10px 0; }
+    #loading .bar i { display: block; height: 100%; background: var(--ink); }
+    #loading span { font: 500 11px/1.6 'JetBrains Mono', monospace; color: var(--ink-3); letter-spacing: .1em; text-transform: uppercase; }
+    @media (max-width: 860px) { #panel { width: 250px; } #vitals { width: 170px; } }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <canvas id="game" tabindex="0" aria-label="Combat range view"></canvas>
+  <div id="labels"></div>
+  <div id="nums"></div>
+  <div id="hud">
+    <div id="cross"><i class="dot"></i><i class="h" data-s="l"></i><i class="h" data-s="r"></i><i class="v" data-s="t"></i><i class="v" data-s="b"></i></div>
+    <div id="hit"><i style="transform:rotate(45deg) translateX(6px)"></i><i style="transform:rotate(135deg) translateX(6px)"></i><i style="transform:rotate(225deg) translateX(6px)"></i><i style="transform:rotate(315deg) translateX(6px)"></i><div class="ring"></div></div>
+    <div id="action" hidden><span data-action>RELOADING</span><div class="bar"><i data-actionbar style="width:0%"></i></div></div>
+    <div id="vitals"><div class="plates"><i></i><i></i><i></i></div><div class="bar"><i data-hpbar style="width:100%"></i></div></div>
+    <div id="weapon"><div class="name" data-wname>-</div><div class="ammo"><span data-mag>0</span> <small>/ <span data-res>0</span></small></div><div class="alt" data-walt>-</div></div>
+    <div id="stats" data-stats>-</div>
+    <div id="lockhint">Click the view to aim. Esc releases the mouse.</div>
+  </div>
+  <aside id="panel" aria-label="Combat range controls">
+    <header><h1>ZONE<span>FALL</span> / COMBAT</h1><button type="button" id="collapse" aria-expanded="true">Hide</button></header>
+    <div class="sub">Weapons, ballistics, damage, grenades, vfx, viewmodel, audio</div>
+    <section>
+      <h2>Weapons</h2>
+      <div class="grid3">
+        <button type="button" data-act="give" data-w="ak47">AK-47</button>
+        <button type="button" data-act="give" data-w="m4a1">M4A1</button>
+        <button type="button" data-act="give" data-w="mp5">MP5</button>
+        <button type="button" data-act="give" data-w="m700">M700</button>
+        <button type="button" data-act="give" data-w="m1911">1911</button>
+        <button type="button" data-act="fill">Fill ammo</button>
+      </div>
+      <div class="grid3 row">
+        <button type="button" data-act="view">FP / TP</button>
+        <button type="button" data-act="ads">Hold ADS</button>
+        <button type="button" data-act="god">God mode</button>
+      </div>
+      <div class="grid3 row">
+        <button type="button" data-act="quality" data-q="low">Low</button>
+        <button type="button" data-act="quality" data-q="medium">Medium</button>
+        <button type="button" data-act="quality" data-q="high">High</button>
+      </div>
+      <dl class="row">
+        <dt>State</dt><dd data-k="wstate">-</dd>
+        <dt>Spread</dt><dd data-k="spread">-</dd>
+        <dt>Breath</dt><dd data-k="breath">-</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Targets</h2>
+      <div class="grid3">
+        <button type="button" data-act="armor" data-v="0" class="on">No armor</button>
+        <button type="button" data-act="armor" data-v="50">1 plate</button>
+        <button type="button" data-act="armor" data-v="150">3 plates</button>
+        <button type="button" data-act="moving">Strafe</button>
+        <button type="button" data-act="crouch">Crouch</button>
+        <button type="button" data-act="revive">Revive all</button>
+      </div>
+      <table class="row"><thead><tr><th>Target</th><th>HP</th><th>Armor</th><th>Hits</th><th>Last</th></tr></thead><tbody data-targets></tbody></table>
+    </section>
+    <section>
+      <h2>Recoil pattern</h2>
+      <canvas class="plot" data-plot width="560" height="360"></canvas>
+      <div class="grid row">
+        <button type="button" data-act="pattern" class="primary">Fire a mag at the wall</button>
+        <button type="button" data-act="cleardecals">Clear holes</button>
+      </div>
+      <div class="hint">Plot: the config pattern for 30 rounds (shot 1 at the centre, metres at 25 m, ADS). The wall test fires a full magazine with no compensation; holes and the plot should match.</div>
+    </section>
+    <section>
+      <h2>Grenades and effects</h2>
+      <div class="grid">
+        <button type="button" data-act="nade" data-cook="0.3">Throw frag</button>
+        <button type="button" data-act="nade" data-cook="2.6">Cook 2.6 s</button>
+        <button type="button" data-act="surfaces">Impact sweep</button>
+        <button type="button" data-act="remote">Remote fire at me</button>
+        <button type="button" data-act="boom">Explosion 20 m</button>
+        <button type="button" data-act="net">Netcode check</button>
+      </div>
+    </section>
+    <section>
+      <h2>Damage table (body / head, ARCHITECTURE 6.2)</h2>
+      <table data-dmg></table>
+      <div class="hint">Shots to kill 250 (100 HP + 3 plates) by body hits at each range; plates absorb first, headshots hit plates too.</div>
+    </section>
+    <section>
+      <h2>Sound board: files</h2>
+      <div id="sounds"></div>
+    </section>
+    <section>
+      <h2>Sound board: event map</h2>
+      <div id="events"></div>
+    </section>
+    <section>
+      <h2>Log</h2>
+      <pre data-log></pre>
+    </section>
+  </aside>
+  <div id="loading"><div><b>ZONEFALL</b><div class="bar"><i data-load style="width:0%"></i></div><span data-loadlabel>Loading</span></div></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { DEV, WEAPONS, AUDIO, SURFACE, SURFACE_NAME, PLAYER, AMMO } from '../src/config.js';
+    import * as bus from '../src/core/bus.js';
+    import { EV } from '../src/core/bus.js';
+    import { state, gfx, debug, LIFE, APP, setAppState, createPlayer, localPlayer, getPlayer } from '../src/core/state.js';
+    import * as settings from '../src/core/settings.js';
+    import { createLoop } from '../src/core/loop.js';
+    import { DEG, clamp } from '../src/core/util.js';
+    import * as renderer from '../src/engine/renderer.js';
+    import * as assets from '../src/engine/assets.js';
+    import * as input from '../src/engine/input.js';
+    import * as audio from '../src/engine/audio.js';
+    import * as world from '../src/world/world.js';
+    import * as controller from '../src/player/controller.js';
+    import * as camera from '../src/player/camera.js';
+    import * as avatar from '../src/player/avatar.js';
+    import * as inventory from '../src/player/inventory.js';
+    import * as weapons from '../src/combat/weapons.js';
+    import * as ballistics from '../src/combat/ballistics.js';
+    import * as damage from '../src/combat/damage.js';
+    import * as grenades from '../src/combat/grenades.js';
+    import * as vfx from '../src/combat/vfx.js';
+    import * as viewmodel from '../src/combat/viewmodel.js';
+    import * as bots from '../src/game/bots.js';
+    import * as loot from '../src/game/loot.js';
+    import * as match from '../src/game/match.js';
+    import * as session from '../src/net/session.js';
+    import * as sync from '../src/net/sync.js';
+    import { RANGE } from '../src/world/world.js';
+
+    const $ = (s) => document.querySelector(s);
+    const $$ = (s) => [...document.querySelectorAll(s)];
+    const canvas = $('#game');
+    const logLines = [];
+    function log(s) { logLines.push(s); if (logLines.length > 60) logLines.shift(); $('[data-log]').textContent = logLines.slice().reverse().join('\n'); }
+    window.__zf = { ready: false, fatalError: null, state, gfx, bus, debug, config: { WEAPONS }, modules: { weapons, ballistics, damage, grenades, vfx, viewmodel, audio, camera, controller, inventory, input, renderer, world, bots, loot, session, sync } };
+    addEventListener('error', (e) => { window.__zf.fatalError = String(e.message); });
+    addEventListener('unhandledrejection', (e) => { window.__zf.fatalError = String(e.reason && e.reason.message || e.reason); });
+
+    const targetStats = new Map();     // id -> {hits, last}
+    const TARGET_WEAPONS = ['m4a1', 'ak47', 'mp5', 'm700', 'm4a1', 'ak47'];
+
+    // ------------------------------------------------------------------ boot
+    async function boot() {
+      settings.load();
+      const loadBar = $('[data-load]'), loadLabel = $('[data-loadlabel]');
+      const prog = (p, l) => { loadBar.style.width = (p * 100).toFixed(1) + '%'; if (l) loadLabel.textContent = l; };
+      await renderer.init(canvas, { tier: DEV.quality || settings.get('quality') });
+      input.init(canvas);
+      audio.init();
+      await assets.loadCore((p, l) => prog(p * 0.6, l || 'Models and textures'));
+      await audio.loadAll((p) => prog(0.6 + p * 0.15, 'Sound'));
+      await world.build({ scene: gfx.scene, quality: renderer.getQuality(), onProgress: (p, l) => prog(0.75 + p * 0.2, l || 'Range') });
+      camera.init(gfx.camera);
+      controller.init();
+      avatar.init(gfx.scene);
+      ballistics.init();
+      damage.init();
+      weapons.init();
+      grenades.init(gfx.scene);
+      vfx.init(gfx.scene);
+      viewmodel.init();
+      audio.setListener(gfx.camera);
+      // local operator and range targets
+      state.match.t0 = performance.now(); state.match.phase = 'live'; state.match.mode = 'practice';
+      const me = createPlayer({ id: state.selfId, name: settings.get('name') || 'Operator', kind: 'local', slot: 0 });
+      setAppState(APP.MATCH);
+      input.setEnabled(true);
+      controller.spawn('ground', [RANGE.start[0], world.getHeight(RANGE.start[0], RANGE.start[2]), RANGE.start[2]]);
+      me.yaw = 0; me.pitch = 0;
+      me.hp = 100; me.armor = 150;
+      inventory.reset({ slots: [{ weapon: 'm4a1', mag: 30 }, { weapon: 'm1911', mag: 8 }], ammo: { ar: 240, light: 240, sniper: 40 }, plates: 5, frags: 2 });
+      camera.setView('fp');
+      RANGE.lanes.forEach(([x, d], i) => {
+        bots.addTarget(i + 1, `${d} M`, [x, world.getHeight(x, -d), -d], Math.PI, TARGET_WEAPONS[i]);
+      });
+      bots.addTarget(7, 'BEHIND WOOD', [11, world.getHeight(11, RANGE.cover.z - 2.2), RANGE.cover.z - 2.2], Math.PI, 'mp5');
+      bots.addTarget(8, 'BEHIND STEEL', [15, world.getHeight(15, RANGE.cover.z - 2.2), RANGE.cover.z - 2.2], Math.PI, 'm1911');
+      for (const id of bots.list()) targetStats.set(id, { hits: 0, last: '-' });
+      prog(0.97, 'Compiling shaders');
+      await renderer.compile();
+      prog(1, 'Ready');
+      $('#loading').remove();
+      buildPanels();
+      wire();
+      loop.start();
+      window.__zf.ready = true;
+      log('range ready: ' + renderer.stats().tier + ' tier');
+    }
+
+    // ------------------------------------------------------------------ frame
+    let fpsT = 0;
+    const loop = createLoop((dt) => {
+      try {
+        input.update();
+        sync.update(dt);
+        camera.look(dt);
+        match.update(dt);
+        controller.update(dt);
+        weapons.update(dt);
+        grenades.update(dt);
+        bots.update(dt);
+        damage.update(dt);
+        avatar.update(dt);
+        camera.update(dt);
+        viewmodel.update(dt);
+        vfx.update(dt);
+        world.update(dt, gfx.camera.position);
+        audio.update(dt);
+        hud(dt);
+        renderer.render(dt);
+        if (window.__zf.onFrame) window.__zf.onFrame(dt);
+      } catch (e) {
+        loop.stop();
+        window.__zf.fatalError = String(e && e.stack || e);
+        console.error(e);
+      }
+    });
+
+    // ------------------------------------------------------------------ HUD
+    const crossEls = $$('#cross i[data-s]');
+    const hitEl = $('#hit');
+    let hitT = 9;
+    const nums = [];
+    const v3 = new THREE.Vector3();
+    function project(p, out) {
+      v3.copy(p).project(gfx.camera);
+      if (v3.z > 1) return false;
+      out.x = (v3.x * 0.5 + 0.5) * innerWidth; out.y = (-v3.y * 0.5 + 0.5) * innerHeight;
+      return true;
+    }
+    const scr = { x: 0, y: 0 };
+    const labelEls = new Map();
+    function hud(dt) {
+      const me = localPlayer();
+      const L = state.local;
+      if (!me) return;
+      // crosshair from the spread cone
+      const half = Math.tan(L.spread * 0.5 * DEG) / Math.tan(gfx.camera.fov * 0.5 * DEG) * innerHeight * 0.5;
+      const gap = Math.max(3, half);
+      for (const el of crossEls) {
+        const s = el.dataset.s;
+        el.style.transform = s === 'l' ? `translate(${-gap - 9}px,0)` : s === 'r' ? `translate(${gap}px,0)` : s === 't' ? `translate(0,${-gap - 9}px)` : `translate(0,${gap}px)`;
+      }
+      const vs = weapons.viewState();
+      $('#cross').style.opacity = L.ads > 0.6 || vs.sprint > 0.5 || L.scoped ? 0 : 1;
+      // hitmarker
+      hitT += dt;
+      hitEl.style.opacity = hitT < 0.25 ? 1 - hitT / 0.25 : 0;
+      // damage numbers
+      for (let i = nums.length - 1; i >= 0; i--) {
+        const n = nums[i];
+        n.t += dt;
+        if (n.t > 1.1) { n.el.remove(); nums.splice(i, 1); continue; }
+        v3.copy(n.pos); v3.y += n.t * 0.5;
+        if (project(v3, scr)) { n.el.style.left = scr.x + 'px'; n.el.style.top = scr.y + 'px'; n.el.style.opacity = 1 - Math.max(0, n.t - 0.7) / 0.4; }
+      }
+      // target labels
+      for (const id of bots.list()) {
+        const e = getPlayer(id);
+        let el = labelEls.get(id);
+        if (!el) { el = document.createElement('div'); $('#labels').append(el); labelEls.set(id, el); }
+        v3.set(e.pos.x, e.pos.y + 2.05, e.pos.z);
+        const d = e.pos.distanceTo(me.pos);
+        if (d < 120 && project(v3, scr)) {
+          el.style.display = ''; el.style.left = scr.x + 'px'; el.style.top = scr.y + 'px';
+          el.innerHTML = `${e.name}<b><i style="width:${e.hp}%"></i></b><b class="ar"><i style="width:${(e.armor / 150) * 100}%"></i></b>`;
+        } else el.style.display = 'none';
+      }
+      // weapon / vitals / action
+      const inv = L.inv, slot = inventory.active();
+      const W = slot ? WEAPONS[slot.weapon] : null;
+      $('[data-wname]').textContent = W ? W.name : 'UNARMED';
+      $('[data-mag]').textContent = slot ? slot.mag : 0;
+      $('[data-res]').textContent = W ? inventory.ammo(W.ammo) : 0;
+      const other = inv && inv.slots[inv.active === 0 ? 1 : 0];
+      $('[data-walt]').textContent = `${other ? WEAPONS[other.weapon].name : '-'}  FRAG ${inv ? inv.frags : 0}  PLATES ${inv ? inv.plates : 0}`;
+      $('[data-hpbar]').style.width = me.hp + '%';
+      $$('#vitals .plates i').forEach((p, i) => p.classList.toggle('f', me.armor >= (i + 1) * 50 - 0.1));
+      const act = $('#action');
+      act.hidden = !L.action || L.action === 'switch' || L.action === 'bolt';
+      if (!act.hidden) { $('[data-action]').textContent = L.action === 'reload' ? 'RELOADING' : L.action === 'plate' ? 'ARMOR PLATE' : 'COOKING ' + L.cook.toFixed(1); $('[data-actionbar]').style.width = (L.actionT * 100).toFixed(0) + '%'; }
+      $('#lockhint').style.display = input.isLocked() ? 'none' : '';
+      fpsT += dt;
+      if (fpsT > 0.5) {
+        fpsT = 0;
+        const s = renderer.stats();
+        $('[data-stats]').textContent = `${s.tier.toUpperCase()}  ${s.fps} FPS  ${s.ms} MS\n${s.calls} CALLS  ${(s.tris / 1000).toFixed(0)}K TRIS  DPR ${s.dpr}`;
+        const ws = debug.combat.weaponState();
+        $('[data-k=wstate]').textContent = `${ws.drawn || '-'} ${ws.switch !== 'none' ? ws.switch : ''}${ws.reload != null ? ' reload ' + ws.reload : ''}${ws.nade ? ' ' + ws.nade : ''}${ws.plate != null ? ' plate' : ''}`;
+        $('[data-k=spread]').textContent = `${L.spread.toFixed(2)} deg  ads ${L.ads.toFixed(2)}`;
+        $('[data-k=breath]').textContent = `${(L.breath * 100).toFixed(0)}%${L.scoped ? ' scoped' : ''}`;
+        renderTargets();
+      }
+    }
+
+    function renderTargets() {
+      const rows = bots.list().map((id) => {
+        const e = getPlayer(id), s = targetStats.get(id);
+        return `<tr><td>${e.name}</td><td>${Math.round(e.hp)}</td><td>${Math.round(e.armor)}</td><td>${s.hits}</td><td>${s.last}</td></tr>`;
+      });
+      $('[data-targets]').innerHTML = rows.join('');
+    }
+
+    // ------------------------------------------------------------------ events
+    function wire() {
+      bus.on(EV.HIT_CONFIRMED, ({ target, dmg, zone, kill, armorBroke, distance }) => {
+        hitT = 0;
+        hitEl.className = (kill ? 'kill ' : zone === 'head' ? 'head ' : '') + (armorBroke ? 'armor' : '');
+        const e = getPlayer(target);
+        if (!e) return;
+        const el = document.createElement('div');
+        el.className = zone + (kill ? ' kill' : '');
+        el.innerHTML = `${dmg}<small>${zone.toUpperCase()} ${distance ? Math.round(distance) + ' M' : ''}</small>`;
+        $('#nums').append(el);
+        nums.push({ el, t: 0, pos: new THREE.Vector3(e.pos.x + (Math.random() - 0.5) * 0.4, e.pos.y + (zone === 'head' ? 1.8 : zone === 'limb' ? 0.8 : 1.3), e.pos.z) });
+        const s = targetStats.get(target);
+        if (s) { s.hits++; s.last = `${dmg} ${zone[0].toUpperCase()}`; }
+      });
+      bus.on(EV.PLAYER_KILLED, ({ id, by, weapon, headshot }) => log(`killed ${id} by ${by || '-'} with ${weapon}${headshot ? ' (head)' : ''}`));
+      bus.on(EV.PLAYER_DAMAGED, ({ id, amount, hp, armor, kind, absorbed }) => { if (id === state.selfId) log(`self -${amount.toFixed(1)} (${kind}, armor took ${(absorbed || 0).toFixed(1)}) hp ${hp.toFixed(0)} armor ${armor.toFixed(0)}`); });
+      bus.on(EV.WEAPON_RELOAD, ({ weapon, phase, empty }) => { if (phase !== 'start') return; log(`reload ${weapon}${empty ? ' (empty)' : ''}`); });
+      bus.on(EV.PLATE_DONE, ({ armor }) => log(`plate in: armor ${armor}`));
+      bus.on(EV.GRENADE_EXPLODE, ({ gid, pos }) => log(`grenade ${gid} exploded at ${pos.map((v) => v.toFixed(1)).join(', ')}`));
+      bus.on(EV.BULLET_NEAR, ({ from, dist }) => log(`near miss from ${from} (${dist.toFixed(2)} m)`));
+      loot.onDrop((r) => log(`drop from ${r.owner}: ${r.items.map((i) => `${i.ref || i.type} x${i.qty}`).join(', ')}`));
+    }
+
+    // ------------------------------------------------------------------ helpers for tests and buttons
+    const tmpO = new THREE.Vector3(), tmpD = new THREE.Vector3();
+    function aimAt(x, y, z) {
+      const me = localPlayer();
+      controller.getEye(tmpO);
+      const dx = x - tmpO.x, dy = y - tmpO.y, dz = z - tmpO.z;
+      me.yaw = Math.atan2(-dx, -dz);
+      me.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+    }
+    function teleport(x, z, yaw = 0) { controller.teleport([x, world.getHeight(x, z), z]); const me = localPlayer(); me.yaw = yaw; me.pitch = 0; }
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function frames(n) { for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r)); }
+
+    function giveWeapon(id) {
+      const inv = inventory.get();
+      inv.slots[0] = { weapon: id, mag: WEAPONS[id].mag };
+      if (inv.active !== 0) inventory.select(0);
+      bus.emit(EV.INVENTORY, { inv });
+      drawPlot(id);
+    }
+
+    async function patternTest(id) {
+      const wid = id || inventory.active()?.weapon || 'm4a1';
+      if (inventory.active()?.weapon !== wid) giveWeapon(wid);
+      debug.combat.fillAmmo();
+      const Wl = RANGE.wall;
+      const cx = (Wl.x0 + Wl.x1) / 2;
+      teleport(cx, Wl.z + 25, 0);
+      await frames(4);
+      aimAt(cx, world.getHeight(cx, Wl.z) + 1.6, Wl.z);
+      weapons.setForceAds(true);
+      await sleep((WEAPONS[wid].ads + 0.25) * 1000);
+      aimAt(cx, world.getHeight(cx, Wl.z) + 1.6, Wl.z);
+      const W = WEAPONS[wid];
+      if (W.mode === 'auto') {
+        weapons.setForceFire(true);
+        await sleep((W.mag + 1) * 60000 / W.rpm);
+        weapons.setForceFire(false);
+      } else {
+        for (let i = 0; i < W.mag; i++) {
+          weapons.setForceFire(true); await frames(2); weapons.setForceFire(false);
+          await sleep(W.mode === 'bolt' ? W.boltTime * 1000 + 120 : 60000 / W.rpm + 40);
+        }
+      }
+      await sleep(250);
+      weapons.setForceAds(false);
+      log(`pattern test ${wid}: ${debug.combat.weaponState().shots} rounds total`);
+    }
+
+    function drawPlot(id) {
+      const W = WEAPONS[id];
+      const cv = $('[data-plot]'), g = cv.getContext('2d');
+      const w = cv.width, h = cv.height;
+      g.clearRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(233,231,225,.12)'; g.lineWidth = 1;
+      const scale = h / 2.4;                     // px per metre (2.4 m tall view)
+      for (let m = -3; m <= 3; m += 0.25) { g.beginPath(); g.moveTo(w / 2 + m * scale, 0); g.lineTo(w / 2 + m * scale, h); g.stroke(); }
+      for (let m = 0; m <= 2.4; m += 0.25) { g.beginPath(); g.moveTo(0, h - 20 - m * scale); g.lineTo(w, h - 20 - m * scale); g.stroke(); }
+      if (!W || !W.recoil) return;
+      const r = W.recoil;
+      let p = 0, y = 0;
+      const n = W.mode === 'auto' ? W.mag : Math.min(W.mag, 8);
+      g.fillStyle = '#e8b23a';
+      g.font = '600 18px "JetBrains Mono", monospace';
+      for (let i = 0; i < n; i++) {
+        const px = w / 2 + Math.tan(y * DEG) * 25 * scale, py = h - 20 - Math.tan(p * DEG) * 25 * scale;
+        g.globalAlpha = 1 - i / (n * 1.4);
+        g.beginPath(); g.arc(px, py, 5, 0, Math.PI * 2); g.fill();
+        if (i === 0 || i === n - 1) g.fillText(String(i + 1), px + 8, py + 5);
+        if (W.mode !== 'auto') break;
+        p += r.vKick * (i === 0 ? r.firstShot : 1) * (1 + r.vRamp * Math.min(i, r.rampShots) / r.rampShots);
+        y += r.hKick * Math.sin(i * r.hFreq) + r.hBias;
+      }
+      g.globalAlpha = 1;
+      g.fillStyle = '#b9bbb5';
+      g.fillText(`${W.name}  ${W.rpm} RPM  ${W.mode.toUpperCase()}`, 12, 24);
+    }
+
+    async function surfaceSweep() {
+      // shoot every cover panel and the floor types from the line
+      teleport(18, 4, 0);
+      await frames(3);
+      const pts = [[11, 1.6, RANGE.cover.z], [15, 1.6, RANGE.cover.z], [19, 1.6, RANGE.cover.z], [23, 1.3, RANGE.cover.z], [27, 0.9, RANGE.cover.z], [24, 0.6, -40], [10, 0.6, -9], [-1, 0.6, -20]];
+      const prev = inventory.active().weapon;
+      giveWeapon('ak47');
+      await sleep(700);
+      for (const [x, y, z] of pts) {
+        aimAt(x, world.getGround(x, z, y + 0.1).y + (y > 0.7 ? y - 0.6 : 0.02), z);
+        await frames(2);
+        weapons.setForceFire(true); await frames(2); weapons.setForceFire(false);
+        await sleep(160);
+      }
+      log('impact sweep: wood, steel, glass, concrete, sand, water, asphalt, dirt');
+      void prev;
+    }
+
+    function remoteFire() {
+      // a shooter 120 m downrange fires a burst that passes 0.8 m over the operator's head
+      const me = localPlayer();
+      const from = new THREE.Vector3(-30, 2, -120);
+      let n = 0;
+      const id = setInterval(() => {
+        const to = new THREE.Vector3(me.pos.x + 0.6, me.pos.y + 2.4, me.pos.z).add(new THREE.Vector3((Math.random() - 0.5) * 0.6, (Math.random() - 0.5) * 0.3, 0));
+        const dir = to.clone().sub(from).normalize();
+        const dist = 260;
+        bus.emit(EV.NET_SHOT, { from: 'peer-test', shooterId: 'bot:5', shot: { weapon: 'ak47', seq: n, t: performance.now(), origin: from.toArray(), dir: dir.toArray(), dist, surface: SURFACE.DIRT, hitFlags: 0, botSlot: 5 } });
+        if (++n >= 8) clearInterval(id);
+      }, 100);
+    }
+
+    async function netCheck() {
+      const out = [];
+      const enc = (ok, s) => out.push(`${ok ? 'PASS' : 'FAIL'} ${s}`);
+      session.setOnline(true);
+      session.sent.length = 0;
+      sync.shots.length = 0;
+      // 1) a local shot at the 25 m target: SHOT encodes, 'hit' payload validates
+      teleport(0, 2, 0);
+      await frames(3);
+      const t = getPlayer('bot:2');
+      aimAt(t.pos.x, t.pos.y + 1.2, t.pos.z);
+      await frames(2);
+      weapons.setForceFire(true); await frames(2); weapons.setForceFire(false);
+      await sleep(200);
+      const hit = session.sent.find((m) => m.action === 'hit');
+      enc(!!sync.shots.length && sync.shots[0] && sync.shots[0].weapon, `SHOT encoded (${sync.shots.length})`);
+      enc(hit && hit.valid, `'hit' payload validates (${hit ? JSON.stringify(hit.data).slice(0, 80) : 'none'})`);
+      // 2) an incoming hit on the local player from bot:2 (host = self) passes validateHit and applies
+      const me = localPlayer();
+      const hp0 = me.hp + me.armor;
+      bus.emit(EV.NET_HIT, { from: state.selfId, data: { sid: 77, by: 'bot:2', tgt: state.selfId, w: 'm4a1', z: 0, dmg: 28, d: 25, sp: [t.pos.x, t.pos.y + 1.5, t.pos.z], tp: [me.pos.x, me.pos.y + 1.2, me.pos.z], t: Math.round(state.match.time * 1000) } });
+      enc(me.hp + me.armor < hp0, `incoming hit applied (${(hp0 - me.hp - me.armor).toFixed(1)} dmg)`);
+      // 3) a forged hit (damage above the cap) is rejected
+      const hp1 = me.hp + me.armor;
+      bus.emit(EV.NET_HIT, { from: state.selfId, data: { sid: 78, by: 'bot:2', tgt: state.selfId, w: 'm4a1', z: 1, dmg: 300, d: 25, sp: [t.pos.x, t.pos.y + 1.5, t.pos.z], tp: [me.pos.x, me.pos.y + 1.2, me.pos.z], t: Math.round(state.match.time * 1000) + 500 } });
+      enc(me.hp + me.armor === hp1, 'forged 300 dmg hit rejected');
+      // 4) a grenade throw broadcasts a valid 'nade'
+      inventory.get().frags = Math.max(1, inventory.get().frags);
+      debug.player.hold('grenade', true); await sleep(350); debug.player.hold('grenade', false); await sleep(400);
+      const nade = session.sent.find((m) => m.action === 'nade');
+      enc(nade && nade.valid, `'nade' payload validates`);
+      session.setOnline(false);
+      out.forEach(log);
+      return out;
+    }
+
+    // ------------------------------------------------------------------ panels
+    function buildPanels() {
+      // damage table
+      const ranges = [10, 25, 50, 100, 200];
+      let html = '<tr><th>Weapon</th>' + ranges.map((r) => `<th>${r} M</th>`).join('') + '<th>STK</th></tr>';
+      for (const id of ['ak47', 'm4a1', 'mp5', 'm700', 'm1911']) {
+        const W = WEAPONS[id];
+        const cells = ranges.map((r) => r > W.range ? '<td>-</td>' : `<td>${Math.round(damage.damageAt(id, 'body', r))}<span class="hd">/${Math.round(damage.damageAt(id, 'head', r))}</span></td>`);
+        html += `<tr><td>${W.name}</td>${cells.join('')}<td>${Math.ceil(250 / damage.damageAt(id, 'body', 10))}</td></tr>`;
+      }
+      $('[data-dmg]').innerHTML = html;
+      // sound board: files
+      const sb = $('#sounds');
+      for (const [name, n] of Object.entries(AUDIO)) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = n ? `${name} x${n}` : name;
+        b.addEventListener('click', () => {
+          audio.unlock();
+          if (/_loop$/.test(name)) {
+            const on = !b.classList.contains('on');
+            b.classList.toggle('on', on);
+            audio.loop(name === 'heartbeat_loop' ? 'heartbeat' : name === 'zone_hum_loop' ? 'zone' : name === 'plane_loop' ? 'vehicle' : 'ambience', on ? name : null, 0.8);
+            audio.setAutoLoops(false);
+          } else if (name.startsWith('ui_')) audio.ui(name.slice(3));
+          else audio.play(name, { volume: 0.9 });
+        });
+        sb.append(b);
+      }
+      // sound board: event map
+      const me = () => localPlayer();
+      const at = (d, side = 0) => { const p = me().pos; return [p.x + side, p.y + 1.5, p.z - d]; };
+      const ev = [
+        ['Fire local M4', () => bus.emit(EV.WEAPON_FIRE, { id: state.selfId, weapon: 'm4a1', origin: at(0), dir: [0, 0, -1], end: at(40), local: true, hit: { kind: 'world', surface: SURFACE.CONCRETE, normal: [0, 0, 1] } })],
+        ['Fire local M700', () => bus.emit(EV.WEAPON_FIRE, { id: state.selfId, weapon: 'm700', origin: at(0), dir: [0, 0, -1], end: at(80), local: true, hit: null })],
+        ['Remote AK 30 m', () => bus.emit(EV.WEAPON_FIRE, { id: 'bot:2', weapon: 'ak47', origin: at(30, 8), muzzle: at(30, 8), dir: [0, 0, 1], end: at(-5, 8), local: false, hit: null })],
+        ['Remote AK 300 m', () => bus.emit(EV.WEAPON_FIRE, { id: 'bot:4', weapon: 'ak47', origin: at(300, -40), muzzle: at(300, -40), dir: [0, 0, 1], end: at(250, -40), local: false, hit: null })],
+        ['Remote M700 800 m', () => bus.emit(EV.WEAPON_FIRE, { id: 'bot:5', weapon: 'm700', origin: at(800, 100), muzzle: at(800, 100), dir: [0, 0, 1], end: at(700, 100), local: false, hit: null })],
+        ['Reload rifle', () => { for (const [ph, d] of [['start', 0], ['magout', 350], ['magin', 1300], ['charge', 2000]]) setTimeout(() => bus.emit(EV.WEAPON_RELOAD, { id: state.selfId, weapon: 'm4a1', phase: ph, empty: true }), d); }],
+        ['Reload pistol', () => { for (const [ph, d] of [['start', 0], ['magout', 200], ['magin', 850], ['charge', 1300]]) setTimeout(() => bus.emit(EV.WEAPON_RELOAD, { id: state.selfId, weapon: 'm1911', phase: ph, empty: true }), d); }],
+        ['Bolt cycle', () => bus.emit(EV.WEAPON_BOLT, { id: state.selfId, weapon: 'm700' })],
+        ['Dry fire', () => bus.emit(EV.WEAPON_DRY, { id: state.selfId, weapon: 'm4a1' })],
+        ['Switch', () => bus.emit(EV.WEAPON_SWITCH, { id: state.selfId, weapon: 'm4a1' })],
+        ['ADS in', () => bus.emit(EV.ADS, { active: true })],
+        ['Hitmarker', () => bus.emit(EV.HIT_CONFIRMED, { target: 'bot:1', dmg: 28, zone: 'body', kill: false, armorBroke: false })],
+        ['Headshot', () => bus.emit(EV.HIT_CONFIRMED, { target: 'bot:1', dmg: 42, zone: 'head', kill: false, armorBroke: false })],
+        ['Armor break', () => bus.emit(EV.HIT_CONFIRMED, { target: 'bot:1', dmg: 28, zone: 'body', kill: false, armorBroke: true })],
+        ['Kill confirm', () => bus.emit(EV.PLAYER_KILLED, { id: 'bot:99', by: state.selfId, weapon: 'm4a1', headshot: false, pos: at(20) })],
+        ['Hit on armor', () => bus.emit(EV.PLAYER_DAMAGED, { id: state.selfId, amount: 20, hp: 100, armor: 80, armorBroke: false, absorbed: 20, from: 'bot:2', weapon: 'ak47', zone: 'body', dir: [0, 0, 1], kind: 'bullet' })],
+        ['Hit on body', () => bus.emit(EV.PLAYER_DAMAGED, { id: state.selfId, amount: 30, hp: 70, armor: 0, armorBroke: false, absorbed: 0, from: 'bot:2', weapon: 'ak47', zone: 'body', dir: [0, 0, 1], kind: 'bullet' })],
+        ['Bullet whizz', () => bus.emit(EV.BULLET_NEAR, { pos: at(0.5, 1), from: 'bot:2', dist: 1 })],
+        ...[SURFACE.CONCRETE, SURFACE.GRASS, SURFACE.WOOD, SURFACE.DIRT, SURFACE.METAL, SURFACE.WATER].map((s) => [`Step ${SURFACE_NAME[s]}`, () => bus.emit(EV.FOOTSTEP, { id: state.selfId, pos: at(0), surface: s, sprint: false, crouch: false, local: true })]),
+        ['Land hard', () => bus.emit(EV.PLAYER_LAND, { id: state.selfId, pos: [me().pos.x, me().pos.y, me().pos.z], speed: 12, fall: 6 })],
+        ['Chute open', () => bus.emit(EV.PLAYER_CHUTE, { id: state.selfId, open: true })],
+        ['Pin pull', () => bus.emit(audio.AEV.COOK, { id: state.selfId })],
+        ['Nade bounce', () => bus.emit(EV.GRENADE_BOUNCE, { gid: 't', pos: at(4), speed: 8 })],
+        ['Explosion 15 m', () => bus.emit(EV.GRENADE_EXPLODE, { gid: 't', owner: 'bot:1', pos: at(15, 6) })],
+        ['Explosion 150 m', () => bus.emit(EV.GRENADE_EXPLODE, { gid: 't', owner: 'bot:1', pos: at(150, 30) })],
+        ['Plate insert', () => bus.emit(EV.PLATE_START, { id: state.selfId })],
+        ['Loot pickup', () => bus.emit(EV.LOOT_PICKED, { uid: 't', by: state.selfId, item: null })],
+        ['Crate open', () => bus.emit(EV.CRATE_OPENED, { uid: 'k1', by: state.selfId, pos: at(2) })],
+        ['Zone shrinking', () => bus.emit(EV.ZONE_PHASE, { phase: 1, state: 'shrinking', next: { x: 0, z: 0, r: 100 }, seconds: 40 })],
+        ['Plane doors', () => bus.emit(EV.PLANE_DOORS, { open: true })],
+        ['Match start', () => bus.emit(EV.MATCH_START, { id: 'test', seed: 1, t0: performance.now(), roster: [], mode: 'practice' })],
+      ];
+      for (const [label, fn] of ev) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = label;
+        b.addEventListener('click', () => { audio.unlock(); fn(); });
+        $('#events').append(b);
+      }
+      drawPlot(inventory.active().weapon);
+      $$('button').forEach((b) => b.addEventListener('pointerenter', () => audio.ui('hover')));
+    }
+
+    document.addEventListener('click', async (e) => {
+      const b = e.target.closest('button[data-act]');
+      if (!b) return;
+      audio.unlock();
+      audio.ui('click');
+      const a = b.dataset.act;
+      if (a === 'give') giveWeapon(b.dataset.w);
+      else if (a === 'fill') debug.combat.fillAmmo();
+      else if (a === 'view') camera.setView(camera.getView() === 'fp' ? 'tp' : 'fp');
+      else if (a === 'ads') { const on = !b.classList.contains('on'); b.classList.toggle('on', on); weapons.setForceAds(on); }
+      else if (a === 'god') { const on = !b.classList.contains('on'); b.classList.toggle('on', on); damage.setGodMode(on); }
+      else if (a === 'quality') { renderer.applyQuality(b.dataset.q); log('quality ' + b.dataset.q); }
+      else if (a === 'armor') { $$('button[data-act=armor]').forEach((x) => x.classList.toggle('on', x === b)); bots.setArmor(+b.dataset.v); }
+      else if (a === 'moving') { const on = !b.classList.contains('on'); b.classList.toggle('on', on); bots.setMoving(on); }
+      else if (a === 'crouch') { const on = !b.classList.contains('on'); b.classList.toggle('on', on); bots.setCrouch(on); }
+      else if (a === 'revive') bots.resetAll();
+      else if (a === 'pattern') { debug.combat.clearDecals(); await patternTest(); }
+      else if (a === 'cleardecals') debug.combat.clearDecals();
+      else if (a === 'nade') { inventory.get().frags = Math.max(1, inventory.get().frags); debug.player.hold('grenade', true); await sleep(+b.dataset.cook * 1000); debug.player.hold('grenade', false); }
+      else if (a === 'surfaces') await surfaceSweep();
+      else if (a === 'remote') remoteFire();
+      else if (a === 'boom') { const me = localPlayer(); grenades.spawn({ gid: 'demo:' + Date.now(), owner: 'bot:3', origin: [me.pos.x + 4, me.pos.y + 1, me.pos.z - 20], vel: [0, 2, 0], fuse: 0.6, t: state.match.time * 1000 }); }
+      else if (a === 'net') await netCheck();
+    });
+    $('#collapse').addEventListener('click', () => {
+      const p = $('#panel'); const c = p.classList.toggle('collapsed');
+      $('#collapse').textContent = c ? 'Show' : 'Hide'; $('#collapse').setAttribute('aria-expanded', String(!c));
+    });
+
+    window.__zf.harness = { aimAt, teleport, giveWeapon, patternTest, surfaceSweep, remoteFire, netCheck, frames, sleep, log, getPlayer, logLines };
+    boot().catch((e) => { window.__zf.fatalError = String(e && e.stack || e); console.error(e); });
+  </script>
+</body>
+</html>

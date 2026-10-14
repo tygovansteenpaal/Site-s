@@ -141,6 +141,8 @@ uniform vec3 uSunDir;
 uniform vec3 uSunCol;
 uniform float uHazeK;
 uniform float uHaze;
+uniform vec3 uScatter;
+uniform float uScatterK;
 varying vec3 vDir;
 #include <common>
 void main() {
@@ -149,11 +151,12 @@ void main() {
   vec2 uv = vec2( atan( d.z, d.x ) * RECIPROCAL_PI2 + 0.5 - uRot, asin( clamp( max( el, 0.002 ), -1.0, 1.0 ) ) * RECIPROCAL_PI + 0.5 );
   vec3 sky = texture2D( tSky, uv ).rgb * uIntensity;
   float haze = exp( - max( el, 0.0 ) * uHazeK );
-  float sunF = pow( max( dot( d, uSunDir ), 0.0 ), 5.0 );
-  vec3 hz = mix( uHorizon, uHorizon * vec3( 1.12, 1.02, 0.88 ), sunF * 0.6 );
-  vec3 col = mix( sky, hz, haze * uHaze );
-  col = el < 0.0 ? mix( hz, hz * 0.93, smoothstep( 0.0, -0.25, el ) ) : col;
+  // the same directional colour model as the fog chunk (renderer.js), so fogged terrain and sea meet the sky seamlessly
   float sd = max( dot( d, uSunDir ), 0.0 );
+  float away = 1.0 - sd;
+  vec3 hz = uHorizon * mix( vec3( 1.0 ), vec3( 0.93, 0.98, 1.07 ), away * away );
+  hz = mix( hz, uHorizon * uScatter * 1.35, pow( sd, 6.0 ) * uScatterK );
+  vec3 col = el < 0.0 ? hz : mix( sky, hz, max( haze * uHaze, smoothstep( 0.03, 0.0, el ) ) );
   col += uSunCol * ( pow( sd, 2400.0 ) * 40.0 + pow( sd, 160.0 ) * 0.6 + pow( sd, 10.0 ) * 0.06 );
   gl_FragColor = vec4( col, 1.0 );
   #include <tonemapping_fragment>
@@ -199,6 +202,7 @@ export async function buildSky(scene, quality) {
       uRot: { value: shiftU }, uIntensity: { value: TUNE.skyIntensity },
       uHorizon: { value: horizon }, uSunDir: { value: sunDir }, uSunCol: { value: new THREE.Color(TUNE.sunColor) },
       uHazeK: { value: TUNE.hazeFalloff }, uHaze: { value: TUNE.hazeAmount },
+      uScatter: { value: renderer.fogParams().scatter }, uScatterK: { value: renderer.fogParams().scatterK },
     },
     depthWrite: false, depthTest: true, fog: false, toneMapped: true,
     side: THREE.BackSide,
