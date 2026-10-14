@@ -1,0 +1,538 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZONEFALL - Player harness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/",
+      "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js",
+      "trystero": "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm",
+      "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js",
+      "ez-tree": "https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js",
+      "../src/world/world.js": "./stubs/player/world.js",
+      "../src/combat/damage.js": "./stubs/player/damage.js",
+      "../src/game/match.js": "./stubs/player/match.js",
+      "../src/game/plane.js": "./stubs/player/plane.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --ink: #e9e7e1; --ink-2: #b9bbb5; --ink-3: #80847f; --bg: #0d0f0e; --panel: rgba(13, 15, 14, 0.86);
+      --line: rgba(233, 231, 225, 0.12); --accent: #e8b23a; --danger: #e5484d; --armor: #5aa9e6;
+      --ease: cubic-bezier(.2, .7, .2, 1);
+    }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+      font: 400 13px/1.45 Barlow, system-ui, sans-serif; }
+    #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    #panel { position: fixed; top: 12px; left: 12px; bottom: 12px; width: 288px; background: var(--panel); border: 1px solid var(--line);
+      backdrop-filter: blur(8px); overflow-y: auto; padding: 14px 14px 18px; box-sizing: border-box; z-index: 5; }
+    #panel.collapsed { width: auto; bottom: auto; }
+    #panel.collapsed section, #panel.collapsed .sub { display: none; }
+    h1 { margin: 0; font: 700 26px/1 'Barlow Condensed', system-ui, sans-serif; letter-spacing: .06em; }
+    h1 span { color: var(--accent); }
+    .sub { color: var(--ink-3); font: 500 11px/1.4 'JetBrains Mono', monospace; letter-spacing: .08em; text-transform: uppercase; margin: 6px 0 10px; }
+    section { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+    section h2 { margin: 0 0 8px; font: 600 12px/1 'Barlow Condensed', sans-serif; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-2); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    button { font: 600 12px/1 'Barlow Condensed', sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--ink);
+      background: rgba(233, 231, 225, 0.06); border: 1px solid var(--line); padding: 8px 6px; cursor: pointer; transition: background .15s var(--ease), border-color .15s var(--ease); }
+    button:hover { background: rgba(233, 231, 225, 0.12); border-color: rgba(233, 231, 225, 0.3); }
+    button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    button.on { border-color: var(--accent); color: var(--accent); }
+    button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; font: 400 11.5px/1.4 'JetBrains Mono', monospace; }
+    dt { color: var(--ink-3); text-transform: uppercase; letter-spacing: .06em; }
+    dd { margin: 0; color: var(--ink); text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .bar { height: 5px; background: rgba(233, 231, 225, 0.1); margin: 4px 0 8px; }
+    .bar i { display: block; height: 100%; background: var(--ink); transition: width .2s var(--ease); }
+    .bar.armor i { background: var(--armor); }
+    .keys { font: 400 11px/1.7 'JetBrains Mono', monospace; color: var(--ink-2); columns: 2; column-gap: 10px; }
+    .keys b { color: var(--ink); font-weight: 500; }
+    pre { margin: 6px 0 0; font: 400 10.5px/1.45 'JetBrains Mono', monospace; color: var(--ink-2); white-space: pre-wrap; max-height: 120px; overflow: auto; }
+    #hud { position: fixed; inset: 0; pointer-events: none; z-index: 3; }
+    #cross { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transition: opacity .12s; }
+    #cross i { position: absolute; background: rgba(240, 238, 230, 0.92); box-shadow: 0 0 2px rgba(0,0,0,.6); }
+    #cross .dot { width: 2px; height: 2px; left: -1px; top: -1px; }
+    #cross .h { width: 8px; height: 2px; top: -1px; }
+    #cross .v { width: 2px; height: 8px; left: -1px; }
+    #scope { position: absolute; inset: 0; display: none;
+      background: radial-gradient(circle at 50% 50%, transparent 0 33vmin, rgba(0,0,0,.55) 33.2vmin, #000 34vmin); }
+    #scope::before, #scope::after { content: ''; position: absolute; left: 50%; top: 50%; background: #050505; }
+    #scope::before { width: 66vmin; height: 1px; transform: translate(-50%, -50%); }
+    #scope::after { width: 1px; height: 66vmin; transform: translate(-50%, -50%); }
+    #prompt { position: absolute; left: 50%; top: 62%; transform: translateX(-50%); font: 600 15px/1 'Barlow Condensed', sans-serif;
+      letter-spacing: .16em; text-transform: uppercase; color: var(--ink); text-shadow: 0 1px 3px rgba(0,0,0,.8); white-space: nowrap; }
+    #prompt b { color: var(--accent); font-weight: 700; }
+    #alt { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); font: 700 34px/1 'Barlow Condensed', sans-serif;
+      letter-spacing: .04em; text-align: right; text-shadow: 0 1px 4px rgba(0,0,0,.7); display: none; }
+    #alt small { display: block; font: 500 11px/1.6 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ink-2); }
+    #dead { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -50%); text-align: center; display: none; pointer-events: auto; }
+    #dead h3 { margin: 0 0 12px; font: 700 64px/0.9 'Barlow Condensed', sans-serif; letter-spacing: .05em; color: var(--danger); text-shadow: 0 2px 10px rgba(0,0,0,.6); }
+    #labels { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+    #labels div { position: absolute; transform: translate(-50%, -100%); font: 500 10px/1.3 'JetBrains Mono', monospace; letter-spacing: .06em;
+      color: var(--ink); background: rgba(13, 15, 14, 0.7); padding: 2px 5px; white-space: nowrap; text-transform: uppercase; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 20; }
+    #loading b { display: block; font: 700 64px/0.9 'Barlow Condensed', sans-serif; letter-spacing: .04em; }
+    #loading .bar { width: 260px; }
+    #loading span { font: 500 11px/1.6 'JetBrains Mono', monospace; color: var(--ink-3); letter-spacing: .1em; text-transform: uppercase; }
+    #lockhint { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); font: 500 11px/1 'JetBrains Mono', monospace; letter-spacing: .12em;
+      color: var(--ink-2); text-transform: uppercase; background: rgba(13,15,14,.7); padding: 8px 12px; }
+    @media (max-width: 860px) { #panel { width: 236px; } .keys { columns: 1; } }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <canvas id="game" tabindex="0" aria-label="Player harness view"></canvas>
+  <div id="labels"></div>
+  <div id="hud">
+    <div id="cross"><i class="dot"></i><i class="h" data-s="l"></i><i class="h" data-s="r"></i><i class="v" data-s="t"></i><i class="v" data-s="b"></i></div>
+    <div id="scope"></div>
+    <div id="prompt"></div>
+    <div id="alt"><span data-alt>0</span><small>M AGL</small></div>
+    <div id="dead"><h3>ELIMINATED</h3><button type="button" class="primary" data-act="respawn">Respawn</button></div>
+    <div id="lockhint">Click the view to play. Esc releases the mouse.</div>
+  </div>
+  <aside id="panel" aria-label="Harness controls">
+    <h1>ZONE<span>FALL</span> / PLAYER</h1>
+    <div class="sub">Controller, camera, avatar, input, inventory</div>
+    <section>
+      <h2>Operator</h2>
+      <div class="bar"><i data-hp style="width:100%"></i></div>
+      <div class="bar armor"><i data-armor style="width:0%"></i></div>
+      <dl>
+        <dt>Life</dt><dd data-k="life">-</dd>
+        <dt>Stance</dt><dd data-k="stance">-</dd>
+        <dt>Speed</dt><dd data-k="speed">-</dd>
+        <dt>Ground</dt><dd data-k="ground">-</dd>
+        <dt>Surface</dt><dd data-k="surface">-</dd>
+        <dt>Camera</dt><dd data-k="cam">-</dd>
+        <dt>Position</dt><dd data-k="pos">-</dd>
+        <dt>Render</dt><dd data-k="perf">-</dd>
+      </dl>
+    </section>
+    <section>
+      <h2>Course</h2>
+      <div class="grid">
+        <button type="button" data-act="drop" class="primary">Plane drop 380 m</button>
+        <button type="button" data-act="tp" data-x="6" data-y="0" data-z="4">Course start</button>
+        <button type="button" data-act="tp" data-x="-6" data-y="0" data-z="-17">Mantle blocks</button>
+        <button type="button" data-act="tp" data-x="52" data-y="17" data-z="24">Tower 17 m</button>
+        <button type="button" data-act="tp" data-x="56" data-y="10" data-z="27">Deck 10 m</button>
+        <button type="button" data-act="tp" data-x="6" data-y="6" data-z="27">Roof 6 m</button>
+        <button type="button" data-act="tp" data-x="-44" data-y="0" data-z="54">Pool</button>
+        <button type="button" data-act="tp" data-x="60" data-y="0" data-z="0">30 deg hill</button>
+        <button type="button" data-act="tp" data-x="0" data-y="0" data-z="-34">Gallery</button>
+        <button type="button" data-act="gallery" class="on">Gallery on</button>
+      </div>
+    </section>
+    <section>
+      <h2>View</h2>
+      <div class="grid3">
+        <button type="button" data-act="view">TP / FP</button>
+        <button type="button" data-act="shoulder">Shoulder</button>
+        <button type="button" data-act="ads">ADS demo</button>
+      </div>
+      <div class="grid3" style="margin-top:6px">
+        <button type="button" data-act="quality" data-q="low">Low</button>
+        <button type="button" data-act="quality" data-q="medium">Medium</button>
+        <button type="button" data-act="quality" data-q="high">High</button>
+      </div>
+    </section>
+    <section>
+      <h2>Inventory</h2>
+      <dl>
+        <dt>Slot 1</dt><dd data-k="s0">-</dd>
+        <dt>Slot 2</dt><dd data-k="s1">-</dd>
+        <dt>Ammo</dt><dd data-k="ammo">-</dd>
+        <dt>Plates / frags</dt><dd data-k="pf">-</dd>
+      </dl>
+      <div class="grid3" style="margin-top:8px">
+        <button type="button" data-act="give" data-w="m4a1">M4A1</button>
+        <button type="button" data-act="give" data-w="ak47">AK-47</button>
+        <button type="button" data-act="give" data-w="mp5">MP5</button>
+        <button type="button" data-act="give" data-w="m700">M700</button>
+        <button type="button" data-act="give" data-w="m1911">1911</button>
+        <button type="button" data-act="cycle">Cycle</button>
+        <button type="button" data-act="item" data-t="ammo" data-r="ar">+60 AR</button>
+        <button type="button" data-act="item" data-t="ammo" data-r="light">+60 9MM</button>
+        <button type="button" data-act="item" data-t="ammo" data-r="sniper">+10 .308</button>
+        <button type="button" data-act="item" data-t="plate">+Plate</button>
+        <button type="button" data-act="item" data-t="frag">+Frag</button>
+        <button type="button" data-act="revert">Revert last</button>
+        <button type="button" data-act="dropall">Drop all</button>
+        <button type="button" data-act="reset">Reset</button>
+        <button type="button" data-act="hurt">Fall 9 m</button>
+      </div>
+      <pre data-k="invlog"></pre>
+    </section>
+    <section>
+      <h2>Keys</h2>
+      <div class="keys" data-keys></div>
+    </section>
+  </aside>
+  <div id="loading"><div><b>ZONEFALL</b><div class="bar"><i data-load style="width:0%"></i></div><span data-loadlabel>Loading</span></div></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { DEV, WEAPONS, PLAYER, SURFACE_NAME, AMMO } from '../src/config.js';
+    import * as bus from '../src/core/bus.js';
+    import { EV } from '../src/core/bus.js';
+    import { state, gfx, debug, LIFE, FLAG, APP, setAppState, createPlayer, localPlayer, setFlag } from '../src/core/state.js';
+    import * as settings from '../src/core/settings.js';
+    import { createLoop } from '../src/core/loop.js';
+    import * as renderer from '../src/engine/renderer.js';
+    import * as assets from '../src/engine/assets.js';
+    import * as input from '../src/engine/input.js';
+    import * as world from '../src/world/world.js';
+    import * as controller from '../src/player/controller.js';
+    import * as camera from '../src/player/camera.js';
+    import * as avatar from '../src/player/avatar.js';
+    import * as inventory from '../src/player/inventory.js';
+    import * as damage from '../src/combat/damage.js';
+    import * as match from '../src/game/match.js';
+    import * as plane from '../src/game/plane.js';
+    import * as wlite from './stubs/player/weapons-lite.js';
+    import * as vml from './stubs/player/viewmodel-lite.js';
+    import * as sfx from './stubs/player/sfx-lite.js';
+
+    const $ = (s) => document.querySelector(s);
+    const canvas = $('#game');
+    window.__zf = { ready: false, fatalError: null, state, gfx, bus, debug, modules: { input, controller, camera, avatar, inventory, world, renderer } };
+    addEventListener('error', (e) => { window.__zf.fatalError = String(e.message); });
+    addEventListener('unhandledrejection', (e) => { window.__zf.fatalError = String(e.reason && e.reason.message || e.reason); });
+
+    // ------------------------------------------------------------------ remote-player simulation (gallery)
+    // Each gallery soldier is a 'bot' entity driven exactly like a networked player: a scripted "owner" produces
+    // snapshots at NET.snapRate (20 Hz) and the harness interpolates them 100 ms in the past into the entity
+    // fields (pos, yaw, pitch, flags, life, weapon), which is all player/avatar ever reads.
+    const G = [];
+    const GROW = -42;
+    const SNAP_MS = 50, DELAY_MS = 100;
+    const T = (now) => now / 1000;
+    function defineGallery() {
+      const defs = [
+        ['Idle M4A1', 'm4a1', (t, s) => { s.yaw = Math.PI; }],
+        ['ADS sweep AK-47', 'ak47', (t, s) => { s.yaw = Math.PI + Math.sin(t * 0.7) * 0.7; s.pitch = Math.sin(t * 0.9) * 0.45; s.flags |= FLAG.ADS; }],
+        ['Fire burst M4A1', 'm4a1', (t, s) => { s.yaw = Math.PI; s.flags |= FLAG.ADS; if ((t % 2.4) < 0.9) { s.flags |= FLAG.FIRING; s.fire = true; } }],
+        ['Pistol 1911', 'm1911', (t, s) => { s.yaw = Math.PI + Math.sin(t * 0.6) * 0.5; s.pitch = Math.sin(t * 0.8) * 0.3; }],
+        ['M700 scoped', 'm700', (t, s) => { s.yaw = Math.PI; s.flags |= FLAG.ADS; s.pitch = 0.05; }],
+        ['Crouch idle', 'mp5', (t, s) => { s.yaw = Math.PI; s.flags |= FLAG.CROUCH; }],
+        ['Reload loop', 'ak47', (t, s) => { s.yaw = Math.PI; if ((t % 3.6) < 2.6) s.flags |= FLAG.RELOAD; }],
+        ['Grenade throw', 'm4a1', (t, s) => { s.yaw = Math.PI; if ((t % 3) < 1.0) s.flags |= FLAG.THROW; }],
+        ['Armor plate', 'mp5', (t, s) => { s.yaw = Math.PI; if ((t % 2.6) < 1.15) s.flags |= FLAG.PLATE; }],
+        ['Hit reactions', 'm4a1', (t, s) => { s.yaw = Math.PI; s.hit = Math.floor(t / 1.3); }],
+        ['Jump loop', 'mp5', (t, s) => { const u = t % 1.4; s.yaw = Math.PI; if (u < 0.66) { s.flags |= FLAG.AIRBORNE; s.dy = 5.6 * u - 8.5 * u * u; } }],
+        ['Death loop', 'ak47', (t, s) => { s.yaw = Math.PI; if ((t % 6) > 2) { s.life = LIFE.DEAD; s.alive = false; } }],
+        ['Freefall', 'm4a1', (t, s) => { s.life = LIFE.FREEFALL; s.dy = 2.2; s.circle = [2.2, 0.35]; }],
+        ['Parachute', 'ak47', (t, s) => { s.life = LIFE.CHUTE; s.dy = 1.0; s.circle = [3.5, 0.18]; }],
+        ['Unarmed', null, (t, s) => { s.yaw = Math.PI + Math.sin(t * 0.5) * 0.4; }],
+      ];
+      const movers = [
+        ['Walk 1.4 m/s', 'm4a1', 1.4, 0], ['Jog 4.4 m/s', 'ak47', 4.4, 0], ['Sprint 6.9 m/s', 'mp5', 6.9, FLAG.SPRINT],
+        ['Crouch walk 2.3', 'm4a1', 2.3, FLAG.CROUCH], ['ADS strafe 2.4', 'ak47', 2.4, FLAG.ADS], ['Slide', 'm4a1', 0, 0],
+      ];
+      defs.forEach(([label, weapon, fn], i) => G.push({ label, weapon, fn, x: -35 + i * 5, z: GROW, kind: 'pose' }));
+      movers.forEach(([label, weapon, speed, flags], i) => G.push({ label, weapon, speed, flags, kind: i === 5 ? 'slide' : 'move', lane: i }));
+      G.push({ label: 'Swimmer', weapon: 'mp5', kind: 'swim' });
+    }
+    function truth(g, t, out) {
+      out.x = g.x || 0; out.y = 0; out.z = g.z || 0; out.yaw = Math.PI; out.pitch = 0; out.flags = 0; out.life = LIFE.GROUND; out.alive = true;
+      out.dy = 0; out.circle = null; out.fire = false; out.hit = -1; out.weapon = g.weapon;
+      if (g.kind === 'pose') {
+        g.fn(t, out);
+        if (out.circle) { const [r, w] = out.circle; out.x += Math.cos(t * w) * r * 0.3; out.z += Math.sin(t * w) * r * 0.3; out.yaw = -t * w; }
+      } else if (g.kind === 'move') {
+        // oval track south of the gallery; strafing lane keeps facing north
+        const R = 9 + g.lane * 2.2, cx = -10 + g.lane * 4, cz = -64;
+        const w = g.speed / R;
+        const a = t * w + g.lane;
+        out.x = cx + Math.cos(a) * R; out.z = cz + Math.sin(a) * R * 0.55;
+        const vx = -Math.sin(a) * R * w, vz = Math.cos(a) * R * 0.55 * w;
+        out.yaw = (g.flags & FLAG.ADS) ? 0 : Math.atan2(-vx, -vz);
+        out.flags = g.flags;
+      } else if (g.kind === 'slide') {
+        const u = t % 3.2;
+        const x0 = 24;
+        if (u < 0.6) { out.x = x0 + u * 6.9; out.flags = FLAG.SPRINT; }
+        else if (u < 1.5) { const k = (u - 0.6); out.x = x0 + 4.14 + k * (9.6 - k * 4); out.flags = FLAG.SLIDE | FLAG.CROUCH; }
+        else { out.x = x0 + 4.14 + 0.9 * (9.6 - 0.9 * 4) ; out.flags = FLAG.CROUCH; }
+        if (u > 2.6) { out.x = x0 + (3.2 - u) * 10; out.flags = 0; out.yaw = Math.PI / 2; }
+        out.z = -58; out.yaw = u > 2.6 ? -Math.PI / 2 : -Math.PI / 2 + Math.PI;
+        out.yaw = u > 2.6 ? Math.PI / 2 : -Math.PI / 2;
+      } else if (g.kind === 'swim') {
+        const a = t * 0.18;
+        out.x = -44 + Math.cos(a) * 7; out.z = 32 + Math.sin(a) * 7; out.y = -1.3;
+        out.yaw = Math.atan2(Math.sin(a), -Math.cos(a)) ;
+        out.yaw = Math.atan2(Math.sin(a) * 7 * 0.18, Math.cos(a) * 7 * 0.18 * -1) ;
+        const vx = -Math.sin(a), vz = Math.cos(a);
+        out.yaw = Math.atan2(-vx, -vz);
+      }
+      out.y += out.dy;
+      if (out.y === 0 || g.kind !== 'swim') { try { out.y = (out.dy || 0) + world.getGround(out.x, out.z, out.y + 30).y + (g.kind === 'swim' ? -1.3 : 0); } catch (e) { /* stub world always answers */ } }
+      if (g.kind === 'swim') out.y = -1.3;
+      return out;
+    }
+    let galleryOn = true;
+    const tmpTruth = {};
+    function galleryInit() {
+      defineGallery();
+      G.forEach((g, i) => {
+        g.id = 'bot:' + (i + 1);
+        g.e = createPlayer({ id: g.id, name: g.label, kind: 'bot', owner: state.selfId, slot: i + 1 });
+        g.snaps = [];
+        g.lastSnap = 0;
+        g.lastHit = -1;
+        g.label$ = document.createElement('div');
+        g.label$.textContent = g.label;
+        $('#labels').appendChild(g.label$);
+      });
+    }
+    function galleryUpdate(now) {
+      for (const g of G) {
+        if (now - g.lastSnap >= SNAP_MS) {
+          g.lastSnap = now;
+          const s = truth(g, T(now), {});
+          s.t = now;
+          g.snaps.push(s);
+          if (g.snaps.length > 12) g.snaps.shift();
+          if (s.fire && WEAPONS[s.weapon]) {
+            g.fireAcc = (g.fireAcc || 0) + SNAP_MS / 1000;
+            const iv = 60 / WEAPONS[s.weapon].rpm;
+            while (g.fireAcc >= iv) { g.fireAcc -= iv; setTimeout(() => bus.emit(EV.WEAPON_FIRE, { id: g.id, weapon: s.weapon, origin: [0, 0, 0], dir: [0, 0, -1], end: [0, 0, -1], local: false, hit: null }), DELAY_MS); }
+          }
+          if (s.hit >= 0 && s.hit !== g.lastHit) {
+            g.lastHit = s.hit;
+            setTimeout(() => bus.emit(EV.PLAYER_DAMAGED, { id: g.id, amount: 20, hp: 80, armor: 0, armorBroke: false, from: null, weapon: 'm4a1', zone: s.hit % 2 ? 'head' : 'body', dir: [0, 0, 1], kind: 'bullet' }), DELAY_MS);
+          }
+        }
+        // interpolate DELAY_MS in the past
+        const rt = now - DELAY_MS;
+        let a = g.snaps[0], b = g.snaps[g.snaps.length - 1];
+        for (let i = 0; i < g.snaps.length - 1; i++) if (g.snaps[i].t <= rt && g.snaps[i + 1].t >= rt) { a = g.snaps[i]; b = g.snaps[i + 1]; break; }
+        if (!a) continue;
+        const k = b.t > a.t ? Math.min(1, Math.max(0, (rt - a.t) / (b.t - a.t))) : 1;
+        const e = g.e;
+        e.pos.set(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, a.z + (b.z - a.z) * k);
+        let dyaw = b.yaw - a.yaw; dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+        e.yaw = a.yaw + dyaw * k;
+        e.pitch = a.pitch + (b.pitch - a.pitch) * k;
+        const src = k < 0.5 ? a : b;
+        e.flags = src.flags; e.life = src.life; e.alive = src.alive; e.weapon = src.weapon;
+        e.speed = Math.hypot(b.x - a.x, b.z - a.z) / Math.max(1e-3, (b.t - a.t) / 1000);
+        e.lastSeen = now;
+      }
+    }
+    function setGallery(on) {
+      galleryOn = on;
+      for (const g of G) { g.e.life = on ? LIFE.GROUND : LIFE.SPECTATE; g.label$.style.display = on ? '' : 'none'; }
+      $('[data-act="gallery"]').classList.toggle('on', on);
+      $('[data-act="gallery"]').textContent = on ? 'Gallery on' : 'Gallery off';
+    }
+    const lv = new THREE.Vector3();
+    function labelsUpdate() {
+      const cam = gfx.camera;
+      const w = innerWidth, h = innerHeight;
+      for (const g of G) {
+        if (!galleryOn) continue;
+        lv.set(g.e.pos.x, g.e.pos.y + (g.e.life === LIFE.CHUTE ? 2.2 : 2.15), g.e.pos.z).project(cam);
+        const d = cam.position.distanceTo(g.e.pos);
+        const vis = lv.z < 1 && d < 38 && Math.abs(lv.x) < 1.05 && Math.abs(lv.y) < 1.05;
+        g.label$.style.display = vis ? '' : 'none';
+        if (vis) { g.label$.style.left = ((lv.x + 1) / 2 * w).toFixed(1) + 'px'; g.label$.style.top = ((1 - lv.y) / 2 * h).toFixed(1) + 'px'; }
+      }
+    }
+
+    // ------------------------------------------------------------------ actions
+    let lastItem = null;
+    const actions = {
+      drop() {
+        const me = localPlayer();
+        me.alive = true; me.hp = PLAYER.health;
+        match.setupDrop(0, 0, Math.PI * 0.2);
+        controller.spawn('plane');
+        me.yaw = Math.PI * 0.2 + Math.PI * 0.6; me.pitch = -0.2;
+        plane.setVisible(true);
+        bus.emit(EV.PLANE_DOORS, { open: false });
+        setTimeout(() => bus.emit(EV.PLANE_DOORS, { open: true }), 3000);
+        canvas.focus();
+      },
+      tp(btn) {
+        const me = localPlayer();
+        if (me.life !== LIFE.GROUND) { controller.spawn('ground', [+btn.dataset.x, +btn.dataset.y, +btn.dataset.z]); me.alive = true; }
+        else controller.teleport([+btn.dataset.x, +btn.dataset.y, +btn.dataset.z]);
+        plane.setVisible(false);
+      },
+      gallery() { setGallery(!galleryOn); },
+      view() { camera.setView(camera.getView() === 'tp' ? 'fp' : 'tp'); },
+      shoulder() { debug.player.swapShoulder(); },
+      ads(btn) { adsDemo = !adsDemo; btn.classList.toggle('on', adsDemo); },
+      quality(btn) { renderer.applyQuality(btn.dataset.q); },
+      give(btn) { const w = btn.dataset.w; lastItem = { uid: 'h' + Date.now(), type: 'weapon', ref: w, qty: WEAPONS[w].mag, pos: [0, 0, 0], tier: 1 }; log(inventory.add(lastItem)); },
+      item(btn) {
+        const t = btn.dataset.t;
+        const qty = t === 'ammo' ? (btn.dataset.r === 'sniper' ? 10 : 60) : 1;
+        lastItem = { uid: 'h' + Date.now(), type: t, ref: btn.dataset.r || null, qty, pos: [0, 0, 0], tier: 1 };
+        log(inventory.canTake(lastItem) ? inventory.add(lastItem) : { taken: false, reason: 'full' });
+      },
+      cycle() { inventory.cycle(1); },
+      revert() { log({ reverted: lastItem ? inventory.revert(lastItem) : false }); },
+      dropall() { log(inventory.dropAll()); },
+      reset() { inventory.reset(LOADOUT); log({ reset: true }); },
+      hurt() { const me = localPlayer(); if (me.life === LIFE.GROUND) controller.teleport([me.pos.x, me.pos.y + 9, me.pos.z]); },
+      respawn() { const me = localPlayer(); me.alive = true; me.hp = PLAYER.health; controller.spawn('ground', [6, 0, 4]); },
+    };
+    let adsDemo = false;
+    let inspect = null;   // test photo mode: [camX, camY, camZ, targetX, targetY, targetZ, fov]
+    let inspectFollow = null;   // [offX, offY, offZ, lookY, fov] relative to the local player
+    function log(v) { $('[data-k="invlog"]').textContent = JSON.stringify(v, null, 0).slice(0, 600); }
+    document.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-act]');
+      if (!b) return;
+      sfx.unlock();
+      actions[b.dataset.act](b);
+      b.blur();
+    });
+    canvas.addEventListener('mousedown', () => sfx.unlock());
+
+    // ------------------------------------------------------------------ HUD
+    const hudEls = {};
+    for (const el of document.querySelectorAll('[data-k]')) hudEls[el.dataset.k] = el;
+    const LIFE_NAME = Object.fromEntries(Object.entries(LIFE).map(([k, v]) => [v, k]));
+    let hudAcc = 0;
+    function hud(dt) {
+      const me = localPlayer();
+      if (!me) return;
+      const L = state.local;
+      // crosshair
+      const ads = L.ads || 0;
+      const spread = 6 + (me.speed || 0) * 2.2 + (L.onGround ? 0 : 10);
+      for (const i of document.querySelectorAll('#cross i[data-s]')) {
+        const s = i.dataset.s;
+        if (s === 'l') i.style.left = (-spread - 8) + 'px';
+        if (s === 'r') i.style.left = spread + 'px';
+        if (s === 't') i.style.top = (-spread - 8) + 'px';
+        if (s === 'b') i.style.top = spread + 'px';
+      }
+      const groundView = me.life === LIFE.GROUND && me.alive;
+      $('#cross').style.opacity = groundView && ads < 0.4 ? 1 : 0;
+      $('#scope').style.display = L.scoped ? 'block' : 'none';
+      // prompts / altimeter
+      let prompt = '';
+      if (me.life === LIFE.PLANE) prompt = controller.doorsOpen() ? '<b>[SPACE]</b> JUMP' : 'DOORS OPENING';
+      else if (me.life === LIFE.FREEFALL) prompt = L.canDeploy ? '<b>[SPACE]</b> DEPLOY PARACHUTE' : '';
+      else if (me.life === LIFE.CHUTE) prompt = L.canDeploy ? '<b>[SPACE]</b> CUT  <b>[W/S]</b> SPEED / BRAKE' : '';
+      $('#prompt').innerHTML = prompt;
+      const air = me.life === LIFE.FREEFALL || me.life === LIFE.CHUTE || me.life === LIFE.PLANE;
+      $('#alt').style.display = air ? 'block' : 'none';
+      if (air) $('[data-alt]').textContent = Math.round(L.altitude);
+      $('#dead').style.display = me.alive ? 'none' : 'block';
+      $('#lockhint').style.display = input.isLocked() ? 'none' : 'block';
+      hudAcc += dt;
+      if (hudAcc < 0.12) return;
+      hudAcc = 0;
+      $('[data-hp]').style.width = me.hp + '%';
+      $('[data-armor]').style.width = (me.armor / 150 * 100) + '%';
+      const st = controller.stanceInfo();
+      hudEls.life.textContent = LIFE_NAME[me.life] + (me.alive ? '' : ' (dead)');
+      hudEls.stance.textContent = st.stance + (st.mantle ? ' mantle' : '');
+      hudEls.speed.textContent = (me.speed || 0).toFixed(2) + ' m/s  vy ' + me.vel.y.toFixed(1);
+      hudEls.ground.textContent = L.onGround ? 'yes' : 'no';
+      hudEls.surface.textContent = SURFACE_NAME[L.surface] || '-';
+      const c = debug.player.camera();
+      hudEls.cam.textContent = c.mode + '  fov ' + c.fov.toFixed(0);
+      hudEls.pos.textContent = me.pos.toArray().map((v) => v.toFixed(1)).join(' ');
+      const s = renderer.stats();
+      hudEls.perf.textContent = `${s.fps} fps  ${s.calls} dc  ${(s.tris / 1000).toFixed(0)}k  ${s.tier}`;
+      const inv = inventory.get();
+      const slot = (i) => inv.slots[i] ? `${WEAPONS[inv.slots[i].weapon].name} ${inv.slots[i].mag}${inv.active === i ? '  <' : ''}` : 'empty';
+      hudEls.s0.textContent = slot(0); hudEls.s1.textContent = slot(1);
+      hudEls.ammo.textContent = Object.keys(AMMO).map((k) => `${k} ${inv.ammo[k]}`).join('  ');
+      hudEls.pf.textContent = `${inv.plates} / ${inv.frags}`;
+    }
+    function keysHelp() {
+      const b = input.bindings();
+      const rows = ['forward', 'back', 'left', 'right', 'jump', 'crouch', 'sprint', 'fire', 'ads', 'reload', 'grenade', 'plate', 'slot1', 'slot2', 'freelook', 'shoulder', 'view', 'pause'];
+      const box = $('[data-keys]');
+      box.replaceChildren(...rows.map((a) => {
+        const d = document.createElement('div');
+        const k = document.createElement('b');
+        k.textContent = (b[a] || []).map(input.codeLabel).join(' ');
+        d.append(k, ' ' + input.actionLabel(a));
+        return d;
+      }));
+    }
+
+    // ------------------------------------------------------------------ boot
+    const LOADOUT = { slots: [{ weapon: 'm4a1', mag: 30 }, { weapon: 'm1911', mag: 8 }], ammo: { ar: 150, light: 64, sniper: 20 }, plates: 3, frags: 2 };
+    async function boot() {
+      settings.load();
+      await renderer.init(canvas, { tier: DEV.quality || settings.get('quality') });
+      input.init(canvas);
+      const prog = (p, label) => { $('[data-load]').style.width = (p * 100).toFixed(0) + '%'; $('[data-loadlabel]').textContent = label || 'Loading'; };
+      await assets.loadCore((p, l) => prog(p * 0.8, l));
+      await world.build({ scene: gfx.scene, quality: renderer.getQuality(), onProgress: (p, l) => prog(0.8 + p * 0.2, l) });
+      camera.init(gfx.camera);
+      controller.init();
+      avatar.init(gfx.scene);
+      plane.init(gfx.scene);
+      damage.init();
+      vml.init();
+      sfx.init();
+      const me = createPlayer({ id: state.selfId, name: state.name, kind: 'local', slot: 0 });
+      inventory.reset(LOADOUT);
+      controller.spawn('ground', [6, 0, 4]);
+      me.yaw = 0.35; me.pitch = -0.05;
+      galleryInit();
+      setAppState(APP.MATCH);
+      input.setEnabled(true);
+      keysHelp();
+      await renderer.compile();
+      $('#loading').remove();
+      const loop = createLoop(frame);
+      loop.start();
+      window.__zf.loop = loop;
+      window.__zf.harness = { actions, setGallery, sfxLog: sfx.log, setAdsDemo: (on) => { adsDemo = on; }, LOADOUT, inspect: (v) => { inspect = v; inspectFollow = null; }, follow: (v) => { inspectFollow = v; if (!v) inspect = null; }, gallery: G };
+      window.__zf.ready = true;
+    }
+
+    function frame(dt, now) {
+      try {
+        input.update();
+        camera.look(dt);
+        match.update(dt);
+        plane.update(dt);
+        controller.update(dt);
+        wlite.setForceAds(adsDemo);
+        wlite.update(dt);
+        damage.update(dt);
+        if (galleryOn) galleryUpdate(now);
+        avatar.update(dt);
+        camera.update(dt);
+        if (inspectFollow) { const m = localPlayer(); inspect = [m.pos.x + inspectFollow[0], m.pos.y + inspectFollow[1], m.pos.z + inspectFollow[2], m.pos.x, m.pos.y + inspectFollow[3], m.pos.z, inspectFollow[4]]; }
+        if (inspect) { gfx.camera.position.set(inspect[0], inspect[1], inspect[2]); gfx.camera.lookAt(inspect[3], inspect[4], inspect[5]); if (inspect[6]) { gfx.camera.fov = inspect[6]; gfx.camera.updateProjectionMatrix(); } gfx.camera.updateMatrixWorld(); }
+        vml.update(dt);
+        world.update(dt, gfx.camera.position);
+        sfx.update();
+        labelsUpdate();
+        hud(dt);
+        renderer.render(dt);
+      } catch (err) {
+        window.__zf.fatalError = String(err && err.stack || err);
+        console.error(err);
+        window.__zf.loop.stop();
+      }
+    }
+    boot().catch((err) => { window.__zf.fatalError = String(err && err.stack || err); console.error(err); $('[data-loadlabel]').textContent = 'Failed: ' + err.message; });
+  </script>
+</body>
+</html>
