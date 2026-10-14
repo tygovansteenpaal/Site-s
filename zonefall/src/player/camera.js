@@ -36,7 +36,7 @@ import * as world from '../world/world.js';
 const TUNE = {
   viewKey: 'zonefall.view.v1',
   tp: {
-    pivotStand: 1.56, pivotCrouch: 1.06, pivotSlide: 0.78, pivotSwim: 1.2,
+    pivotStand: 1.56, pivotCrouch: 1.06, pivotSlide: 0.78, pivotSwim: 1.72,
     shoulder: 0.56, up: 0.1, dist: 2.3, distSprint: 2.65, distCrouch: 2.05, distAds: 1.5,
     probe: 0.16, margin: 0.14, minDist: 0.25,
     inLambda: 40, outLambda: 4.5, shoulderLambda: 9,
@@ -57,6 +57,9 @@ const TUNE = {
   landSpring: { k: 160, c: 17, perSpeed: 0.022, max: 0.32 },
   flinch: { k: 220, c: 22, deg: 1.6 },
   freelookReturn: 7,
+  adsTravelExp: 2.6,            // ease exponent of the shoulder -> sight camera travel
+  adsTravelLambda: 40,
+  adsHideDist: 0.6,             // closer than this to the sight: the body is drawn as arms only (shadow kept)
 };
 
 // ------------------------------------------------------------------------------------------ module state
@@ -86,6 +89,7 @@ let trauma = 0, traumaDecay = 2.5, shakeT = 0;
 let landY = 0, landV = 0;
 let flinchP = 0, flinchPV = 0, flinchY = 0, flinchYV = 0;
 let bobT = 0;
+let adsTravel = 0, lastRawAds = 0, adsDir = 1;
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmp3 = new THREE.Vector3();
 const fwd = new THREE.Vector3(), right = new THREE.Vector3();
@@ -334,9 +338,9 @@ export function getAimRay(outOrigin, outDir) {
   }
   dirFrom(me.yaw, me.pitch, outDir);
   controller.getEye(eye);
-  const a = adsBlend();
   if (me.life !== LIFE.GROUND || view === 'fp') { outOrigin.copy(eye); return outDir; }
-  if (a > 0.5 && avatar.getAdsEye(adsEye)) { outOrigin.copy(adsEye); return outDir; }
+  // Looking through the sights: the shot leaves along the sight line from the sight's eye point.
+  if (adsTravel > 0.5 && avatar.getAdsEye(adsEye)) { outOrigin.copy(adsEye); return outDir; }
   // Third person: start the ray where the crosshair line passes the shoulder plane, so the shot lands exactly under the
   // crosshair without hitting anything between the camera and the player; never start inside a wall beside the head.
   tpCameraPosition(me, tmp2);
@@ -502,16 +506,29 @@ function groundCam(me, dt) {
   // subtle bob in third person
   camPos.y += bobY * T.bob + landY * 0.6;
   camPos.addScaledVector(right, bobX * T.bob);
-  // ---- ADS: travel into the weapon sight (the avatar's IRONSIGHT-aligned eye point)
+  // swimming: the boom never dips under the water surface (sea level)
+  if (controller.stanceInfo().stance === 'swim') camPos.y = Math.max(camPos.y, 0.3);
+  // ---- ADS: travel into the weapon sight (the avatar's IRONSIGHT-aligned eye point). Entering eases out (the camera
+  // is in the sight well before the weapon finishes raising), leaving eases in; the travel value itself is damped so
+  // a reversal mid-way never jumps.
+  const rawAds = clamp(state.local.ads || 0, 0, 1);
+  if (rawAds > lastRawAds + 1e-5) adsDir = 1;
+  else if (rawAds < lastRawAds - 1e-5) adsDir = -1;
+  const adsWant = adsDir > 0 ? 1 - Math.pow(1 - rawAds, TUNE.adsTravelExp) : Math.pow(rawAds, TUNE.adsTravelExp);
+  lastRawAds = rawAds;
+  adsTravel = rawAds <= 0 ? 0 : rawAds >= 1 ? 1 : damp(adsTravel, adsWant, TUNE.adsTravelLambda, dt);
   let mode = 'tp';
-  if (ads > 0.001) {
+  let near = boom < 0.55;
+  if (adsTravel > 0.001) {
     const ok = avatar.getAdsEye(adsEye);
     if (!ok) adsEye.copy(eye);
-    camPos.lerp(adsEye, ads);
-    if (ads > 0.55) mode = 'ads';
+    camPos.lerp(adsEye, adsTravel);
+    const gap = camPos.distanceTo(adsEye);
+    if (gap < TUNE.adsHideDist) near = true;
+    if (adsTravel > 0.6 || gap < 0.2) mode = 'ads';
   }
   setMode(mode);
-  avatar.setLocalViewMode(mode === 'ads' || boom < 0.55 ? 'ads' : 'full');
+  avatar.setLocalViewMode(state.local.scoped ? 'hidden' : near ? 'ads' : 'full');
   placeCamera(camPos, yaw, pitch);
   writeLocal(me);
   return fov;

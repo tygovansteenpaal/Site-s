@@ -16,6 +16,7 @@ const TUNE = {
   hysteresis: 25,
   skirt: 2.5,
   ctrlSize: 1024,
+  aoSize: 2048,             // ground occlusion map texels across the world (0.59 m)
   oceanSkip: -5,            // chunks whose highest point is below this are not rendered
   roadStep: 2,
   roadLift: 0.045,
@@ -113,6 +114,61 @@ export async function buildControlMap(onProgress = () => {}) {
 }
 export const getControl = () => ctrl;
 
+// ------------------------------------------------------------------------------------------ baked ground occlusion
+// A single-channel map over the world (0.6 m texels) darkening the terrain's indirect light around everything that
+// stands on it: buildings, walls, container stacks and tank bunds sit in soft contact shadow, tree canopies leave a
+// broad dimmer pool. Rasterized from layout footprints (analytic rect / disc distance), then from tree positions once
+// foliage has placed them. The terrain shader multiplies its ambient occlusion by this value.
+let aoMap = null;
+
+/** Create the occlusion map (all clear). */
+export function createAOMap(size = TUNE.aoSize) {
+  const data = new Uint8Array(size * size).fill(255);
+  const tex = new THREE.DataTexture(data, size, size, THREE.RedFormat, THREE.UnsignedByteType);
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.flipY = false;
+  tex.needsUpdate = true;
+  aoMap = { size, data, tex, px: W / size };
+  return aoMap;
+}
+export const getAOMap = () => aoMap;
+
+/**
+ * Darken the occlusion map around an oriented rectangle (round: a disc of diameter w).
+ * strength: occlusion at the footprint edge (0..1); falloff: metres for it to fade to ~5 %.
+ */
+export function aoFootprint(x, z, w, d, yaw, strength, falloff, round = false) {
+  if (!aoMap) return;
+  const { size, data, px } = aoMap;
+  const reach = falloff * 3 + Math.hypot(w, d) / 2;
+  const i0 = Math.max(0, Math.floor((x - reach + HALF) / px)), i1 = Math.min(size - 1, Math.ceil((x + reach + HALF) / px));
+  const j0 = Math.max(0, Math.floor((z - reach + HALF) / px)), j1 = Math.min(size - 1, Math.ceil((z + reach + HALF) / px));
+  const c = Math.cos(yaw), s = Math.sin(yaw), hw = w / 2, hd = d / 2;
+  for (let j = j0; j <= j1; j++) {
+    const wz = -HALF + (j + 0.5) * px - z;
+    for (let i = i0; i <= i1; i++) {
+      const wx = -HALF + (i + 0.5) * px - x;
+      let dist;
+      if (round) dist = Math.hypot(wx, wz) - hw;
+      else {
+        const lx = wx * c - wz * s, lz = wx * s + wz * c;
+        const qx = Math.abs(lx) - hw, qz = Math.abs(lz) - hd;
+        dist = Math.hypot(Math.max(qx, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qz), 0);
+      }
+      const occ = dist <= 0 ? strength : strength * Math.exp(-dist / (falloff / 3));
+      if (occ < 0.01) continue;
+      const o = j * size + i;
+      data[o] = Math.round(data[o] * (1 - occ));
+    }
+  }
+}
+
+/** Upload changes made with aoFootprint. */
+export function commitAOMap() { if (aoMap) aoMap.tex.needsUpdate = true; }
+
 // ------------------------------------------------------------------------------------------ chunk meshes
 function chunkGeometry(ci, cj, lod) {
   const k = grid.res / (W / TUNE.chunk);           // grid cells per chunk at LOD 0
@@ -164,7 +220,8 @@ export async function buildTerrain(scene, quality, onProgress = () => {}) {
   if (!grid || !ctrl) throw new Error('[WORLD/terrain] buildHeightGrid and buildControlMap must run first');
   root = new THREE.Group();
   root.name = 'terrain';
-  material = terrainMaterial({ ctrl: ctrl.tex, worldSize: W });
+  if (!aoMap) createAOMap();
+  material = terrainMaterial({ ctrl: ctrl.tex, ao: aoMap.tex, worldSize: W });
   const nC = W / TUNE.chunk, k = grid.res / nC;
   let t0 = now(), done = 0;
   for (let cj = 0; cj < nC; cj++) {

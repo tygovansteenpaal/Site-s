@@ -17,6 +17,8 @@ import { makeSimplex, fbm, ridged, smoother01, sstep, mix, smax, segDist } from 
 export const TUNE = {
   shoulder: 3,               // flat road shoulder each side (m)
   roadBlend: { asphalt: 12, dirt: 8 },
+  cutBlend: 2.2,             // extra blend metres per metre of cut or fill, so deep cuttings get gentle banks
+  maxBlend: 34,
   profileStep: 4,            // road profile sample spacing (m)
   profileSigma: { asphalt: 22, dirt: 12 },
   maxGrade: { asphalt: 0.11, dirt: 0.2 },
@@ -25,7 +27,7 @@ export const TUNE = {
   beachHeight: 2.6,
   seabedFall: 28,            // m of offshore distance for the seabed to reach ~63% of MAP.seabed
   hill: { id: 'signal', radius: 125, crest: 4 },
-  pit: { faces: [[62, 57], [49, 44], [36, 31]], floorNoise: 0.35 },
+  pit: { faces: [[63, 56], [49, 42], [35, 28]], floorNoise: 0.35, rockNy: 0.84 },
   ramp: { width: 7, top: 22, startR: 44.7, endR: 25, sweep: 3.9 },
   harbour: { depth: -7.5, taper: 28 },
   kesslerPad: { x0: 150, x1: 350, z0: -340, z1: -160, blend: 26 },
@@ -134,7 +136,7 @@ roads.push(ramp);
 const G = { n: Math.ceil((MAP.size + 80) / TUNE.gridCell), off: MAP.half + 40, cells: null };
 (function buildGrid() {
   G.cells = Array.from({ length: G.n * G.n }, () => []);
-  const reach = 4 + TUNE.shoulder + TUNE.roadBlend.asphalt + 2;
+  const reach = 4 + TUNE.shoulder + TUNE.maxBlend + 2;
   roads.forEach((r, ri) => {
     for (let i = 0; i < r.xs.length - 1; i++) {
       const x0 = Math.min(r.xs[i], r.xs[i + 1]) - reach, x1 = Math.max(r.xs[i], r.xs[i + 1]) + reach;
@@ -419,13 +421,14 @@ export function heightAt(x, z) {
   for (let k = 0; k < cell.length; k += 2) {
     const r = roads[cell[k]], i = cell[k + 1];
     const d = segDist(x, z, r.xs[i], r.zs[i], r.xs[i + 1], r.zs[i + 1], tmp);
-    const flat = r.half + TUNE.shoulder, blend = TUNE.roadBlend[r.type] || 10;
+    const flat = r.half + TUNE.shoulder;
+    if (d >= flat + TUNE.maxBlend) continue;
+    const s = r.cum[i] + (r.cum[i + 1] - r.cum[i]) * tmp[0];
+    const rh = profileAt(r, s);
+    const blend = Math.min(TUNE.maxBlend, (TUNE.roadBlend[r.type] || 10) + Math.abs(h - rh) * TUNE.cutBlend);
     if (d >= flat + blend) continue;
     const w = d <= flat ? 1 : 1 - smoother01((d - flat) / blend);
-    if (w > bestW + 1e-6 || (w >= 0.999 && bestW >= 0.999 && r.type === 'asphalt')) {
-      const s = r.cum[i] + (r.cum[i + 1] - r.cum[i]) * tmp[0];
-      bestW = w; bestH = profileAt(r, s);
-    }
+    if (w > bestW + 1e-6 || (w >= 0.999 && bestW >= 0.999 && r.type === 'asphalt')) { bestW = w; bestH = rh; }
   }
   return bestW > 0 ? mix(h, bestH, bestW) : h;
 }
@@ -548,7 +551,7 @@ export function surfaceAt(x, z) {
   normalAt(x, z, nrm, 0.8);
   if (nrm[1] < TUNE.rockSlope) return SURFACE.ROCK;
   const gd = Math.hypot(x - GREY.x, z - GREY.z);
-  if (gd < TUNE.pit.faces[0][0]) return pw[0] > 0.3 ? SURFACE.DIRT : SURFACE.ROCK;
+  if (gd < TUNE.pit.faces[0][0] + 1) return nrm[1] < TUNE.pit.rockNy ? SURFACE.ROCK : SURFACE.DIRT;
   if (pw[0] > 0.45 || pw[3] > 0.5) return SURFACE.DIRT;
   if (h < TUNE.beachHeight + 0.4 && sandiness(x, z) > 0.5) return SURFACE.SAND;
   return SURFACE.GRASS;

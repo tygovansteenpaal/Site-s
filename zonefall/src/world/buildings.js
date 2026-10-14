@@ -11,13 +11,13 @@ import * as THREE from 'three';
 import { SURFACE } from '../config.js';
 import { Rng } from '../core/rng.js';
 import { L, TILE } from './materials.js';
-import { heightAt } from './heightfield.js';
+import { heightAt, roads, roadHeight } from './heightfield.js';
 
 export const TUNE = {
   storey: 3.0, slab: 0.2, outer: 0.15, inner: 0.10,
   door: { w: 1.2, h: 2.2 }, win: { w: 1.2, h: 1.3, sill: 0.9 },
   rise: 3.0 / 17, tread: 0.28, stairW: 1.05,
-  ao: { floor: 0.42, wall: 0.46, ceiling: 0.34, reveal: 0.78, groundContact: 0.78 },
+  ao: { floor: 0.3, wall: 0.32, ceiling: 0.24, reveal: 0.66, groundContact: 0.72 },   // sky light reaching room surfaces
   tintScale: 2.0,            // vertex tints are stored / 2 so tints above 1 can brighten (white plaster)
 };
 const H = TUNE.storey, SLAB = TUNE.slab, OUT = TUNE.outer, INN = TUNE.inner, WT = OUT + INN;
@@ -39,18 +39,20 @@ const MAT = {
   plasterRose: M(L.concrete_wall_008, 1.34, 1.08, 0.98), plasterGrey: M(L.concrete_wall_008, 1.1, 1.1, 1.08),
   interior: M(L.concrete_wall_008, 1.38, 1.34, 1.24), interiorWarm: M(L.concrete_wall_008, 1.36, 1.24, 1.06),
   concrete: M(L.concrete_wall_008, 1.0, 1.0, 0.97), concreteOlive: M(L.concrete_wall_008, 0.92, 0.95, 0.8),
-  concreteSand: M(L.concrete_wall_008, 1.18, 1.1, 0.92), stone: M(L.concrete_wall_008, 1.06, 1.0, 0.9),
-  floorWood: M(L.weathered_brown_planks, 1.05, 0.98, 0.92), floorConcrete: M(L.concrete_floor_worn_001, 1.0),
-  roofTar: M(L.concrete_floor_worn_001, 0.48, 0.48, 0.47), slab: M(L.concrete_floor_worn_001, 1.05, 1.04, 1.0),
+  concreteSand: M(L.concrete_wall_008, 1.18, 1.1, 0.92), stone: M(L.red_brick_03, 1.12, 1.72, 1.92),
+  floorWood: M(L.weathered_brown_planks, 1.05, 0.98, 0.92), floorConcrete: M(L.concrete_floor_worn_001, 1.62, 1.6, 1.55),
+  roofTar: M(L.concrete_floor_worn_001, 0.78, 0.78, 0.76), slab: M(L.concrete_floor_worn_001, 1.85, 1.83, 1.76),
   trimWood: M(L.weathered_brown_planks, 0.62, 0.52, 0.46), trimWhite: M(L.concrete_wall_008, 1.6, 1.58, 1.52),
   planks: M(L.weathered_brown_planks, 1.0), planksRed: M(L.weathered_brown_planks, 1.05, 0.55, 0.45), planksDark: M(L.weathered_brown_planks, 0.66, 0.6, 0.56),
   ironGrey: M(L.corrugated_iron, 0.95, 0.97, 1.0), ironRust: M(L.corrugated_iron, 0.86, 0.5, 0.38), ironGreen: M(L.corrugated_iron, 0.56, 0.7, 0.52),
   ironBlue: M(L.corrugated_iron, 0.55, 0.68, 0.86), ironWhite: M(L.corrugated_iron, 1.32, 1.32, 1.28), ironDark: M(L.corrugated_iron, 0.6, 0.6, 0.62),
   ironRed: M(L.corrugated_iron, 0.95, 0.38, 0.3), ironSand: M(L.corrugated_iron, 1.15, 1.02, 0.8),
-  metalGreen: M(L.green_metal_rust, 1.0), metalYellow: M(L.green_metal_rust, 1.9, 1.5, 0.45), metalWhite: M(L.green_metal_rust, 1.7, 1.75, 1.7),
-  metalGrey: M(L.green_metal_rust, 1.1, 1.15, 1.2), metalRed: M(L.green_metal_rust, 1.7, 0.7, 0.55), metalBlue: M(L.green_metal_rust, 0.8, 1.0, 1.6),
-  metalOrange: M(L.green_metal_rust, 1.9, 1.0, 0.45),
-  turf: M(L.sparse_grass, 1.0), gravel: M(L.gravelly_sand, 1.0), rock: M(L.rocky_terrain_02, 1.0),
+  // painted steel: light paints on the neutral concrete set (green_metal_rust is green and cannot be tinted to
+  // white or yellow), dark steel on asphalt, olive drab keeps the rusty green set
+  metalGreen: M(L.green_metal_rust, 1.0), metalYellow: M(L.concrete_wall_008, 2.0, 1.55, 0.32), metalWhite: M(L.concrete_wall_008, 1.75, 1.78, 1.85),
+  metalGrey: M(L.asphalt_02, 1.35, 1.38, 1.45), metalRed: M(L.concrete_wall_008, 1.75, 0.42, 0.34), metalBlue: M(L.concrete_wall_008, 0.55, 0.85, 1.6),
+  metalOrange: M(L.concrete_wall_008, 2.0, 0.95, 0.3),
+  turf: M(L.sparse_grass, 1.0), gravel: M(L.gravelly_sand, 0.7, 1.12, 1.75), rock: M(L.gravelly_sand, 0.58, 1.0, 1.95),
 };
 
 // ------------------------------------------------------------------------------------------ geometry builder
@@ -250,22 +252,35 @@ function addDoor(ctx, lx, lz, nx, nz, y = 0) {
  * [{c, w, y0, y1}] (c = centre along the axis). Emits pieces around every opening.
  */
 function wallRun(g, axis, a0, a1, b0, b1, y0, y1, openings, m, skip = 0, col = true) {
-  const ops = openings.filter((o) => o.y1 > y0 + 0.01 && o.y0 < y1 - 0.01 && o.c + o.w / 2 > a0 && o.c - o.w / 2 < a1).sort((p, q) => p.c - q.c);
+  const ops = openings.filter((o) => o.y1 > y0 + 0.01 && o.y0 < y1 - 0.01 && o.c + o.w / 2 > a0 && o.c - o.w / 2 < a1)
+    .map((o) => ({ u0: Math.max(a0, o.c - o.w / 2), u1: Math.min(a1, o.c + o.w / 2), v0: Math.max(y0, o.y0), v1: Math.min(y1, o.y1) }));
   const B = (u0, v0, u1, v1, sk) => {
+    if (u1 - u0 < 1e-3 || v1 - v0 < 1e-3) return;
     if (axis === 'x') g.box(u0, v0, b0, u1, v1, b1, m, { skip: sk, col });
     else g.box(b0, v0, u0, b1, v1, u1, m, { skip: sk, col });
   };
-  let cur = a0;
   const botSkip = skip | NY;
-  for (const o of ops) {
-    const o0 = Math.max(a0, o.c - o.w / 2), o1 = Math.min(a1, o.c + o.w / 2);
-    if (o0 > cur + 1e-3) B(cur, y0, o0, y1, botSkip);
-    const oy0 = Math.max(y0, o.y0), oy1 = Math.min(y1, o.y1);
-    if (oy0 > y0 + 1e-3) B(o0, y0, o1, oy0, botSkip);
-    if (oy1 < y1 - 1e-3) B(o0, oy1, o1, y1, skip);
-    cur = Math.max(cur, o1);
+  // split the run at every opening edge; in each interval, fill the vertical gaps between the openings stacked
+  // there (windows above windows on upper storeys, a door below a window ...)
+  const cuts = [a0, a1];
+  for (const o of ops) cuts.push(o.u0, o.u1);
+  cuts.sort((p, q) => p - q);
+  let solidFrom = null;
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const u0 = cuts[i], u1 = cuts[i + 1];
+    if (u1 - u0 < 1e-4) continue;
+    const mid = (u0 + u1) / 2;
+    const here = ops.filter((o) => o.u0 <= mid && o.u1 >= mid).sort((p, q) => p.v0 - q.v0);
+    if (!here.length) { if (solidFrom == null) solidFrom = u0; continue; }
+    if (solidFrom != null) { B(solidFrom, y0, u0, y1, botSkip); solidFrom = null; }
+    let v = y0;
+    for (const o of here) {
+      if (o.v0 > v + 1e-3) B(u0, v, u1, o.v0, v === y0 ? botSkip : skip);
+      v = Math.max(v, o.v1);
+    }
+    if (v < y1 - 1e-3) B(u0, v, u1, y1, skip);
   }
-  if (cur < a1 - 1e-3) B(cur, y0, a1, y1, botSkip);
+  if (solidFrom != null) B(solidFrom, y0, a1, y1, botSkip);
 }
 
 /** Window/door frame inside an opening at the wall mid-plane, plus an exterior sill for windows. */
@@ -696,6 +711,7 @@ const KINDS = {
       chimney: rng.chance(0.7), lowest: b.lowest,
     });
     furnishRooms(ctx, r0, 'home');
+    if (b.yard) houseYard(ctx, fc);
   },
   farmhouse(ctx) { ctx.b.variant = 2; KINDS.house(ctx); },
   shop(ctx) {
@@ -1105,6 +1121,146 @@ const KINDS = {
   },
 };
 
+
+// ------------------------------------------------------------------------------------------ yards, pavements, lamps
+const YARD_SIDE = 0.6;     // fence line beyond the side walls (m)
+
+/**
+ * One fence run in the building's local frame, posts following the terrain, gaps [{c, w}] measured along the run.
+ * Styles: picket (painted boards), rail (post and rail), wall (low brick with coping), wire (mesh panels),
+ * hedge (bush rows placed by foliage.js; no geometry here).
+ */
+function yardRun(ctx, x0, z0, x1, z1, style, gaps = []) {
+  const { g } = ctx;
+  const len = Math.hypot(x1 - x0, z1 - z0);
+  if (len < 0.3) return;
+  const ux = (x1 - x0) / len, uz = (z1 - z0) / len;
+  const gy = (lx, lz) => heightAt(g.wx(lx, lz), g.wz(lx, lz)) - g.oy;
+  const spans = [];
+  let cur = 0;
+  for (const gp of gaps.slice().sort((a, b) => a.c - b.c)) { if (gp.c - gp.w / 2 > cur + 0.25) spans.push([cur, gp.c - gp.w / 2]); cur = Math.max(cur, gp.c + gp.w / 2); }
+  if (len - cur > 0.25) spans.push([cur, len]);
+  for (const [a0, a1] of spans) {
+    if (style === 'hedge') {
+      const P = (t) => [g.wx(x0 + ux * t, z0 + uz * t), g.wz(x0 + ux * t, z0 + uz * t)];
+      ctx.hedges.push({ a: P(a0), b: P(a1), site: ctx.b.site });
+      continue;
+    }
+    const n = Math.max(1, Math.round((a1 - a0) / (style === 'wall' ? 3 : 2.2)));
+    const pts = [];
+    for (let k = 0; k <= n; k++) { const t = a0 + (a1 - a0) * (k / n); const px = x0 + ux * t, pz = z0 + uz * t; pts.push([px, gy(px, pz), pz]); }
+    for (let k = 0; k <= n; k++) {
+      const [px, py, pz] = pts[k];
+      if (style === 'picket') g.box(px - 0.05, py - 0.3, pz - 0.05, px + 0.05, py + 1.02, pz + 0.05, MAT.trimWhite, { col: false });
+      else if (style === 'rail') g.box(px - 0.07, py - 0.3, pz - 0.07, px + 0.07, py + 1.1, pz + 0.07, MAT.planksDark, { col: false });
+      else if (style === 'wire') g.box(px - 0.035, py - 0.3, pz - 0.035, px + 0.035, py + 1.25, pz + 0.035, MAT.metalGrey, { col: false });
+      else if (style === 'wall') g.box(px - 0.17, py - 0.3, pz - 0.17, px + 0.17, py + 0.9, pz + 0.17, MAT.brickDark, { col: false, mats: { py: MAT.concrete } });
+      if (k === n) break;
+      const [qx, qy, qz] = pts[k + 1];
+      const sl = Math.hypot(qx - px, qy - py, qz - pz);
+      const dir = [(qx - px) / sl, (qy - py) / sl, (qz - pz) / sl];
+      const mx = (px + qx) / 2, my = (py + qy) / 2, mz = (pz + qz) / 2;
+      const half = sl / 2;
+      if (style === 'picket') {
+        for (const ry of [0.28, 0.78]) g.boxB(mx, my + ry, mz, dir, [0, 1, 0], null, half, 0.035, 0.02, MAT.trimWhite, { col: false });
+        const boards = Math.max(2, Math.floor(sl / 0.15));
+        for (let i = 0; i < boards; i++) {
+          const t = (i + 0.5) / boards;
+          const bx = px + (qx - px) * t, by = py + (qy - py) * t, bz = pz + (qz - pz) * t;
+          const hb = 0.92 + ((i % 2) ? 0.0 : 0.04);
+          g.boxB(bx - uz * 0.035, by + hb / 2 - 0.04, bz + ux * 0.035, [ux, 0, uz], [0, 1, 0], null, 0.034, hb / 2, 0.011, MAT.trimWhite, { col: false, skip: NY });
+        }
+      } else if (style === 'rail') {
+        for (const ry of [0.35, 0.68, 1.0]) g.boxB(mx, my + ry, mz, dir, [0, 1, 0], null, half, 0.05, 0.025, MAT.planksDark, { col: false });
+      } else if (style === 'wire') {
+        for (const ry of [0.08, 1.2]) g.boxB(mx, my + ry, mz, dir, [0, 1, 0], null, half, 0.015, 0.015, MAT.metalGrey, { col: false });
+        g.boxB(mx, my + 0.64, mz, dir, [0, 1, 0], null, half, 0.56, 0.004, M(L.green_metal_rust, 0.7, 0.76, 0.76), { col: false });
+      } else if (style === 'wall') {
+        g.boxB(mx, my + 0.2, mz, dir, [0, 1, 0], null, half, 0.5, 0.11, MAT.brickDark, { col: false, skip: NY });
+        g.boxB(mx, my + 0.74, mz, dir, [0, 1, 0], null, half + 0.02, 0.04, 0.15, MAT.concrete, { col: false });
+      }
+      // one collider per bay (players mantle over; bullets stop on walls, pass between pickets is not modelled)
+      const ch = style === 'wall' ? 0.78 : style === 'wire' ? 1.25 : 1.0;
+      g.boxB(mx, my + ch / 2, mz, dir, [0, 1, 0], null, half, ch / 2, 0.06, MAT.planksDark, { skip: 63, surf: style === 'wall' ? SURFACE.CONCRETE : style === 'wire' ? SURFACE.METAL : SURFACE.WOOD });
+    }
+  }
+}
+
+/** Front yard (gate opposite the front door) and, if there is room, a fenced back garden. */
+function houseYard(ctx, doorC) {
+  const { b } = ctx;
+  const y = b.yard, hw = b.w / 2 + YARD_SIDE, hd = b.d / 2;
+  if (y.front > 0) {
+    const fz = hd + y.front;
+    yardRun(ctx, -hw, fz, hw, fz, y.style, [{ c: doorC + hw, w: 1.3 }]);
+    for (const s of [-1, 1]) {
+      yardRun(ctx, s * hw, hd - 0.4, s * hw, fz, y.style);
+      if (y.style !== 'hedge') yardRun(ctx, s * (b.w / 2), hd - 0.4, s * hw, hd - 0.4, y.style);
+    }
+  }
+  if (y.back > 0) {
+    const bz = -hd - y.back, st = y.rear;
+    yardRun(ctx, -hw, bz, hw, bz, st, [{ c: hw + (ctx.rng.chance(0.5) ? -1 : 1) * (b.w / 4), w: 1.2 }]);
+    for (const s of [-1, 1]) {
+      yardRun(ctx, s * hw, -hd + 0.4, s * hw, bz, st);
+      yardRun(ctx, s * (b.w / 2), -hd + 0.4, s * hw, -hd + 0.4, st);
+    }
+  }
+}
+
+function roadPointAt(r, sa) {
+  sa = Math.max(0, Math.min(r.len, sa));
+  let i = 0;
+  while (i < r.cum.length - 2 && r.cum[i + 1] < sa) i++;
+  const t = (sa - r.cum[i]) / Math.max(1e-6, r.cum[i + 1] - r.cum[i]);
+  return [r.xs[i] + (r.xs[i + 1] - r.xs[i]) * t, r.zs[i] + (r.zs[i + 1] - r.zs[i]) * t];
+}
+
+/** Raised pavement with a curb along one side of a road (world-space boxes following the road profile). */
+function pavement(ctx, w) {
+  const { g } = ctx;
+  g.aoFn = null;
+  g.frame(0, 0, 0, 0);
+  const r = roads.find((q) => q.id === w.road);
+  const step = 2, top = 0.14;
+  const walkM = M(L.concrete_floor_worn_001, 1.7, 1.68, 1.62), curbM = M(L.concrete_floor_worn_001, 1.98, 1.98, 1.96);
+  for (let sa = w.s0; sa < w.s1; sa += step) {
+    const sb = Math.min(w.s1 + step * 0.5, sa + step);
+    const [ax, az] = roadPointAt(r, sa), [bx, bz] = roadPointAt(r, sb);
+    const ha = roadHeight(r, sa), hb = roadHeight(r, sb);
+    const len = Math.hypot(bx - ax, hb - ha, bz - az);
+    if (len < 0.2) continue;
+    const dir = [(bx - ax) / len, (hb - ha) / len, (bz - az) / len];
+    const hl = Math.hypot(dir[0], dir[2]) || 1;
+    const nx = -dir[2] / hl * w.side, nz = dir[0] / hl * w.side;
+    const mid = (u) => [(ax + bx) / 2 + nx * u, (ha + hb) / 2, (az + bz) / 2 + nz * u];
+    const curb0 = r.half + 0.12, curb1 = r.half + 0.34, outer = r.half + 2.1;
+    const half = len / 2 + 0.03;
+    let [cx, cy, cz] = mid((curb0 + curb1) / 2);
+    g.boxB(cx, cy + top / 2 - 0.2, cz, dir, [0, 1, 0], null, half, top / 2 + 0.2, (curb1 - curb0) / 2, curbM, { skip: NY, surf: SURFACE.CONCRETE });
+    [cx, cy, cz] = mid((curb1 + outer) / 2);
+    g.boxB(cx, cy + top / 2 - 0.25, cz, dir, [0, 1, 0], null, half, top / 2 + 0.25, (outer - curb1) / 2, walkM, { skip: NY, surf: SURFACE.CONCRETE });
+  }
+}
+
+/** Street lamp: tapered steel pole, swan-neck arm over the carriageway, lantern head. */
+function streetLamp(ctx, l) {
+  const { g } = ctx;
+  g.aoFn = null;
+  const y = heightAt(l.x, l.z) + 0.14;
+  g.frame(l.x, y, l.z, l.yaw);
+  g.cyl(0, 0, -0.3, 0.35, 0.16, 0.14, 10, MAT.concrete, { top: true });
+  g.cyl(0, 0, 0.35, 6.4, 0.085, 0.06, 10, MAT.metalGrey, { col: true, surf: SURFACE.METAL });
+  const arm = [[0, 6.3, 0], [0, 6.62, -0.45], [0, 6.7, -1.1], [0, 6.62, -1.7]];
+  for (let i = 0; i < arm.length - 1; i++) {
+    const [p, q] = [arm[i], arm[i + 1]];
+    const len = Math.hypot(q[1] - p[1], q[2] - p[2]);
+    g.boxB(0, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2, [0, (q[1] - p[1]) / len, (q[2] - p[2]) / len], [0, 1, 0], null, len / 2 + 0.02, 0.035, 0.035, MAT.metalGrey, { col: false });
+  }
+  g.box(-0.16, 6.5, -2.05, 0.16, 6.66, -1.55, MAT.metalGrey, { col: false });
+  g.box(-0.13, 6.46, -2.0, 0.13, 6.5, -1.6, MAT.trimWhite, { col: false });
+}
+
 // ------------------------------------------------------------------------------------------ site structures
 function containerBox(g, x, y, z, yaw, colorMat, open, rng) {
   const L0 = 6.06, W0 = 2.44, H0 = 2.59;
@@ -1225,7 +1381,7 @@ function slab(ctx, s) {
       const lx = x0 + pw / 2, lz = z0 + pd / 2;
       const hy = heightAt(g.wx(lx, lz), g.wz(lx, lz)) - cy;
       const tone = 0.9 + rng.next() * 0.16;
-      const m = s.kind === 'helipad' ? M(L.concrete_floor_worn_001, 0.82) : M(L.concrete_floor_worn_001, tone, tone, tone * 0.98);
+      const m = s.kind === 'helipad' ? M(L.concrete_floor_worn_001, 1.35, 1.36, 1.38) : M(L.concrete_floor_worn_001, tone * 1.78, tone * 1.76, tone * 1.7);
       g.box(x0 + 0.02, Math.min(hy, 0) - 0.35, z0 + 0.02, x0 + pw - 0.02, Math.max(hy, 0) + 0.07, z0 + pd - 0.02, m, { skip: NY, col: true, uvOff: rng.next() * 3 });
     }
   }
@@ -1430,6 +1586,67 @@ function special(ctx, sp) {
       g.cyl(0, 0, -0.4, sp.h, sp.r, 0.6, 16, MAT.gravel, { top: true, col: true });
       break;
     }
+    case 'hesco': {
+      // wire-mesh gabions filled with earth: 1.06 m cells, slightly uneven, mesh posts at the joints, one collider
+      // per straight run (bullets and players stop on them)
+      const cell = 1.06, h = sp.h, skin = M(L.concrete_wall_008, 1.08, 1.0, 0.76), top = M(L.gravelly_sand, 0.8, 1.0, 1.2), wire = MAT.metalGrey;
+      for (let i = 0; i < sp.pts.length - 1; i++) {
+        const [ax, az] = sp.pts[i], [bx, bz] = sp.pts[i + 1];
+        const len = Math.hypot(bx - ax, bz - az), n = Math.max(1, Math.round(len / cell)), seg = len / n;
+        const yaw = -Math.atan2(bz - az, bx - ax);
+        for (let k = 0; k < n; k++) {
+          const t = (k + 0.5) / n, x = ax + (bx - ax) * t, z = az + (bz - az) * t;
+          const y = heightAt(x, z);
+          const jit = ((k * 7919 + i * 31) % 17) / 17 - 0.5;
+          g.frame(x, y - 0.15, z, yaw + jit * 0.02);
+          const hh = h + 0.15 + jit * 0.06;
+          g.box(-seg / 2 + 0.01, 0, -0.53, seg / 2 - 0.01, hh, 0.53, skin, { col: false, skip: NY, mats: { py: top } });
+          for (const sz of [-0.545, 0.545]) g.box(-seg / 2 - 0.012, 0.1, sz - 0.012, -seg / 2 + 0.012, hh + 0.02, sz + 0.012, wire, { col: false });
+          if (h > 2) g.box(-seg / 2 + 0.01, hh * 0.5 - 0.02, -0.545, seg / 2 - 0.01, hh * 0.5 + 0.02, 0.545, wire, { col: false });
+        }
+        const mx = (ax + bx) / 2, mz = (az + bz) / 2, my = heightAt(mx, mz);
+        g.frame(mx, my, mz, yaw);
+        g.colBox(0, h / 2 - 0.1, 0, len / 2, h / 2 + 0.1, 0.53, SURFACE.DIRT);
+        ctx.covers.push([mx, my, mz]);
+      }
+      break;
+    }
+    case 'sandbags': {
+      // horseshoe of stacked bags, five staggered courses (waist high), open on the local +z side
+      const y = heightAt(sp.x, sp.z);
+      g.frame(sp.x, y, sp.z, sp.yaw);
+      const bag = M(L.gravelly_sand, 0.72, 1.06, 0.92);
+      const r = sp.r, courses = 5, n = 13, a0 = Math.PI * 0.62, span = Math.PI * 1.76;
+      for (let c = 0; c < courses; c++) {
+        const off = (c % 2) * 0.5;
+        for (let k = 0; k < n - (c % 2); k++) {
+          const a = a0 + span * ((k + 0.5 + off) / n);
+          const tx = -Math.sin(a), tz = Math.cos(a);
+          const shrink = 1 - c * 0.02;
+          g.boxB(Math.cos(a) * r, c * 0.17 + 0.045, Math.sin(a) * r, [tx, 0, tz], [0, 1, 0], null, 0.29 * shrink, 0.085, 0.17, bag, { col: false, skip: NY });
+          if (c === courses - 1) g.boxB(Math.cos(a) * r, c * 0.17 + 0.135, Math.sin(a) * r, [tx, 0, tz], [0, 1, 0], null, 0.24, 0.014, 0.13, bag, { col: false, skip: NY });
+        }
+      }
+      for (let k = 0; k < 8; k++) {
+        const a0 = Math.PI * 0.62 + (Math.PI * 1.76) * (k / 8), a1 = a0 + Math.PI * 1.76 / 8;
+        const am = (a0 + a1) / 2, chord = 2 * r * Math.sin((a1 - a0) / 2);
+        g.boxB(Math.cos(am) * r, 0.45, Math.sin(am) * r, [-Math.sin(am), 0, Math.cos(am)], [0, 1, 0], null, chord / 2, 0.45, 0.2, bag, { skip: 63, surf: SURFACE.DIRT });
+      }
+      ctx.covers.push([sp.x, y, sp.z]);
+      break;
+    }
+    case 'floodlight': {
+      const y = heightAt(sp.x, sp.z);
+      g.frame(sp.x, y, sp.z, 0.6);
+      g.box(-0.6, -0.4, -0.6, 0.6, 0.25, 0.6, MAT.concrete);
+      g.cyl(0, 0, 0.25, 11.5, 0.16, 0.11, 10, MAT.metalGrey, { col: true, surf: SURFACE.METAL });
+      g.box(-1.3, 11.4, -0.08, 1.3, 11.55, 0.08, MAT.metalGrey, { col: false });
+      for (const x of [-1.0, -0.33, 0.33, 1.0]) {
+        g.boxB(x, 11.75, 0.12, [1, 0, 0], [0, Math.cos(0.5), Math.sin(0.5)], null, 0.26, 0.2, 0.08, MAT.metalGrey, { col: false });
+        g.boxB(x, 11.75 - 0.05, 0.21, [1, 0, 0], [0, Math.cos(0.5), Math.sin(0.5)], null, 0.22, 0.16, 0.01, MAT.trimWhite, { col: false });
+      }
+      break;
+    }
     case 'firepit': {
       const y = heightAt(sp.x, sp.z);
       g.frame(sp.x, y, sp.z, 0);
@@ -1492,7 +1709,7 @@ export async function buildBuildings(layout, onProgress = () => {}) {
     if (!bySite.has(k)) bySite.set(k, new Geo());
     return bySite.get(k);
   };
-  const out = { rooms: [], doors: [], covers: [], lights: [], lamps: [] };
+  const out = { rooms: [], doors: [], covers: [], lights: [], lamps: [], hedges: [] };
   const frameWait = () => new Promise((r) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(() => r()) : setTimeout(r, 0)));
   let t0 = performance.now();
   const total = layout.buildings.length + layout.special.length + layout.slabs.length + 4;
@@ -1519,6 +1736,7 @@ export async function buildBuildings(layout, onProgress = () => {}) {
     g.frame(b.x, base, b.z, b.yaw);
     const ctx = makeCtx(g, b);
     ctx.lights = out.lights;
+    ctx.hedges = out.hedges;
     const fn = KINDS[b.kind];
     if (!fn) throw new Error(`[WORLD/buildings] unknown building kind '${b.kind}'`);
     fn(ctx);
@@ -1538,6 +1756,8 @@ export async function buildBuildings(layout, onProgress = () => {}) {
   }
   for (const w of layout.walls) { const g = geoFor(w.site); twall({ g, covers: out.covers }, w); await tick(); }
   for (const f of layout.fences) { const g = geoFor(f.site); fence({ g }, f); }
+  for (const w of layout.sidewalks) pavement({ g: geoFor(w.site) }, w);
+  for (const l of layout.lamps) streetLamp({ g: geoFor('harrow') }, l);
   powerPoles({ g: geoFor(null) }, layout.poles);
   const groups = [];
   const boxes = [], tris = [];

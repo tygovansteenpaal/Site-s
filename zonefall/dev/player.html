@@ -7,21 +7,30 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/",
-      "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js",
-      "trystero": "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm",
-      "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js",
-      "ez-tree": "https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js",
-      "../src/world/world.js": "./stubs/player/world.js",
-      "../src/combat/damage.js": "./stubs/player/damage.js",
-      "../src/game/match.js": "./stubs/player/match.js",
-      "../src/game/plane.js": "./stubs/player/plane.js"
-    }
-  }
+  <script>
+    // Import map (the six standard entries of index.html) plus stand-ins for the groups this harness does not need.
+    // Default: the PLAYER test course replaces world.js. ?world=island keeps the real WORLD facade (Kessler Isle), so
+    // the controller and camera run against the real terrain, buildings and collision BVH.
+    (() => {
+      const island = new URLSearchParams(location.search).get('world') === 'island';
+      const imports = {
+        'three': 'https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js',
+        'three/addons/': 'https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/',
+        'three-mesh-bvh': 'https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js',
+        'trystero': 'https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm',
+        'postprocessing': 'https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js',
+        'ez-tree': 'https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js',
+        '../src/combat/damage.js': './stubs/player/damage.js',
+        '../src/game/match.js': './stubs/player/match.js',
+        '../src/game/plane.js': './stubs/player/plane.js',
+      };
+      if (!island) imports['../src/world/world.js'] = './stubs/player/world.js';
+      const map = document.createElement('script');
+      map.type = 'importmap';
+      map.textContent = JSON.stringify({ imports });
+      document.currentScript.after(map);
+      document.documentElement.dataset.world = island ? 'island' : 'course';
+    })();
   </script>
   <style>
     :root {
@@ -58,6 +67,8 @@
     .bar.armor i { background: var(--armor); }
     .keys { font: 400 11px/1.7 'JetBrains Mono', monospace; color: var(--ink-2); columns: 2; column-gap: 10px; }
     .keys b { color: var(--ink); font-weight: 500; }
+    .hint { margin-top: 8px; font: 400 11px/1.5 'JetBrains Mono', monospace; color: var(--ink-3); }
+    .hint a { color: var(--accent); }
     pre { margin: 6px 0 0; font: 400 10.5px/1.45 'JetBrains Mono', monospace; color: var(--ink-2); white-space: pre-wrap; max-height: 120px; overflow: auto; }
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 3; }
     #cross { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transition: opacity .12s; }
@@ -121,8 +132,8 @@
       </dl>
     </section>
     <section>
-      <h2>Course</h2>
-      <div class="grid">
+      <h2 data-course-title>Course</h2>
+      <div class="grid" data-course>
         <button type="button" data-act="drop" class="primary">Plane drop 380 m</button>
         <button type="button" data-act="tp" data-x="6" data-y="0" data-z="4">Course start</button>
         <button type="button" data-act="tp" data-x="-6" data-y="0" data-z="-17">Mantle blocks</button>
@@ -134,6 +145,7 @@
         <button type="button" data-act="tp" data-x="0" data-y="0" data-z="-34">Gallery</button>
         <button type="button" data-act="gallery" class="on">Gallery on</button>
       </div>
+      <div class="hint" data-world-link></div>
     </section>
     <section>
       <h2>View</h2>
@@ -190,6 +202,7 @@
     import { state, gfx, debug, LIFE, FLAG, APP, setAppState, createPlayer, localPlayer, setFlag } from '../src/core/state.js';
     import * as settings from '../src/core/settings.js';
     import { createLoop } from '../src/core/loop.js';
+    import { ALL_SITES } from '../src/core/mapdata.js';
     import * as renderer from '../src/engine/renderer.js';
     import * as assets from '../src/engine/assets.js';
     import * as input from '../src/engine/input.js';
@@ -207,7 +220,7 @@
 
     const $ = (s) => document.querySelector(s);
     const canvas = $('#game');
-    window.__zf = { ready: false, fatalError: null, state, gfx, bus, debug, modules: { input, controller, camera, avatar, inventory, world, renderer } };
+    window.__zf = { ready: false, fatalError: null, state, gfx, bus, debug, modules: { input, controller, camera, avatar, inventory, world, renderer, assets } };
     addEventListener('error', (e) => { window.__zf.fatalError = String(e.message); });
     addEventListener('unhandledrejection', (e) => { window.__zf.fatalError = String(e.reason && e.reason.message || e.reason); });
 
@@ -215,10 +228,14 @@
     // Each gallery soldier is a 'bot' entity driven exactly like a networked player: a scripted "owner" produces
     // snapshots at NET.snapRate (20 Hz) and the harness interpolates them 100 ms in the past into the entity
     // fields (pos, yaw, pitch, flags, life, weapon), which is all player/avatar ever reads.
+    // Layout (course metres, shifted by SITE.gx/gz on the island): a row of poses along z = -42, movers on oval tracks
+    // around (0, -64), a slide lane at z = -58, and a swimmer.
+    const ISLAND = document.documentElement.dataset.world === 'island';
+    const SITE = ISLAND
+      ? { name: 'Kessler Isle', start: [-113, 0, 30], startYaw: 0.25, gx: -120, gz: 58, swim: null, drop: [-40, 40] }
+      : { name: 'Test course', start: [6, 0, 4], startYaw: 0.35, gx: 0, gz: 0, swim: [-44, 32], drop: [0, 0] };
     const G = [];
-    const GROW = -42;
     const SNAP_MS = 50, DELAY_MS = 100;
-    const T = (now) => now / 1000;
     function defineGallery() {
       const defs = [
         ['Idle M4A1', 'm4a1', (t, s) => { s.yaw = Math.PI; }],
@@ -239,20 +256,23 @@
       ];
       const movers = [
         ['Walk 1.4 m/s', 'm4a1', 1.4, 0], ['Jog 4.4 m/s', 'ak47', 4.4, 0], ['Sprint 6.9 m/s', 'mp5', 6.9, FLAG.SPRINT],
-        ['Crouch walk 2.3', 'm4a1', 2.3, FLAG.CROUCH], ['ADS strafe 2.4', 'ak47', 2.4, FLAG.ADS], ['Slide', 'm4a1', 0, 0],
+        ['Crouch walk 2.3', 'm4a1', 2.3, FLAG.CROUCH], ['ADS strafe 2.4', 'ak47', 2.4, FLAG.ADS],
       ];
-      defs.forEach(([label, weapon, fn], i) => G.push({ label, weapon, fn, x: -35 + i * 5, z: GROW, kind: 'pose' }));
-      movers.forEach(([label, weapon, speed, flags], i) => G.push({ label, weapon, speed, flags, kind: i === 5 ? 'slide' : 'move', lane: i }));
+      defs.forEach(([label, weapon, fn], i) => G.push({ label, weapon, fn, x: -35 + i * 5, z: -42, kind: 'pose' }));
+      movers.forEach(([label, weapon, speed, flags], i) => G.push({ label, weapon, speed, flags, kind: 'move', lane: i }));
+      G.push({ label: 'Slide', weapon: 'm4a1', kind: 'slide' });
       G.push({ label: 'Swimmer', weapon: 'mp5', kind: 'swim' });
     }
+    // Ground truth of the scripted owner at time t (seconds) into out.
     function truth(g, t, out) {
-      out.x = g.x || 0; out.y = 0; out.z = g.z || 0; out.yaw = Math.PI; out.pitch = 0; out.flags = 0; out.life = LIFE.GROUND; out.alive = true;
+      out.x = g.x || 0; out.z = g.z || 0; out.yaw = Math.PI; out.pitch = 0; out.flags = 0; out.life = LIFE.GROUND; out.alive = true;
       out.dy = 0; out.circle = null; out.fire = false; out.hit = -1; out.weapon = g.weapon;
+      let swim = false;
       if (g.kind === 'pose') {
         g.fn(t, out);
         if (out.circle) { const [r, w] = out.circle; out.x += Math.cos(t * w) * r * 0.3; out.z += Math.sin(t * w) * r * 0.3; out.yaw = -t * w; }
       } else if (g.kind === 'move') {
-        // oval track south of the gallery; strafing lane keeps facing north
+        // oval tracks south of the pose row; the strafing lane keeps facing north
         const R = 9 + g.lane * 2.2, cx = -10 + g.lane * 4, cz = -64;
         const w = g.speed / R;
         const a = t * w + g.lane;
@@ -261,30 +281,35 @@
         out.yaw = (g.flags & FLAG.ADS) ? 0 : Math.atan2(-vx, -vz);
         out.flags = g.flags;
       } else if (g.kind === 'slide') {
-        const u = t % 3.2;
-        const x0 = 24;
+        // sprint east, slide (boost decaying), crouch, stand, walk back west
+        const u = t % 3.2, x0 = 24;
+        const slideEnd = x0 + 4.14 + 0.9 * (9.6 - 0.9 * 4);
+        out.z = -58; out.yaw = -Math.PI / 2;
         if (u < 0.6) { out.x = x0 + u * 6.9; out.flags = FLAG.SPRINT; }
-        else if (u < 1.5) { const k = (u - 0.6); out.x = x0 + 4.14 + k * (9.6 - k * 4); out.flags = FLAG.SLIDE | FLAG.CROUCH; }
-        else { out.x = x0 + 4.14 + 0.9 * (9.6 - 0.9 * 4) ; out.flags = FLAG.CROUCH; }
-        if (u > 2.6) { out.x = x0 + (3.2 - u) * 10; out.flags = 0; out.yaw = Math.PI / 2; }
-        out.z = -58; out.yaw = u > 2.6 ? -Math.PI / 2 : -Math.PI / 2 + Math.PI;
-        out.yaw = u > 2.6 ? Math.PI / 2 : -Math.PI / 2;
+        else if (u < 1.5) { const k = u - 0.6; out.x = x0 + 4.14 + k * (9.6 - k * 4); out.flags = FLAG.SLIDE | FLAG.CROUCH; }
+        else if (u < 2.6) { out.x = slideEnd; out.flags = FLAG.CROUCH; }
+        else { out.x = slideEnd + (x0 - slideEnd) * (u - 2.6) / 0.6; out.yaw = Math.PI / 2; }
       } else if (g.kind === 'swim') {
         const a = t * 0.18;
-        out.x = -44 + Math.cos(a) * 7; out.z = 32 + Math.sin(a) * 7; out.y = -1.3;
-        out.yaw = Math.atan2(Math.sin(a), -Math.cos(a)) ;
-        out.yaw = Math.atan2(Math.sin(a) * 7 * 0.18, Math.cos(a) * 7 * 0.18 * -1) ;
-        const vx = -Math.sin(a), vz = Math.cos(a);
-        out.yaw = Math.atan2(-vx, -vz);
+        out.x = Math.cos(a) * 7; out.z = Math.sin(a) * 7;
+        out.yaw = Math.atan2(Math.sin(a), -Math.cos(a));
+        swim = true;
       }
-      out.y += out.dy;
-      if (out.y === 0 || g.kind !== 'swim') { try { out.y = (out.dy || 0) + world.getGround(out.x, out.z, out.y + 30).y + (g.kind === 'swim' ? -1.3 : 0); } catch (e) { /* stub world always answers */ } }
-      if (g.kind === 'swim') out.y = -1.3;
+      if (swim) { out.x += SITE.swim[0]; out.z += SITE.swim[1]; out.y = -1.3; return out; }
+      out.x += SITE.gx; out.z += SITE.gz;
+      let gy = 0;
+      try { gy = world.getGround(out.x, out.z, Infinity).y; } catch (e) { gy = world.getHeight(out.x, out.z); }
+      out.y = gy + out.dy;
       return out;
     }
     let galleryOn = true;
-    const tmpTruth = {};
     function galleryInit() {
+      if (!SITE.swim) {
+        // island: the swimmer laps in the first deep water due west of the gallery
+        let x = SITE.gx;
+        while (x > -590 && !(world.isWater(x, SITE.gz) && world.getHeight(x, SITE.gz) < -2.5)) x -= 4;
+        SITE.swim = [x - 12, SITE.gz];
+      }
       defineGallery();
       G.forEach((g, i) => {
         g.id = 'bot:' + (i + 1);
@@ -301,21 +326,24 @@
       for (const g of G) {
         if (now - g.lastSnap >= SNAP_MS) {
           g.lastSnap = now;
-          const s = truth(g, T(now), {});
+          const s = truth(g, now / 1000, {});
           s.t = now;
           g.snaps.push(s);
           if (g.snaps.length > 12) g.snaps.shift();
           if (s.fire && WEAPONS[s.weapon]) {
             g.fireAcc = (g.fireAcc || 0) + SNAP_MS / 1000;
             const iv = 60 / WEAPONS[s.weapon].rpm;
-            while (g.fireAcc >= iv) { g.fireAcc -= iv; setTimeout(() => bus.emit(EV.WEAPON_FIRE, { id: g.id, weapon: s.weapon, origin: [0, 0, 0], dir: [0, 0, -1], end: [0, 0, -1], local: false, hit: null }), DELAY_MS); }
+            while (g.fireAcc >= iv) {
+              g.fireAcc -= iv;
+              setTimeout(() => bus.emit(EV.WEAPON_FIRE, { id: g.id, weapon: s.weapon, origin: [0, 0, 0], dir: [0, 0, -1], end: [0, 0, -1], local: false, hit: null }), DELAY_MS);
+            }
           }
           if (s.hit >= 0 && s.hit !== g.lastHit) {
             g.lastHit = s.hit;
             setTimeout(() => bus.emit(EV.PLAYER_DAMAGED, { id: g.id, amount: 20, hp: 80, armor: 0, armorBroke: false, from: null, weapon: 'm4a1', zone: s.hit % 2 ? 'head' : 'body', dir: [0, 0, 1], kind: 'bullet' }), DELAY_MS);
           }
         }
-        // interpolate DELAY_MS in the past
+        // interpolate DELAY_MS in the past, like net/sync
         const rt = now - DELAY_MS;
         let a = g.snaps[0], b = g.snaps[g.snaps.length - 1];
         for (let i = 0; i < g.snaps.length - 1; i++) if (g.snaps[i].t <= rt && g.snaps[i + 1].t >= rt) { a = g.snaps[i]; b = g.snaps[i + 1]; break; }
@@ -351,6 +379,30 @@
         if (vis) { g.label$.style.left = ((lv.x + 1) / 2 * w).toFixed(1) + 'px'; g.label$.style.top = ((1 - lv.y) / 2 * h).toFixed(1) + 'px'; }
       }
     }
+    // Island mode: the course buttons become teleports to every site of Kessler Isle.
+    function islandButtons() {
+      const box = $('[data-course]');
+      $('[data-course-title]').textContent = 'Kessler Isle';
+      const keep = [box.querySelector('[data-act="drop"]'), box.querySelector('[data-act="gallery"]')];
+      box.replaceChildren(keep[0]);
+      const add = (label, x, z) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.dataset.act = 'tp'; b.dataset.x = x; b.dataset.y = 'ground'; b.dataset.z = z;
+        b.textContent = label;
+        box.appendChild(b);
+      };
+      add('Gallery', SITE.gx, SITE.gz - 34);
+      for (const site of ALL_SITES) add(site.name, site.x + (site.id === 'greystone' ? 0 : 6), site.z + 6);
+      box.appendChild(keep[1]);
+    }
+    {
+      const link = $('[data-world-link]');
+      const u = new URL(location.href);
+      if (ISLAND) u.searchParams.delete('world'); else u.searchParams.set('world', 'island');
+      link.innerHTML = ISLAND ? 'Real WORLD facade. <a></a>' : 'Stand-in course. <a></a>';
+      link.querySelector('a').href = u.href;
+      link.querySelector('a').textContent = ISLAND ? 'Open the test course' : 'Open on Kessler Isle';
+    }
 
     // ------------------------------------------------------------------ actions
     let lastItem = null;
@@ -358,7 +410,7 @@
       drop() {
         const me = localPlayer();
         me.alive = true; me.hp = PLAYER.health;
-        match.setupDrop(0, 0, Math.PI * 0.2);
+        match.setupDrop(SITE.drop[0], SITE.drop[1], Math.PI * 0.2);
         controller.spawn('plane');
         me.yaw = Math.PI * 0.2 + Math.PI * 0.6; me.pitch = -0.2;
         plane.setVisible(true);
@@ -368,8 +420,11 @@
       },
       tp(btn) {
         const me = localPlayer();
-        if (me.life !== LIFE.GROUND) { controller.spawn('ground', [+btn.dataset.x, +btn.dataset.y, +btn.dataset.z]); me.alive = true; }
-        else controller.teleport([+btn.dataset.x, +btn.dataset.y, +btn.dataset.z]);
+        const x = +btn.dataset.x, z = +btn.dataset.z;
+        // 'ground': the walkable floor at terrain level there (street, or the ground floor of a building)
+        const y = btn.dataset.y === 'ground' ? world.getGround(x, z, Math.max(0, world.getHeight(x, z)) + 1.0).y : +btn.dataset.y;
+        if (me.life !== LIFE.GROUND || !me.alive) { me.alive = true; me.hp = PLAYER.health; controller.spawn('ground', [x, y, z]); }
+        else controller.teleport([x, y, z]);
         plane.setVisible(false);
       },
       gallery() { setGallery(!galleryOn); },
@@ -389,8 +444,12 @@
       dropall() { log(inventory.dropAll()); },
       reset() { inventory.reset(LOADOUT); log({ reset: true }); },
       hurt() { const me = localPlayer(); if (me.life === LIFE.GROUND) controller.teleport([me.pos.x, me.pos.y + 9, me.pos.z]); },
-      respawn() { const me = localPlayer(); me.alive = true; me.hp = PLAYER.health; controller.spawn('ground', [6, 0, 4]); },
+      respawn() { const me = localPlayer(); me.alive = true; me.hp = PLAYER.health; controller.spawn('ground', startPos()); me.yaw = SITE.startYaw; },
     };
+    function startPos() {
+      const [x, , z] = SITE.start;
+      return [x, world.getGround(x, z, Math.max(0, world.getHeight(x, z)) + 1.0).y, z];
+    }
     let adsDemo = false;
     let inspect = null;   // test photo mode: [camX, camY, camZ, targetX, targetY, targetZ, fov]
     let inspectFollow = null;   // [offX, offY, offZ, lookY, fov] relative to the local player
@@ -490,8 +549,9 @@
       sfx.init();
       const me = createPlayer({ id: state.selfId, name: state.name, kind: 'local', slot: 0 });
       inventory.reset(LOADOUT);
-      controller.spawn('ground', [6, 0, 4]);
-      me.yaw = 0.35; me.pitch = -0.05;
+      controller.spawn('ground', startPos());
+      me.yaw = SITE.startYaw; me.pitch = -0.05;
+      if (ISLAND) islandButtons();
       galleryInit();
       setAppState(APP.MATCH);
       input.setEnabled(true);
@@ -501,7 +561,7 @@
       const loop = createLoop(frame);
       loop.start();
       window.__zf.loop = loop;
-      window.__zf.harness = { actions, setGallery, sfxLog: sfx.log, setAdsDemo: (on) => { adsDemo = on; }, LOADOUT, inspect: (v) => { inspect = v; inspectFollow = null; }, follow: (v) => { inspectFollow = v; if (!v) inspect = null; }, gallery: G };
+      window.__zf.harness = { actions, setGallery, sfxLog: sfx.log, setAdsDemo: (on) => { adsDemo = on; }, LOADOUT, inspect: (v) => { inspect = v; inspectFollow = null; }, follow: (v) => { inspectFollow = v; if (!v) inspect = null; }, gallery: G, site: SITE, setApp: (s) => setAppState(s) };
       window.__zf.ready = true;
     }
 

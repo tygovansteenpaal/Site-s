@@ -95,6 +95,7 @@ export async function build(opts) {
     worldRoot.add(mesh);
   }
   await run('props', (p) => props.buildProps(worldRoot, layout, quality, groundForProps, p));
+  layout.hedges = buildingsOut.hedges;
   await run('foliage', (p) => foliage.buildFoliage(worldRoot, layout, quality, p));
   await run('collision', async () => {
     const set = new collision.ColliderSet('static');
@@ -112,6 +113,7 @@ export async function build(opts) {
     return collision.buildCollision([set]);
   });
   await run('finish', async () => {
+    bakeGroundOcclusion();
     buildLights(worldRoot, buildingsOut.lights, buildingsOut.lamps);
     lootSpawns = buildLoot();
     navHints = buildNav();
@@ -125,6 +127,37 @@ export async function build(opts) {
   });
   installDebug();
   return { stats: { ...stats } };
+}
+
+// ------------------------------------------------------------------------------------------ ground occlusion
+const PROP_AO = {
+  covered_car: [4.5, 1.95, 0.5], barrier: [1.6, 0.5, 0.42], generator: [0.95, 0.65, 0.4], crate_wood: [1.0, 1.0, 0.4],
+  crate_military: [1.25, 0.55, 0.4], utility_box: [1.15, 0.55, 0.45], cardboard_box: [0.6, 0.6, 0.3], tyre: [0.8, 0.8, 0.3],
+  barrel_red: [0.62, 0.62, 0.4], barrel_blue: [0.62, 0.62, 0.4], jerrycan: [0.5, 0.2, 0.25], ammo_box: [0.3, 0.2, 0.2],
+};
+/** Contact occlusion on the terrain under and around every structure, prop, tree and rock (terrain.js AO map). */
+function bakeGroundOcclusion() {
+  for (const f of layout.footprints) {
+    if (hf.heightAt(f.x, f.z) < -0.5) continue;
+    terrain.aoFootprint(f.x, f.z, f.w, f.d, f.rot || 0, 0.55, 2.6, !!f.round);
+  }
+  for (const w of layout.walls) {
+    for (let i = 0; i < w.pts.length - 1; i++) {
+      const [ax, az] = w.pts[i], [bx, bz] = w.pts[i + 1];
+      terrain.aoFootprint((ax + bx) / 2, (az + bz) / 2, Math.hypot(bx - ax, bz - az), 0.9, -Math.atan2(bz - az, bx - ax), 0.45, 1.6);
+    }
+  }
+  for (const p of layout.props) {
+    const a = PROP_AO[p.key];
+    if (a) terrain.aoFootprint(p.x, p.z, a[0], a[1], p.yaw || 0, a[2], 0.9, p.key.startsWith('barrel') || p.key === 'tyre');
+  }
+  for (const c of layout.crates) terrain.aoFootprint(c.x, c.z, 1.0, 0.6, c.yaw || 0, 0.42, 0.9);
+  for (const t of foliage.treeFootprints()) {
+    terrain.aoFootprint(t.x, t.z, t.canopy, t.canopy, 0, 0.2, t.canopy * 0.7, true);
+    terrain.aoFootprint(t.x, t.z, t.trunk * 2, t.trunk * 2, 0, 0.35, 0.9, true);
+  }
+  for (const r of foliage.rockFootprints()) terrain.aoFootprint(r.x, r.z, r.d, r.d, 0, 0.42, 0.8, true);
+  terrain.commitAOMap();
 }
 
 function slabTop(x, z) {

@@ -17,8 +17,9 @@ const TUNE = {
   groundAlbedo: [0.34, 0.33, 0.24],
   skyIntensity: 1.0,            // background JPG multiplier (linear)
   horizonElevDeg: 1.5,
-  hazeFalloff: 9.0,
-  hazeAmount: 0.62,
+  hazeFalloff: 15.0,
+  hazeAmount: 0.56,
+  fogScale: 0.8,                // x QUALITY.fogDensity (the fog chunk also thins it with altitude)
   shadowDistance: 320,          // light distance from the shadow centre
   shadowBias: -0.00035,
   shadowNormalBias: 0.035,
@@ -39,6 +40,8 @@ export function sunDirection() { return [sunDir.x, sunDir.y, sunDir.z]; }
 export const sunVector = () => sunDir;
 export const horizonColor = () => horizon;
 export const getSun = () => sun;
+/** Half extent (m) of the sun's shadow box around the view this frame. */
+export const shadowExtent = () => curExtent;
 
 // ------------------------------------------------------------------------------------------ HDR preparation
 function findSun(img) {
@@ -208,7 +211,7 @@ export async function buildSky(scene, quality) {
   scene.add(dome);
 
   // fog in the horizon colour (the fog chunk adds the warm sun-side scatter)
-  scene.fog = new THREE.FogExp2(horizon.clone(), quality.fogDensity);
+  scene.fog = new THREE.FogExp2(horizon.clone(), quality.fogDensity * TUNE.fogScale);
 
   // sun
   sun = new THREE.DirectionalLight(TUNE.sunColor, RENDER.sunIntensity);
@@ -222,7 +225,7 @@ export async function buildSky(scene, quality) {
   on(EV.QUALITY_CHANGED, ({ tier }) => {
     qual = QUALITY[tier];
     applyShadowQuality(qual);
-    if (scene.fog) scene.fog.density = qual.fogDensity;
+    if (scene.fog) scene.fog.density = qual.fogDensity * TUNE.fogScale;
   });
   return { sun, dome, sunDir: sunDirection() };
 }

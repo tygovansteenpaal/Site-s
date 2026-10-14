@@ -12,9 +12,9 @@ import { SURFACE, RENDER } from '../config.js';
 import { Rng, mixSeed, hashString } from '../core/rng.js';
 import { gfx } from '../core/state.js';
 import { heightAt, normalAt, forestAt, nearestRoad, paintAt, sandiness, quarry } from './heightfield.js';
-import { L, getArrays, surfaceMaterial } from './materials.js';
+import { L, getArrays, surfaceMaterial, noiseTexture } from './materials.js';
 import { corners } from './layout.js';
-import { sunVector } from './sky.js';
+import { sunVector, shadowExtent } from './sky.js';
 
 const SIMPLIFIER_URL = 'https://cdn.jsdelivr.net/npm/meshoptimizer@1.2.0/meshopt_simplifier.js';
 
@@ -22,24 +22,27 @@ const TUNE = {
   forestTrees: 1050, sparseTrees: 260,
   bushes: 650,
   rocks: 300,
-  nearFrac: 0.38,               // LOD0 radius as a fraction of quality.treeLodDistance
+  nearFrac: 0.22,               // LOD0 radius as a fraction of quality.treeLodDistance ...
+  nearMin: 26, nearMax: 48,     // ... clamped to this range (m)
+  shadowPad: 1.0,              // LOD1 trees cast shadows within this multiple of the shadow box half extent
+  rockCull: 1.15,               // rocks drawn within quality.propDistance x this
   impostorFrame: [128, 256],
   update: 0.2,
   grassTile: 8,
   grassRadius: { 0.5: 26, 1: 40 },
-  grassSpacing: 0.62,
+  grassSpacing: 0.58,
   windSpeed: 1.0,
 };
 
 // Species: preset, real height (m), leaf colour tint, weight in forests / countryside
 const SPECIES = [
-  { preset: 'Pine Medium', seed: 11, height: 19, forest: 0.34, open: 0.05, tune: { seg: 0.6, sec: 0.7, leaves: 0.55, leafSize: 1.25 } },
-  { preset: 'Pine Large', seed: 23, height: 23, forest: 0.24, open: 0.05, tune: { seg: 0.6, sec: 0.6, leaves: 0.55, leafSize: 1.25 } },
-  { preset: 'Oak Medium', seed: 37, height: 15, forest: 0.18, open: 0.42, tune: { seg: 0.7, sec: 0.8, leaves: 0.42, leafSize: 1.35 } },
-  { preset: 'Ash Small', seed: 41, height: 14, forest: 0.14, open: 0.3, tune: { seg: 0.7, sec: 0.7, leaves: 0.45, leafSize: 1.3 } },
-  { preset: 'Aspen Medium', seed: 53, height: 17, forest: 0.1, open: 0.18, tune: { seg: 0.8, sec: 0.8, leaves: 0.8, leafSize: 1.1 } },
+  { preset: 'Pine Medium', seed: 11, height: 19, forest: 0.34, open: 0.05, tune: { seg: 0.6, sec: 0.7, leaves: 0.42, leafSize: 1.42 } },
+  { preset: 'Pine Large', seed: 23, height: 23, forest: 0.24, open: 0.05, tune: { seg: 0.6, sec: 0.6, leaves: 0.42, leafSize: 1.42 } },
+  { preset: 'Oak Medium', seed: 37, height: 15, forest: 0.18, open: 0.42, tune: { seg: 0.7, sec: 0.8, leaves: 0.34, leafSize: 1.5 } },
+  { preset: 'Ash Small', seed: 41, height: 14, forest: 0.14, open: 0.3, tune: { seg: 0.7, sec: 0.7, leaves: 0.36, leafSize: 1.45 } },
+  { preset: 'Aspen Medium', seed: 53, height: 17, forest: 0.1, open: 0.18, tint: 0x9fb45c, tune: { seg: 0.8, sec: 0.8, leaves: 0.62, leafSize: 1.25 } },
 ];
-const BUSH = { preset: 'Bush 2', seed: 71, height: 2.2, tune: { seg: 0.6, sec: 0.6, leaves: 0.6, leafSize: 1.2 } };
+const BUSH = { preset: 'Bush 2', seed: 71, height: 2.2, tint: 0x6d8a3c, tune: { seg: 0.6, sec: 0.6, leaves: 1.15, leafSize: 1.45 } };
 
 let root = null;
 let simplifier = null;
@@ -47,7 +50,7 @@ let variants = [];          // per species: {lod0:{bark, leaves}, lod1:{bark, le
 let trees = [];             // {x, y, z, yaw, s, v}
 let treeMeshes = [];        // per variant: {l0b, l0l, l1b, l1l}
 let impostor = null;        // {mesh, attrVariant, atlas}
-let bushes = [], bushMesh = null;
+let bushes = [], bushMesh = null, hedges = [];
 let rocks = [], rockMeshes = [];
 let grass = null;
 let windUniform = { value: 0 };
@@ -160,8 +163,11 @@ function windMaterial(base, amp, kind) {
       .replace('#include <common>', '#include <common>\nattribute float aWind;\nuniform float uWindTime;\nuniform float uWindAmp;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + WIND_VERT);
     if (kind === 'leaves') {
-      // a little light through the leaves keeps shaded canopy from going black
-      sh.fragmentShader = sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * 0.07;');
+      // crown normals light both faces of a card alike (no back-face flip), and a little light through the leaves
+      // keeps shaded canopy from going black
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize( vNormal );\nnonPerturbedNormal = normal;')
+        .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * 0.07;');
     }
   };
   base.customProgramCacheKey = () => `zf-wind-${kind}-${amp}`;
@@ -199,13 +205,14 @@ async function grow(Tree, sp) {
     roughness: 0.92, metalness: 0, normalScale: new THREE.Vector2(1.2, 1.2),
   }), 0.06, 'bark');
   const leafMat = windMaterial(new THREE.MeshStandardMaterial({
-    name: `leaves-${sp.preset}`, map: lm.material.map, color: lm.material.color.clone().multiplyScalar(0.92),
+    name: `leaves-${sp.preset}`, map: lm.material.map, color: sp.tint != null ? new THREE.Color(sp.tint) : lm.material.color.clone().multiplyScalar(0.92),
     roughness: 0.78, metalness: 0, side: THREE.DoubleSide, alphaTest: 0.5,
   }), 0.16, 'leaves');
-  const bark1 = simplifyIndex(bark, 0.3) || bark;
-  const leaves1 = thinLeaves(leaves, 2, 1.4);
-  return { sp, h: sp.height, radius, trunkR: Math.min(0.55, tr * 0.85), box, barkMat, leafMat, lod0: { bark, leaves }, lod1: { bark: bark1, leaves: leaves1 },
-    tris0: (bark.index.count + leaves.index.count) / 3, tris1: (bark1.index.count + leaves1.index.count) / 3 };
+  const bark0 = simplifyIndex(bark, 0.55, 0.006) || bark;
+  const bark1 = simplifyIndex(bark, 0.24) || bark0;
+  const leaves1 = thinLeaves(leaves, 3, 1.62);
+  return { sp, h: sp.height, radius, trunkR: Math.min(0.55, tr * 0.85), box, barkMat, leafMat, lod0: { bark: bark0, leaves }, lod1: { bark: bark1, leaves: leaves1 },
+    tris0: (bark0.index.count + leaves.index.count) / 3, tris1: (bark1.index.count + leaves1.index.count) / 3 };
 }
 
 // ------------------------------------------------------------------------------------------ impostors
@@ -324,11 +331,11 @@ function bakeImpostors(scene) {
 }
 
 // ------------------------------------------------------------------------------------------ placement
-function blockedByStructures(layout) {
+function blockedByStructures(layout, margin = 1) {
   const rects = [];
-  for (const b of layout.buildings) rects.push({ x: b.x, z: b.z, w: b.w + 6, d: b.d + 6, yaw: b.yaw });
-  for (const s of layout.slabs) rects.push({ x: s.x, z: s.z, w: s.w + 4, d: s.d + 4, yaw: s.yaw || 0 });
-  for (const f of layout.footprints) rects.push({ x: f.x, z: f.z, w: f.w + 5, d: f.d + 5, yaw: f.rot || 0 });
+  for (const b of layout.buildings) rects.push({ x: b.x, z: b.z, w: b.w + 6 * margin, d: b.d + 6 * margin, yaw: b.yaw });
+  for (const s of layout.slabs) rects.push({ x: s.x, z: s.z, w: s.w + 4 * margin, d: s.d + 4 * margin, yaw: s.yaw || 0 });
+  for (const f of layout.footprints) rects.push({ x: f.x, z: f.z, w: f.w + 5 * margin, d: f.d + 5 * margin, yaw: f.rot || 0 });
   return (x, z) => {
     for (const r of rects) {
       const c = Math.cos(r.yaw), s = Math.sin(r.yaw);
@@ -411,6 +418,28 @@ function placeTrees(layout) {
       open++;
     }
   }
+  // garden trees picked by the layout (inside town cores, where the scatter above never goes)
+  for (const g of layout.gardenTrees || []) {
+    const v = pickSpecies(rng, false);
+    add({ x: g.x, y: heightAt(g.x, g.z) - 0.15, z: g.z, yaw: rng.range(0, Math.PI * 2), s: g.s, v, forest: false, garden: true });
+  }
+  return out;
+}
+
+/** Hedge rows from the building yards: bush instances every ~0.8 m, slightly irregular. */
+function placeHedges(layout) {
+  const rng = new Rng(mixSeed(MAP.seed, hashString('hedges')));
+  const out = [];
+  for (const h of layout.hedges || []) {
+    const [ax, az] = h.a, [bx, bz] = h.b;
+    const len = Math.hypot(bx - ax, bz - az);
+    const n = Math.max(1, Math.round(len / 0.8));
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      const x = ax + (bx - ax) * t + rng.range(-0.08, 0.08), z = az + (bz - az) * t + rng.range(-0.08, 0.08);
+      out.push({ x, y: heightAt(x, z) - 0.05, z, yaw: rng.range(0, 6.28), s: rng.range(0.52, 0.66), hedge: true });
+    }
+  }
   return out;
 }
 
@@ -446,7 +475,7 @@ function rockGeometry(seed) {
     p.setXYZ(i, v.x, v.y, v.z);
   }
   g.deleteAttribute('uv');
-  const ng = g.toNonIndexed();
+  const ng = g.index ? g.toNonIndexed() : g;
   ng.computeVertexNormals();
   // box-projected UVs per face, layer = rock, ao darker toward the ground
   const pos = ng.attributes.position, nrm = ng.attributes.normal;
@@ -460,10 +489,11 @@ function rockGeometry(seed) {
       const i = f + k;
       const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
       if (ay >= ax && ay >= az) { uv[i * 2] = x * tile; uv[i * 2 + 1] = z * tile; } else if (ax >= az) { uv[i * 2] = z * tile; uv[i * 2 + 1] = y * tile; } else { uv[i * 2] = x * tile; uv[i * 2 + 1] = y * tile; }
-      srf[i * 2] = L.rocky_terrain_02;
+      // grey stone on the gravel set (the rocky aerial scan is mostly grass); colours are stored halved like buildings
+      srf[i * 2] = L.gravelly_sand;
       srf[i * 2 + 1] = 0.55 + 0.45 * Math.min(1, Math.max(0, (y + 0.25) / 0.8));
-      const tone = 0.5 * (0.92 + 0.08 * Math.sin(seed));
-      col[i * 3] = tone * 255; col[i * 3 + 1] = tone * 0.98 * 255; col[i * 3 + 2] = tone * 0.94 * 255;
+      const tone = 0.5 * (0.86 + 0.1 * Math.sin(seed * 3.7));
+      col[i * 3] = tone * 0.58 * 255; col[i * 3 + 1] = tone * 1.0 * 255; col[i * 3 + 2] = Math.min(255, tone * 1.95 * 255);
     }
   }
   ng.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
@@ -524,24 +554,24 @@ const GRASS_VERT = /* glsl */`
 function grassClump() {
   const rng = new Rng(4242);
   const pos = [], nrm = [], idx = [];
-  const blades = 9;
+  const blades = 12, segs = 2;
   for (let b = 0; b < blades; b++) {
-    const a = rng.range(0, Math.PI * 2), r = rng.range(0, 0.32);
+    const a = rng.range(0, Math.PI * 2), r = Math.sqrt(rng.next()) * 0.42;
     const bx = Math.cos(a) * r, bz = Math.sin(a) * r;
     const yaw = rng.range(0, Math.PI * 2);
-    const h = rng.range(0.32, 0.62), w = rng.range(0.035, 0.06);
-    const lean = rng.range(0.05, 0.22);
+    const h = rng.range(0.26, 0.55), w = rng.range(0.03, 0.055);
+    const lean = rng.range(0.06, 0.24);
     const dx = Math.cos(yaw), dz = Math.sin(yaw);
     const lx = -dz, lz = dx;
     const base = pos.length / 3;
-    const segs = 3;
     for (let s = 0; s <= segs; s++) {
       const t = s / segs;
-      const ww = w * (1 - t * 0.85);
+      const ww = w * (1 - t * 0.9);
       const off = lean * t * t;
       const cx = bx + dx * off, cz = bz + dz * off, cy = h * t;
       pos.push(cx - lx * ww, cy, cz - lz * ww, cx + lx * ww, cy, cz + lz * ww);
-      nrm.push(0, 1, 0, 0, 1, 0);
+      // normals lean toward the sky so blades shade like the ground they grow from
+      nrm.push(dx * 0.25, 1, dz * 0.25, dx * 0.25, 1, dz * 0.25);
     }
     for (let s = 0; s < segs; s++) {
       const i0 = base + s * 2;
@@ -551,21 +581,21 @@ function grassClump() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.normalizeNormals();
   g.setIndex(idx);
-  // normalise heights to 0..1 for the shader's bend weight
   return g;
 }
 
 function grassMaskFn(layout) {
-  const blocked = blockedByStructures(layout);
+  const blocked = blockedByStructures(layout, 0.2);
   const pw = new Float32Array(5);
   return (x, z) => {
     const h = heightAt(x, z);
     if (h < 3.2) return 0;
     paintAt(x, z, pw);
     if (pw[4] < 1.2) return 0;
-    let d = 1 - Math.max(pw[0], pw[3]) * 1.3 - pw[2] * 0.55;
-    if (d <= 0.05) return 0;
+    let d = 1 - Math.max(pw[0], pw[3]) * 1.9 - pw[2] * 0.6 - pw[1] * 0.25;
+    if (d <= 0.12) return 0;
     if (blocked(x, z)) return 0;
     return Math.min(1, d);
   };
@@ -573,20 +603,29 @@ function grassMaskFn(layout) {
 
 function buildGrass(layout) {
   const geo = grassClump();
-  const mat = new THREE.MeshStandardMaterial({ name: 'zf-grass', color: 0xffffff, roughness: 0.85, metalness: 0, side: THREE.DoubleSide });
-  const uniforms = { uGrassCentre: { value: new THREE.Vector3() }, uGrassR: { value: 30 } };
+  const mat = new THREE.MeshStandardMaterial({ name: 'zf-grass', color: 0xffffff, roughness: 0.9, metalness: 0, side: THREE.DoubleSide });
+  const uniforms = { uGrassCentre: { value: new THREE.Vector3() }, uGrassR: { value: 30 }, tNoise: { value: noiseTexture() } };
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.uniforms.uWindTime = windUniform;
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uWindTime;\nuniform vec3 uGrassCentre;\nuniform float uGrassR;\nvarying float vGrassH;\nvarying vec3 vGrassTint;')
+      .replace('#include <common>', '#include <common>\nuniform float uWindTime;\nuniform vec3 uGrassCentre;\nuniform float uGrassR;\nuniform sampler2D tNoise;\nvarying float vGrassH;\nvarying vec3 vGrassTint;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + GRASS_VERT + `
+        // same macro fields as the terrain splat (materials.js), so blades match the ground they stand on
+        vec4 gNs = textureLod( tNoise, zfIp2.xz / 173.0, 0.0 );
+        vec4 gNd = textureLod( tNoise, zfIp2.xz / 23.0, 0.0 );
+        vec4 gNb = textureLod( tNoise, zfIp2.xz / 690.0 + 0.31, 0.0 );
+        float gDry = smoothstep( 0.46, 0.8, gNb.x * 0.5 + gNs.y * 0.42 + smoothstep( 16.0, 46.0, zfIp2.y ) * 0.16 );
+        float gLush = smoothstep( 0.52, 0.8, gNs.z * 0.55 + gNb.y * 0.45 ) * ( 1.0 - gDry );
+        vec3 gC = mix( vec3( 0.074, 0.104, 0.030 ), vec3( 0.142, 0.132, 0.056 ), gDry );
+        gC = mix( gC, vec3( 0.046, 0.074, 0.020 ), gLush * 0.85 ) * ( 0.88 + 0.24 * gNd.w );
         float zfHash = fract( sin( dot( zfIp2.xz, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 );
-        vGrassTint = mix( vec3( 0.17, 0.22, 0.075 ), vec3( 0.30, 0.29, 0.11 ), zfHash );`);
+        vGrassTint = gC * ( 0.85 + 0.3 * zfHash );`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying float vGrassH;\nvarying vec3 vGrassTint;')
-      .replace('#include <map_fragment>', 'diffuseColor.rgb = mix( vGrassTint * 0.45, vGrassTint * 1.25 + vec3( 0.04, 0.035, 0.0 ), smoothstep( 0.0, 0.6, vGrassH ) );')
-      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * 0.05;');
+      .replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize( vNormal );\nnonPerturbedNormal = normal;')
+      .replace('#include <map_fragment>', 'diffuseColor.rgb = vGrassTint * mix( 0.55, 1.45, smoothstep( 0.0, 0.5, vGrassH ) );')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * 0.06 * smoothstep( 0.1, 0.5, vGrassH );');
   };
   mat.customProgramCacheKey = () => 'zf-grass';
   const cap = 9000;
@@ -693,6 +732,7 @@ export async function buildFoliage(scene, layout, quality, onProgress = () => {}
     return {
       l0b: mk(v.lod0.bark, v.barkMat, `tree${vi}_bark0`, true), l0l: mk(v.lod0.leaves, v.leafMat, `tree${vi}_leaves0`, true),
       l1b: mk(v.lod1.bark, v.barkMat, `tree${vi}_bark1`, true), l1l: mk(v.lod1.leaves, v.leafMat, `tree${vi}_leaves1`, true),
+      l1bn: mk(v.lod1.bark, v.barkMat, `tree${vi}_bark1_ns`, false), l1ln: mk(v.lod1.leaves, v.leafMat, `tree${vi}_leaves1_ns`, false),
     };
   });
   for (const t of trees) {
@@ -701,8 +741,9 @@ export async function buildFoliage(scene, layout, quality, onProgress = () => {}
   bakeImpostors(scene.parent || scene);
   onProgress(0.75);
   await frame();
-  // bushes (no colliders)
-  bushes = placeBushes(layout);
+  // bushes (no colliders); hedge rows first so they are always drawn regardless of the foliage density
+  hedges = placeHedges(layout);
+  bushes = hedges.concat(placeBushes(layout));
   bushMesh = { b: new THREE.InstancedMesh(bushV.lod1.bark, bushV.barkMat, bushes.length), l: new THREE.InstancedMesh(bushV.lod0.leaves, bushV.leafMat, bushes.length) };
   for (const im of [bushMesh.b, bushMesh.l]) { im.count = 0; im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false; im.instanceMatrix.setUsage(THREE.DynamicDrawUsage); root.add(im); }
   bushMesh.b.name = 'bush_bark'; bushMesh.l.name = 'bush_leaves';
@@ -721,9 +762,10 @@ export async function buildFoliage(scene, layout, quality, onProgress = () => {}
     });
     im.count = list.length;
     im.castShadow = true; im.receiveShadow = true;
-    im.computeBoundingSphere();
+    im.frustumCulled = false;
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     root.add(im);
-    return { im, geo: g };
+    return { im, geo: g, list };
   });
   stats.rocks = rocks.length;
   buildGrass(layout);
@@ -741,6 +783,10 @@ export function addColliders(set) {
 }
 
 export const rockPositions = () => rocks.map((r) => [r.x, r.y + r.s * 0.4, r.z]);
+/** Trees as {x, z, canopy (diameter m), trunk (radius m)} for the baked ground occlusion. */
+export const treeFootprints = () => trees.map((t) => ({ x: t.x, z: t.z, canopy: variants[t.v].radius * 1.4 * t.s, trunk: Math.max(0.12, variants[t.v].trunkR * t.s) }));
+/** Rocks as {x, z, d (diameter m)}. */
+export const rockFootprints = () => rocks.map((r) => ({ x: r.x, z: r.z, d: r.s * 2.2 }));
 
 /** Quality switch: bush density and grass; tree LOD radii come from treeLodDistance. */
 export function applyQuality(q) { qual = q; acc = TUNE.update; lastView.set(1e9, 0, 0); if (grass) grass.lastKey = ''; }
@@ -755,9 +801,11 @@ export function updateFoliage(dt, viewPos, camera) {
   if (acc < TUNE.update && lastView.distanceToSquared(viewPos) < 9) return;
   acc = 0;
   lastView.copy(viewPos);
-  const lodFar = qual.treeLodDistance, lodNear = lodFar * TUNE.nearFrac, view = qual.viewDistance;
+  const lodFar = qual.treeLodDistance, view = qual.viewDistance;
+  const lodNear = Math.min(TUNE.nearMax, Math.max(TUNE.nearMin, lodFar * TUNE.nearFrac));
+  const shadowR = Math.max(lodNear, shadowExtent() * TUNE.shadowPad);
   if (camera) { _pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse); _frustum.setFromProjectionMatrix(_pv); }
-  for (const tm of treeMeshes) { tm.l0b.count = tm.l0l.count = tm.l1b.count = tm.l1l.count = 0; }
+  for (const tm of treeMeshes) { tm.l0b.count = tm.l0l.count = tm.l1b.count = tm.l1l.count = tm.l1bn.count = tm.l1ln.count = 0; }
   let far = 0, near = 0, mid = 0;
   const vattr = impostor.attr.array;
   for (const t of trees) {
@@ -767,17 +815,32 @@ export function updateFoliage(dt, viewPos, camera) {
     if (camera) { _sph.center.set(t.x, t.y + v.h * 0.5 * t.s, t.z); _sph.radius = v.h * 0.6 * t.s + 2; if (!_frustum.intersectsSphere(_sph)) continue; }
     const tm = treeMeshes[t.v];
     if (d < lodNear) { tm.l0b.setMatrixAt(tm.l0b.count++, t.m); tm.l0l.setMatrixAt(tm.l0l.count++, t.m); near++; }
-    else if (d < lodFar) { tm.l1b.setMatrixAt(tm.l1b.count++, t.m); tm.l1l.setMatrixAt(tm.l1l.count++, t.m); mid++; }
+    else if (d < lodFar) {
+      if (d < shadowR) { tm.l1b.setMatrixAt(tm.l1b.count++, t.m); tm.l1l.setMatrixAt(tm.l1l.count++, t.m); }
+      else { tm.l1bn.setMatrixAt(tm.l1bn.count++, t.m); tm.l1ln.setMatrixAt(tm.l1ln.count++, t.m); }
+      mid++;
+    }
     else { impostor.mesh.setMatrixAt(far, t.m); vattr[far] = t.v; far++; }
   }
-  for (const tm of treeMeshes) for (const im of [tm.l0b, tm.l0l, tm.l1b, tm.l1l]) { im.instanceMatrix.needsUpdate = true; im.visible = im.count > 0; }
+  for (const tm of treeMeshes) for (const im of [tm.l0b, tm.l0l, tm.l1b, tm.l1l, tm.l1bn, tm.l1ln]) { im.instanceMatrix.needsUpdate = true; im.visible = im.count > 0; }
+  // rocks: distance-culled buckets (static colliders are unaffected)
+  const rockR = qual.propDistance * TUNE.rockCull;
+  for (const rm of rockMeshes) {
+    let c = 0;
+    for (const r of rm.list) {
+      if (Math.abs(r.x - viewPos.x) > rockR || Math.abs(r.z - viewPos.z) > rockR) continue;
+      if (Math.hypot(r.x - viewPos.x, r.z - viewPos.z) > rockR) continue;
+      rm.im.setMatrixAt(c++, r.m);
+    }
+    rm.im.count = c; rm.im.visible = c > 0; rm.im.instanceMatrix.needsUpdate = true;
+  }
   impostor.mesh.count = far;
   impostor.mesh.geometry.instanceCount = far;
   impostor.mesh.instanceMatrix.needsUpdate = true;
   impostor.attr.needsUpdate = true;
   impostor.mesh.visible = far > 0;
   // bushes: visible count scales with quality.foliage, culled at 45 % of the tree LOD distance
-  const nb = Math.floor(bushes.length * Math.min(1, qual.foliage / 1.0));
+  const nb = hedges.length + Math.floor((bushes.length - hedges.length) * Math.min(1, qual.foliage / 1.0));
   let bc = 0;
   const bushR = Math.max(70, lodFar * 0.45);
   for (let i = 0; i < nb; i++) {
@@ -792,6 +855,6 @@ export function updateFoliage(dt, viewPos, camera) {
 }
 
 export function foliageStats() {
-  const tris = treeMeshes.reduce((s, tm, i) => s + tm.l0b.count * variants[i].tris0 + tm.l1b.count * variants[i].tris1, 0);
+  const tris = treeMeshes.reduce((s, tm, i) => s + tm.l0b.count * variants[i].tris0 + (tm.l1b.count + tm.l1bn.count) * variants[i].tris1, 0);
   return { ...stats, treeTris: tris, variants: variants.map((v) => ({ preset: v.sp.preset, tris0: v.tris0, tris1: v.tris1, h: v.h })) };
 }

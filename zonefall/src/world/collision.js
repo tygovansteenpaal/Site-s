@@ -94,7 +94,7 @@ export function buildCollision(sets) {
   const index = vcount > 65535 ? new Uint32Array(vcount) : new Uint16Array(vcount);
   for (let i = 0; i < vcount; i++) index[i] = i;
   geom.setIndex(new THREE.BufferAttribute(index, 1));
-  bvh = new MeshBVH(geom, { maxLeafSize: 8 });
+  bvh = new MeshBVH(geom, { targetLeafSize: 8 });
   return { triangles: tris, ms: Math.round(performance.now() - t0) };
 }
 

@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { ASSETS } from '../config.js';
 import * as assets from '../engine/assets.js';
-import { TUNE as HF } from './heightfield.js';
+import { TUNE as HF, quarry } from './heightfield.js';
 
 /** Array layer order (index = layer id used by geometry and shaders). */
 export const LAYER_IDS = ['sparse_grass', 'leafy_grass', 'forrest_ground_01', 'brown_mud_02', 'rocky_terrain_02', 'gravelly_sand',
@@ -22,10 +22,25 @@ let noiseTex = null;
 export async function buildArrays(size) {
   if (arrays) return arrays;
   const diff = await assets.textureArray(LAYER_IDS, 'diff', size);
+  const avg = layerAverages(diff);
   const nor = await assets.textureArray(LAYER_IDS, 'nor_gl', size);
   const arm = await assets.textureArray(LAYER_IDS, 'arm', size);
-  arrays = { diff, nor, arm, size };
+  arrays = { diff, nor, arm, size, avg };
   return arrays;
+}
+
+const s2l = (c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+/** Mean linear albedo of every array layer (read from the CPU copy before it is uploaded and released). */
+function layerAverages(tex) {
+  const { data, width, height, depth } = tex.image;
+  const out = [];
+  const layer = width * height * 4;
+  for (let l = 0; l < depth; l++) {
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let i = l * layer; i < (l + 1) * layer; i += 4 * 97) { r += s2l(data[i] / 255); g += s2l(data[i + 1] / 255); b += s2l(data[i + 2] / 255); n++; }
+    out.push(new THREE.Vector3(r / n, g / n, b / n));
+  }
+  return out;
 }
 export const getArrays = () => arrays;
 
@@ -116,17 +131,33 @@ export function surfaceMaterial(opts = {}) {
   const a = arrays;
   if (!a) throw new Error('[WORLD/materials] buildArrays first');
   const m = new THREE.MeshStandardMaterial({ name: 'zf-surface', vertexColors: true, roughness: 1, metalness: 1, side: opts.side || THREE.FrontSide });
-  const uniforms = { ...arrayUniforms(a), uNormalScale: { value: opts.normalScale ?? 1.0 } };
+  const uniforms = { ...arrayUniforms(a), uNormalScale: { value: opts.normalScale ?? 1.0 }, tNoise: { value: noiseTexture() } };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec2 aSurf;\nvarying vec2 vSurf;\nvarying vec2 vZfUv;')
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvSurf = aSurf;\nvZfUv = uv;');
+      .replace('#include <common>', '#include <common>\nattribute vec2 aSurf;\nvarying vec2 vSurf;\nvarying vec2 vZfUv;\nvarying vec3 vZfW;\nvarying vec3 vZfN;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvSurf = aSurf;\nvZfUv = uv;')
+      .replace('#include <fog_vertex>', `#include <fog_vertex>
+        vec4 zfW4 = vec4( transformed, 1.0 ); vec3 zfN3 = objectNormal;
+        #ifdef USE_INSTANCING
+          zfW4 = instanceMatrix * zfW4; zfN3 = mat3( instanceMatrix ) * zfN3;
+        #endif
+        vZfW = ( modelMatrix * zfW4 ).xyz;
+        vZfN = normalize( mat3( modelMatrix ) * zfN3 );`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vSurf;\nvarying vec2 vZfUv;\nuniform float uNormalScale;\n' + GLSL_ARRAYS)
+      .replace('#include <common>', '#include <common>\nvarying vec2 vSurf;\nvarying vec2 vZfUv;\nvarying vec3 vZfW;\nvarying vec3 vZfN;\nuniform float uNormalScale;\nuniform sampler2D tNoise;\n' + GLSL_ARRAYS)
       .replace('#include <map_fragment>', /* glsl */`
         vec3 zfTc = vec3( vZfUv, floor( vSurf.x + 0.5 ) );
-        diffuseColor.rgb *= texture( tDiff, zfTc ).rgb;
+        diffuseColor.rgb *= texture( tDiff, zfTc ).rgb * 2.0;   // vertex tints are stored halved (buildings.js TUNE.tintScale)
+        // weathering: broad tone drift on every surface, rain streaks and soot on walls (world space, so it never tiles
+        // with the material), stronger on outdoor faces than on interior ones (vSurf.y is the sky-light factor)
+        vec2 zfWp = abs( vZfN.x ) > abs( vZfN.z ) ? vZfW.zy : vZfW.xy;
+        float zfBroad = texture( tNoise, vZfW.xz / 37.0 + zfWp / 53.0 ).y;
+        float zfStreak = texture( tNoise, vec2( zfWp.x / 2.3, zfWp.y / 21.0 ) ).z;
+        float zfWall = 1.0 - abs( vZfN.y );
+        float zfOut = smoothstep( 0.5, 0.95, vSurf.y );
+        diffuseColor.rgb *= 0.9 + 0.2 * zfBroad;
+        diffuseColor.rgb *= 1.0 - zfWall * zfOut * smoothstep( 0.45, 0.85, zfStreak ) * 0.2;
         vec3 zfArm = texture( tArm, zfTc ).rgb;`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = roughness * zfArm.g;')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = metalness * zfArm.b;')
@@ -145,17 +176,19 @@ export function surfaceMaterial(opts = {}) {
  * Splat terrain: grass (two sets, anti-tiling at two scales), forest floor, mud, gravel/dirt, sand by height,
  * rock by slope (triplanar). ctrl = RGBA control map over the 1200 m world (dirt, straw, forest, mud).
  */
-export function terrainMaterial({ ctrl, worldSize = 1200 }) {
+export function terrainMaterial({ ctrl, ao, worldSize = 1200 }) {
   const a = arrays;
   const m = new THREE.MeshStandardMaterial({ name: 'zf-terrain', roughness: 1, metalness: 0 });
   const uniforms = {
     ...arrayUniforms(a),
-    tCtrl: { value: ctrl }, tNoise: { value: noiseTexture() },
+    tCtrl: { value: ctrl }, tAO: { value: ao }, tNoise: { value: noiseTexture() },
     uWorld: { value: worldSize },
     uTiles: { value: new THREE.Vector4(TILE[L.sparse_grass], TILE[L.forrest_ground_01], TILE[L.brown_mud_02], TILE[L.gravelly_sand]) },
     uRockTile: { value: 13.0 },
     uSand: { value: new THREE.Vector2(HF.beachHeight - 0.2, HF.beachHeight + 0.6) },
     uRockSlope: { value: 1.0 - HF.rockSlope },
+    uAvg: { value: a.avg },
+    uQuarry: { value: new THREE.Vector4(quarry.x, quarry.z, quarry.rim + 1, 1.0 - HF.pit.rockNy) },
   };
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, uniforms);
@@ -168,7 +201,7 @@ export function terrainMaterial({ ctrl, worldSize = 1200 }) {
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = zfArmS.g;')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = 0.0;')
       .replace('#include <normal_fragment_maps>', 'normal = normalize( ( viewMatrix * vec4( zfNw, 0.0 ) ).xyz );')
-      .replace('#include <aomap_fragment>', AO_CHUNK('mix( 1.0, zfArmS.r, 0.9 )'));
+      .replace('#include <aomap_fragment>', AO_CHUNK('mix( 1.0, zfArmS.r, 0.9 ) * zfGroundAO'));
   };
   m.customProgramCacheKey = () => 'zf-terrain';
   m.userData.uniforms = uniforms;
@@ -179,14 +212,27 @@ const TERRAIN_PARS = /* glsl */`
 varying vec3 vWPos;
 varying vec3 vWNrm;
 uniform sampler2D tCtrl;
+uniform sampler2D tAO;
 uniform sampler2D tNoise;
+float zfGroundAO;
 uniform float uWorld;
 uniform vec4 uTiles;
 uniform float uRockTile;
 uniform vec2 uSand;
 uniform float uRockSlope;
+uniform vec3 uAvg[ 13 ];
+uniform vec4 uQuarry;
 vec3 zfAlbS; vec3 zfNw; vec3 zfArmS;
 
+float zfLum( vec3 c ) { return dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); }
+// Texture detail relative to the layer mean: the luminance ratio (contrast-scaled) plus a share of its own hue.
+// Colour then comes from the macro palette, so the scanned sets' native hue (dry, orange, tan) never dominates.
+vec3 zfDet( vec3 c, int layer, float hue, float contrast ) {
+  vec3 a = uAvg[ layer ];
+  float lr = zfLum( c ) / max( zfLum( a ), 1e-3 );
+  vec3 chroma = ( c / max( a, vec3( 1e-3 ) ) ) / max( lr, 1e-3 );
+  return mix( 1.0, lr, contrast ) * mix( vec3( 1.0 ), clamp( chroma, 0.0, 3.0 ), hue );
+}
 vec3 zfPlanarN( vec3 tn, vec3 N ) {
   vec3 T = normalize( vec3( 1.0, 0.0, 0.0 ) - N * N.x );
   vec3 B = normalize( vec3( 0.0, 0.0, 1.0 ) - N * N.z );
@@ -211,76 +257,91 @@ const TERRAIN_SPLAT = /* glsl */`
   float zfDist = length( vWPos - cameraPosition );
   vec4 zfNs = texture( tNoise, zfP / 173.0 );
   vec4 zfNd = texture( tNoise, zfP / 23.0 );
+  vec4 zfNb = texture( tNoise, zfP / 690.0 + 0.31 );
   vec2 zfCuv = ( zfP + uWorld * 0.5 ) / uWorld + ( zfNd.xy - 0.5 ) * ( 1.3 / uWorld );
   vec4 zfC = texture( tCtrl, zfCuv );
+  zfGroundAO = texture( tAO, ( zfP + uWorld * 0.5 ) / uWorld ).r;
   vec3 zfN0 = normalize( vWNrm );
   float zfNsc = mix( 1.0, 0.35, smoothstep( 25.0, 220.0, zfDist ) );
   float zfH = vWPos.y;
+  float zfSlope = 1.0 - zfN0.y;
 
-  // --- grass base: sparse / leafy by noise, two scales against tiling
+  // --- grass macro colour: meadow, drier on high sun-facing ground, lush in hollows, mottled at every scale
+  float zfDry = smoothstep( 0.46, 0.8, zfNb.x * 0.5 + zfNs.y * 0.42 + smoothstep( 16.0, 46.0, zfH ) * 0.16 + zfSlope * 0.7 - zfC.b * 0.3 );
+  float zfLush = smoothstep( 0.52, 0.8, zfNs.z * 0.55 + zfNb.y * 0.45 ) * ( 1.0 - zfDry );
+  vec3 cG = mix( vec3( 0.074, 0.104, 0.030 ), vec3( 0.142, 0.132, 0.056 ), zfDry );
+  cG = mix( cG, vec3( 0.046, 0.074, 0.020 ), zfLush * 0.85 );
+  cG *= 0.88 + 0.24 * zfNd.w;
+  cG = mix( cG, vec3( 0.25, 0.20, 0.085 ), zfC.g * 0.85 );
+
+  // --- grass detail: two sets at two scales against tiling
   vec3 aA, nA, rA, aB, nB, rB;
   float zfLeafy = smoothstep( 0.38, 0.68, zfNs.x + ( zfNd.z - 0.5 ) * 0.25 );
   vec2 uvS = zfP / uTiles.x;
   vec2 uvL = mat2( 0.8, -0.6, 0.6, 0.8 ) * zfP / ( uTiles.x * 3.7 );
   zfLayer( 0.0, uvS, zfNsc, zfN0, aA, nA, rA );
-  zfLayer( 1.0, uvS * 0.93 + 0.37, zfNsc, zfN0, aB, nB, rB );
-  vec3 g1 = mix( aA, aB, zfLeafy ), gn1 = normalize( mix( nA, nB, zfLeafy ) ), gr1 = mix( rA, rB, zfLeafy );
+  zfLayer( 2.0, uvS * 0.93 + 0.37, zfNsc, zfN0, aB, nB, rB );
+  vec3 dG = mix( zfDet( aA, 0, 0.12, 0.85 ), zfDet( aB, 2, 0.12, 0.85 ), zfLeafy );
+  vec3 gn1 = normalize( mix( nA, nB, zfLeafy ) ), gr1 = mix( rA, rB, zfLeafy );
   float zfFar = smoothstep( 18.0, 90.0, zfDist );
   if ( zfFar > 0.01 ) {
     zfLayer( 0.0, uvL, zfNsc, zfN0, aA, nA, rA );
-    zfLayer( 1.0, uvL * 1.07 + 0.11, zfNsc, zfN0, aB, nB, rB );
+    zfLayer( 2.0, uvL * 1.07 + 0.11, zfNsc, zfN0, aB, nB, rB );
     float mixL = mix( 0.5, 0.85, zfFar );
-    g1 = mix( g1, mix( aA, aB, zfLeafy ), mixL );
+    dG = mix( dG, mix( zfDet( aA, 0, 0.12, 0.85 ), zfDet( aB, 2, 0.12, 0.85 ), zfLeafy ), mixL );
     gn1 = normalize( mix( gn1, normalize( mix( nA, nB, zfLeafy ) ), mixL ) );
     gr1 = mix( gr1, mix( rA, rB, zfLeafy ), mixL );
   }
-  // macro colour: drier, yellower meadows in patches; darker lush hollows
-  float zfDry = smoothstep( 0.45, 0.8, zfNs.y );
-  g1 *= mix( vec3( 1.0 ), vec3( 1.16, 1.06, 0.72 ), zfDry * 0.75 );
-  g1 *= 0.86 + 0.28 * zfNs.w;
-  // straw / dry-grass paint (fields, verges)
-  g1 = mix( g1, g1 * vec3( 1.42, 1.18, 0.62 ), zfC.g * 0.85 );
-  vec3 zfAlb = g1; vec3 zfNrm = gn1; vec3 zfArm = gr1;
+  vec3 zfAlb = cG * dG; vec3 zfNrm = gn1; vec3 zfArm = vec3( gr1.r, max( gr1.g, 0.82 ), 0.0 );
   vec3 la, ln, lr;
 
-  // --- forest floor
+  // --- forest floor: needles and leaf litter, darker under the canopy
   float wF = zfC.b;
   if ( wF > 0.004 ) {
-    zfLayer( 2.0, zfP / uTiles.y, zfNsc, zfN0, la, ln, lr );
+    zfLayer( 2.0, zfP / uTiles.y + 0.5, zfNsc, zfN0, la, ln, lr );
+    vec3 aM, nM, rM;
+    zfLayer( 3.0, zfP / ( uTiles.z * 1.6 ) + 0.21, zfNsc, zfN0, aM, nM, rM );
+    float lit = smoothstep( 0.3, 0.7, zfNd.y );
+    la = mix( vec3( 0.062, 0.052, 0.030 ), vec3( 0.075, 0.078, 0.034 ), lit ) * zfDet( la, 2, 0.25, 1.0 );
+    la = mix( la, vec3( 0.058, 0.046, 0.032 ) * zfDet( aM, 3, 0.3, 1.0 ), smoothstep( 0.55, 0.8, zfNd.x ) * 0.6 );
     float w = zfHB( wF, lr.r );
-    zfAlb = mix( zfAlb, la * 0.92, w ); zfNrm = normalize( mix( zfNrm, ln, w ) ); zfArm = mix( zfArm, lr, w );
+    zfAlb = mix( zfAlb, la, w ); zfNrm = normalize( mix( zfNrm, ln, w ) ); zfArm = mix( zfArm, vec3( lr.r, 0.9, 0.0 ), w );
   }
   // --- mud (fields, ruts) plus a few natural damp patches in low meadows
-  float wM = max( zfC.a, smoothstep( 0.72, 0.86, zfNd.w ) * smoothstep( 0.55, 0.75, zfNs.z ) * 0.8 * ( 1.0 - zfC.b ) );
+  float wM = max( zfC.a, smoothstep( 0.72, 0.86, zfNd.w ) * smoothstep( 0.55, 0.75, zfNs.z ) * 0.7 * ( 1.0 - zfC.b ) );
   if ( wM > 0.004 ) {
     zfLayer( 3.0, zfP / uTiles.z, zfNsc, zfN0, la, ln, lr );
+    la = vec3( 0.068, 0.055, 0.040 ) * zfDet( la, 3, 0.4, 1.0 );
     float w = zfHB( wM, lr.r );
     zfAlb = mix( zfAlb, la, w ); zfNrm = normalize( mix( zfNrm, ln, w ) ); zfArm = mix( zfArm, lr, w );
   }
-  // --- gravel / dirt (tracks, shoulders, yards, quarry)
+  // --- gravel / packed dirt (tracks, shoulders, yards, quarry): neutral grey-brown, damp patches toward mud
   float wD = zfC.r;
   if ( wD > 0.004 ) {
     zfLayer( 5.0, zfP / uTiles.w, zfNsc, zfN0, la, ln, lr );
     vec3 mudA, mudN, mudR;
     zfLayer( 3.0, zfP / ( uTiles.z * 1.9 ) + 0.5, zfNsc, zfN0, mudA, mudN, mudR );
+    vec3 grav = mix( vec3( 0.150, 0.135, 0.112 ), vec3( 0.185, 0.165, 0.130 ), zfNd.z ) * zfDet( la, 5, 0.1, 1.1 );
     float dm = smoothstep( 0.35, 0.75, zfNd.x );
-    la = mix( la, mudA * 1.05, dm * 0.55 ); ln = normalize( mix( ln, mudN, dm * 0.5 ) ); lr = mix( lr, mudR, dm * 0.5 );
+    la = mix( grav, vec3( 0.070, 0.058, 0.044 ) * zfDet( mudA, 3, 0.3, 1.0 ), dm * 0.45 );
+    ln = normalize( mix( ln, mudN, dm * 0.5 ) ); lr = mix( lr, mudR, dm * 0.5 );
     float w = zfHB( wD, lr.r );
     zfAlb = mix( zfAlb, la, w ); zfNrm = normalize( mix( zfNrm, ln, w ) ); zfArm = mix( zfArm, lr, w );
   }
-  // --- sand by height above sea level (beaches, seabed)
+  // --- sand by height above sea level (beaches, seabed): pale and dry above the swash, dark and glossy below
   float wS = 1.0 - smoothstep( uSand.x, uSand.y, zfH + ( zfNd.y - 0.5 ) * 0.6 );
   if ( wS > 0.004 ) {
     zfLayer( 5.0, zfP / ( uTiles.w * 1.4 ), zfNsc * 0.7, zfN0, la, ln, lr );
-    la *= vec3( 1.12, 1.06, 0.9 );
+    la = mix( vec3( 0.34, 0.29, 0.20 ), vec3( 0.40, 0.345, 0.24 ), zfNs.w ) * zfDet( la, 5, 0.08, 0.8 );
     float wet = 1.0 - smoothstep( 0.05, 0.8, zfH );
-    la *= mix( 1.0, 0.62, wet ); lr.g *= mix( 1.0, 0.55, wet );
+    la *= mix( 1.0, 0.55, wet ); lr.g *= mix( 1.0, 0.5, wet );
     float w = zfHB( wS, lr.r );
     zfAlb = mix( zfAlb, la, w ); zfNrm = normalize( mix( zfNrm, ln, w ) ); zfArm = mix( zfArm, lr, w );
   }
-  // --- rock on slopes: triplanar
-  float zfSlope = 1.0 - zfN0.y;
-  float wR = smoothstep( uRockSlope - 0.07, uRockSlope + 0.06, zfSlope + ( zfNs.z - 0.5 ) * 0.1 );
+  // --- rock on slopes: triplanar, grey stone with the scan's luminance detail; inside the quarry every bench face
+  float zfQ = 1.0 - smoothstep( uQuarry.z - 2.0, uQuarry.z + 1.0, length( zfP - uQuarry.xy ) );
+  float zfRT = mix( uRockSlope, uQuarry.w, zfQ );
+  float wR = smoothstep( zfRT - 0.07, zfRT + 0.06, zfSlope + ( zfNs.z - 0.5 ) * 0.1 );
   if ( wR > 0.004 ) {
     vec3 bw = pow( abs( zfN0 ), vec3( 4.0 ) ); bw /= ( bw.x + bw.y + bw.z );
     vec3 p = vWPos / uRockTile;
@@ -291,13 +352,21 @@ const TERRAIN_SPLAT = /* glsl */`
     lr = rx * bw.x + ry * bw.y + rz * bw.z;
     vec3 nX = vec3( 0.0, tx.y, tx.x ) * sign( zfN0.x ), nY = vec3( ty.x, 0.0, ty.y ), nZ = vec3( tz.x, tz.y, 0.0 );
     ln = normalize( zfN0 + ( nX * bw.x + nY * bw.y + nZ * bw.z ) * 1.2 * zfNsc );
-    la *= vec3( 0.95, 0.93, 0.9 );
+    // the scan's average is mostly grass, so map its luminance onto a stone ramp instead of a ratio to that mean
+    float rl = smoothstep( 0.015, 0.32, zfLum( la ) );
+    la = mix( vec3( 0.050, 0.048, 0.044 ), mix( vec3( 0.17, 0.162, 0.148 ), vec3( 0.215, 0.20, 0.178 ), zfNs.x ), rl );
+    lr.g = max( lr.g, 0.75 );
+    // blasted benches: pale limestone with horizontal strata
+    float strata = texture( tNoise, vec2( zfP.x / 41.0 + zfP.y / 37.0, zfH / 2.3 ) ).x;
+    la = mix( la, la * vec3( 1.25, 1.22, 1.15 ) * ( 0.8 + 0.4 * strata ), zfQ );
     float w = zfHB( wR, lr.r );
     zfAlb = mix( zfAlb, la, w ); zfNrm = normalize( mix( zfNrm, ln, w ) ); zfArm = mix( zfArm, lr, w );
   }
   // underwater: darker, bluer seabed (the water surface adds the rest)
   float zfUw = 1.0 - smoothstep( -1.5, 0.05, zfH );
   zfAlb *= mix( vec3( 1.0 ), vec3( 0.55, 0.7, 0.72 ), zfUw );
+  // contact occlusion also eats a little bounce light from the albedo (no GI under eaves and canopies)
+  zfAlb *= mix( 0.78, 1.0, zfGroundAO );
   zfAlbS = zfAlb; zfNw = zfNrm; zfArmS = zfArm;
   diffuseColor.rgb *= zfAlbS;
 `;
