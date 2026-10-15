@@ -8,7 +8,7 @@
 import * as THREE from 'three';
 import { WEAPONS, SURFACE } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
-import { state, localPlayer, isBotId, LIFE, debug } from '../core/state.js';
+import { state, gfx, localPlayer, isBotId, LIFE, debug } from '../core/state.js';
 import { clamp } from '../core/util.js';
 import * as world from '../world/world.js';
 import * as assets from '../engine/assets.js';
@@ -25,7 +25,7 @@ const TUNE = {
   bounceEvent: 1.4,           // m/s impact speed for a GRENADE_BOUNCE
   waterDrag: 6,
   maxLive: 16,
-  handOffset: { fwd: 0.45, right: 0.18, up: -0.12 },
+  handOffset: { fwd: 0.45, right: -0.16, up: -0.08 },   // release point (the viewmodel throws left-handed)
   playerCarry: 0.7,           // share of the thrower's velocity added to the throw
   preview: { dots: 44, step: 1 / 40, maxTime: 2.6, color: 0xf2efe6 },
 };
@@ -326,17 +326,19 @@ export function setPreview(on, cook = 0) {
   if (!previewOn) { arcDots.visible = false; arcRing.visible = false; }
 }
 
-const colTmp = new THREE.Color();
+const colTmp = new THREE.Color(), camPos = new THREE.Vector3();
 function updatePreview() {
   const me = localPlayer();
   if (!me || !me.alive || state.local.mode === 'spectate') { arcDots.visible = false; arcRing.visible = false; return; }
   predictArc();
   const n = arcCount;
+  camPos.setFromMatrixPosition(gfx.camera.matrixWorld);
   for (let i = 0; i < TUNE.preview.dots; i++) {
     if (i < n) {
       dummy.position.copy(arcPts[i]);
-      const s = 1 - 0.45 * (i / Math.max(1, n));
-      dummy.scale.setScalar(s);
+      // constant on-screen size (about 3 px at 720p) so the far end of the arc stays readable
+      const dc = arcPts[i].distanceTo(camPos);
+      dummy.scale.setScalar(Math.max(0.5, dc * 0.11) * (1 - 0.3 * (i / Math.max(1, n))));
       // fade near the hand so the first dots do not fill the screen
       const f = clamp((i - 1) / 4, 0, 1) * (1 - 0.35 * i / Math.max(1, n));
       colTmp.setRGB(f, f * 0.97, f * 0.9);
@@ -354,6 +356,6 @@ function updatePreview() {
     arcRing.position.copy(landPos).addScaledVector(landN, 0.03);
     arcRing.quaternion.setFromUnitVectors(UP, landN);
     const pulse = 1 + 0.08 * Math.sin(performance.now() * 0.008);
-    arcRing.scale.setScalar(pulse);
+    arcRing.scale.setScalar(pulse * Math.max(1, landPos.distanceTo(camPos) / 14));
   } else arcRing.visible = false;
 }

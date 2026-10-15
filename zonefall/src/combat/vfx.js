@@ -19,11 +19,11 @@ import { clamp } from '../core/util.js';
 import * as world from '../world/world.js';
 
 const TUNE = {
-  maxAlpha: 900, maxAdd: 700,
-  tracerSpeed: 520, tracerLen: 7.5, tracerWidth: 0.045, localTracerEvery: 3, maxTracers: 64,
+  maxAlpha: 900, maxAdd: 700, maxFire: 160,
+  tracerSpeed: 520, tracerLen: 7.5, tracerWidth: 0.06, localTracerEvery: 3, maxTracers: 64,
   muzzleLight: { intensity: 38, distance: 9, life: 0.05 },
   explosionLight: { intensity: 2600, distance: 34, life: 0.28 },
-  decalSize: { concrete: 0.085, metal: 0.07, wood: 0.08, dirt: 0.16 },
+  decalSize: { concrete: 0.11, metal: 0.08, wood: 0.095, dirt: 0.17 },
   maxCasings: 48,
   casingRange: 28,
 };
@@ -31,7 +31,7 @@ const TUNE = {
 let scene = null;
 let inited = false;
 let qual = QUALITY.medium;
-let alphaSys = null, addSys = null;
+let alphaSys = null, addSys = null, fireSys = null;
 let tracers = null;
 let flashes = null;
 let decals = {};
@@ -178,7 +178,7 @@ function decalTexture(kind) {
     return toTex(c);
   }
   // chipped ring
-  const ring = kind === 'metal' ? 'rgba(170,168,160,0.95)' : kind === 'wood' ? 'rgba(185,150,105,0.95)' : 'rgba(150,146,138,0.9)';
+  const ring = kind === 'metal' ? 'rgba(205,203,196,0.98)' : kind === 'wood' ? 'rgba(185,150,105,0.95)' : 'rgba(96,92,86,0.92)';
   g.fillStyle = ring;
   g.beginPath();
   const pts = 22;
@@ -196,12 +196,12 @@ function decalTexture(kind) {
     for (let i = 0; i < 5; i++) { let x = C, y = C; const a0 = r() * 6.28; g.beginPath(); g.moveTo(x, y); for (let k = 0; k < 4; k++) { const a = a0 + (r() - 0.5) * 0.9; x += Math.cos(a) * C * 0.2; y += Math.sin(a) * C * 0.2; g.lineTo(x, y); } g.stroke(); }
   }
   // dark hole with a soft inner shadow
-  const hole = g.createRadialGradient(C, C, 0, C, C, C * 0.32);
-  hole.addColorStop(0, 'rgba(6,6,6,1)'); hole.addColorStop(0.6, 'rgba(14,13,12,0.98)'); hole.addColorStop(1, 'rgba(30,28,26,0)');
-  g.fillStyle = hole; g.beginPath(); g.arc(C, C, C * 0.32, 0, 6.28); g.fill();
+  const hole = g.createRadialGradient(C, C, 0, C, C, C * 0.38);
+  hole.addColorStop(0, 'rgba(4,4,4,1)'); hole.addColorStop(0.62, 'rgba(10,9,8,1)'); hole.addColorStop(1, 'rgba(30,28,26,0)');
+  g.fillStyle = hole; g.beginPath(); g.arc(C, C, C * 0.38, 0, 6.28); g.fill();
   // soot / dust halo
   const halo = g.createRadialGradient(C, C, C * 0.3, C, C, C);
-  halo.addColorStop(0, kind === 'metal' ? 'rgba(25,25,25,0.35)' : 'rgba(40,36,32,0.25)'); halo.addColorStop(1, 'rgba(40,36,32,0)');
+  halo.addColorStop(0, kind === 'metal' ? 'rgba(25,25,25,0.4)' : 'rgba(34,30,27,0.5)'); halo.addColorStop(1, 'rgba(40,36,32,0)');
   g.globalCompositeOperation = 'destination-over';
   g.fillStyle = halo; g.fillRect(0, 0, S, S);
   return toTex(c);
@@ -380,7 +380,7 @@ function buildTracers() {
   const max = TUNE.maxTracers;
   const g = new THREE.PlaneGeometry(1, 1);
   g.translate(0, 0.5, 0);           // y 0..1 along the streak, x across
-  const m = new THREE.MeshBasicMaterial({ map: tex.tracer, color: new THREE.Color(5.0, 4.2, 3.0), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false, toneMapped: true });
+  const m = new THREE.MeshBasicMaterial({ map: tex.tracer, color: new THREE.Color(7.0, 3.7, 1.4), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide, fog: false, toneMapped: true });
   const mesh = new THREE.InstancedMesh(g, m, max);
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   mesh.frustumCulled = false;
@@ -407,9 +407,12 @@ function updateTracers(dt) {
   for (const s of T.list) {
     if (!s.alive) continue;
     s.t += dt;
-    const head = Math.min(s.len, s.t * TUNE.tracerSpeed);
-    const tail = Math.max(0, head - TUNE.tracerLen);
-    if (tail >= s.len - 0.01) { s.alive = false; continue; }
+    const travel = s.t * TUNE.tracerSpeed;
+    // the streak runs past the end point and is gone once its tail arrives (it never parks at the impact)
+    if (travel - TUNE.tracerLen >= s.len) { s.alive = false; continue; }
+    const head = Math.min(s.len, travel);
+    const tail = Math.max(0, travel - TUNE.tracerLen);
+    if (head - tail < 0.05) { s.alive = false; continue; }
     vA.subVectors(s.b, s.a).multiplyScalar(1 / s.len);       // dir
     vB.copy(s.a).addScaledVector(vA, tail);                   // tail point
     const L = head - tail;
@@ -419,7 +422,8 @@ function updateTracers(dt) {
     if (vD.lengthSq() < 1e-8) vD.set(1, 0, 0); else vD.normalize();
     vC.crossVectors(vD, vA).normalize();
     const dist = cam.position.distanceTo(vB);
-    const w = TUNE.tracerWidth * s.w * clamp(dist / 30, 1, 6);
+    // about 5 px wide at 720p (bright core ~1.5 px plus halo) whatever the distance: a physical width vanishes
+    const w = Math.max(TUNE.tracerWidth, dist * 0.0075) * s.w;
     mA.makeBasis(vD.multiplyScalar(w), vA.multiplyScalar(L), vC);
     mA.setPosition(vB);
     T.mesh.setMatrixAt(n++, mA);
@@ -638,7 +642,7 @@ export function impact(point, normal, surface) {
   };
   switch (surface) {
     case SURFACE.METAL: {
-      spray(count(12), 9, 0.9, (v) => addSys.spawn(px, py, pz, v.x, v.y, v.z, rnd(0.12, 0.35), 0.012, 0.008, 3.2, 2.2, 1.2, 1, 1.5, 9.8, 0.035, 0));
+      spray(count(12), 9, 0.9, (v) => addSys.spawn(px, py, pz, v.x, v.y, v.z, rnd(0.12, 0.35), 0.02, 0.012, 3.2, 2.2, 1.2, 1, 1.5, 9.8, 0.035, 0));
       addSys.spawn(px + nx * 0.02, py + ny * 0.02, pz + nz * 0.02, 0, 0, 0, 0.06, 0.18, 0.1, 3, 2.4, 1.6, 1, 0, 0, 0, 0);
       spray(count(2), 0.6, 0.4, (v) => alphaSys.spawn(px, py, pz, v.x, v.y + 0.2, v.z, rnd(0.6, 1.0), 0.06, 0.3, 0.55, 0.53, 0.5, 0.35, 2, -0.1, 0, 0.03));
       break;
@@ -670,6 +674,9 @@ export function impact(point, normal, surface) {
     default: {
       // concrete, asphalt, rock
       const g0 = surface === SURFACE.ASPHALT ? 0.36 : surface === SURFACE.ROCK ? 0.5 : 0.6;
+      // fast burst (reads in the first frames), then the lingering dust and chips
+      alphaSys.spawn(px + nx * 0.03, py + ny * 0.03, pz + nz * 0.03, nx * 2.2, ny * 2.2 + 0.2, nz * 2.2, 0.28, 0.12, 0.62, g0 * 0.82, g0 * 0.8, g0 * 0.76, 0.8, 7, 0, 0, 0.01);
+      addSys.spawn(px + nx * 0.02, py + ny * 0.02, pz + nz * 0.02, 0, 0, 0, 0.05, 0.09, 0.05, 2.2, 1.7, 1.1, 1, 0, 0, 0, 0);
       spray(count(4), 1.4, 0.45, (v) => alphaSys.spawn(px, py, pz, v.x, v.y + 0.15, v.z, rnd(0.9, 1.6), 0.07, rnd(0.45, 0.75), g0, g0 * 0.97, g0 * 0.93, 0.55, 2.6, -0.06, 0, 0.03));
       spray(count(8), 6, 0.7, (v) => alphaSys.spawn(px, py, pz, v.x, v.y, v.z, rnd(0.4, 0.8), 0.018, 0.014, g0 * 0.6, g0 * 0.58, g0 * 0.55, 1, 0.7, 9.8, 0.02, 0, py - 2));
       if (Math.random() < 0.35) spray(1, 7, 0.6, (v) => addSys.spawn(px, py, pz, v.x, v.y, v.z, 0.12, 0.008, 0.006, 3, 2, 1, 1, 1, 9.8, 0.03, 0));
@@ -684,13 +691,18 @@ export function blood(point, dir) {
   const q = qual.particles;
   const [px, py, pz] = point;
   vC.fromArray(dir).normalize();
-  for (let i = 0; i < Math.max(2, Math.round(4 * q)); i++) {
+  // entry puff back toward the shooter (what the shooter actually sees), then the exit mist and droplets
+  for (let i = 0; i < 3; i++) {
+    vA.copy(vC).multiplyScalar(-rnd(0.5, 1.2)).add(vB.set(rnd(-0.4, 0.4), rnd(-0.2, 0.5), rnd(-0.4, 0.4)));
+    alphaSys.spawn(px - vC.x * 0.05, py, pz - vC.z * 0.05, vA.x, vA.y, vA.z, rnd(0.22, 0.36), 0.1, rnd(0.32, 0.46), 0.62, 0.05, 0.04, 0.9, 6, 0.5, 0, 0.01);
+  }
+  for (let i = 0; i < Math.max(2, Math.round(5 * q)); i++) {
     vA.copy(vC).multiplyScalar(rnd(0.6, 1.8)).add(vB.set(rnd(-0.6, 0.6), rnd(-0.3, 0.6), rnd(-0.6, 0.6)));
-    alphaSys.spawn(px, py, pz, vA.x, vA.y, vA.z, rnd(0.25, 0.45), 0.08, rnd(0.35, 0.55), 0.32, 0.03, 0.025, 0.75, 5, 0.6, 0, 0.01);
+    alphaSys.spawn(px, py, pz, vA.x, vA.y, vA.z, rnd(0.3, 0.5), 0.1, rnd(0.45, 0.7), 0.5, 0.04, 0.03, 0.78, 5, 0.6, 0, 0.01);
   }
   for (let i = 0; i < Math.max(3, Math.round(9 * q)); i++) {
     vA.copy(vC).multiplyScalar(rnd(1.5, 4)).add(vB.set(rnd(-1, 1), rnd(-0.5, 1.2), rnd(-1, 1)));
-    alphaSys.spawn(px, py, pz, vA.x, vA.y, vA.z, rnd(0.35, 0.6), 0.02, 0.014, 0.25, 0.015, 0.01, 1, 0.5, 9.8, 0.015, 0);
+    alphaSys.spawn(px, py, pz, vA.x, vA.y, vA.z, rnd(0.35, 0.6), 0.026, 0.018, 0.4, 0.025, 0.02, 1, 0.5, 9.8, 0.015, 0);
   }
 }
 
@@ -710,16 +722,27 @@ export function explosion(point, water = false) {
     flashLight(point, 0.4);
     return;
   }
-  // fireball
-  for (let i = 0; i < Math.round(9 * q); i++) {
-    vA.set(rnd(-1, 1), rnd(0.1, 1.2), rnd(-1, 1)).normalize().multiplyScalar(rnd(2, 7));
-    addSys.spawn(px, py + 0.3, pz, vA.x, vA.y, vA.z, rnd(0.18, 0.38), rnd(0.6, 1.2), rnd(2.2, 3.4), 3.2, 1.7, 0.6, 1, 5, -1, 0, 0.02);
-  }
-  addSys.spawn(px, py + 0.5, pz, 0, 0, 0, 0.12, 2.5, 6, 4, 3, 2, 1, 0, 0, 0, 0);
-  // smoke column and ground dust ring
+  // brief white-hot flash, then a billowing fireball (cloudy additive puffs cooling from yellow to deep orange)
+  addSys.spawn(px, py + 0.5, pz, 0, 0, 0, 0.07, 1.6, 4.2, 2.4, 1.9, 1.3, 1, 0, 0, 0, 0);
   for (let i = 0; i < Math.round(14 * q); i++) {
-    const a = rnd(0.25, 0.42);
-    alphaSys.spawn(px + rnd(-0.6, 0.6), py + rnd(0.2, 1.2), pz + rnd(-0.6, 0.6), rnd(-1.2, 1.2), rnd(1.5, 4.5), rnd(-1.2, 1.2), rnd(3, 5.5), rnd(1.2, 2), rnd(4.5, 7), a, a * 0.96, a * 0.92, 0.85, 1.1, -0.35, 0, 0.15);
+    vA.set(rnd(-1, 1), rnd(0.15, 1.3), rnd(-1, 1)).normalize().multiplyScalar(rnd(2.5, 8));
+    const hot = Math.random();
+    fireSys.spawn(px + vA.x * 0.04, py + 0.35, pz + vA.z * 0.04, vA.x, vA.y, vA.z, rnd(0.26, 0.5), rnd(0.5, 0.9), rnd(2.0, 3.4),
+      2.6 + hot * 0.8, 1.05 + hot * 0.7, 0.25 + hot * 0.25, 1, 6, -1.5, 0, 0.015);
+  }
+  for (let i = 0; i < Math.round(6 * q); i++) {
+    vA.set(rnd(-1, 1), rnd(0.6, 1.5), rnd(-1, 1)).normalize().multiplyScalar(rnd(3, 6));
+    fireSys.spawn(px, py + 0.5, pz, vA.x, vA.y, vA.z, rnd(0.45, 0.7), rnd(0.8, 1.2), rnd(2.4, 3.6), 1.5, 0.42, 0.1, 0.9, 4, -2.5, 0, 0.05);
+  }
+  // dirt geyser: heavy brown puffs and clods thrown up, falling back
+  for (let i = 0; i < Math.round(12 * q); i++) {
+    vA.set(rnd(-0.45, 0.45), 1, rnd(-0.45, 0.45)).normalize().multiplyScalar(rnd(5, 12));
+    alphaSys.spawn(px, gy + 0.2, pz, vA.x, vA.y, vA.z, rnd(1.1, 1.9), rnd(0.3, 0.5), rnd(1.3, 2.4), 0.3, 0.25, 0.19, 0.85, 1.6, 6, 0, 0.04, gy + 0.2);
+  }
+  // smoke column (dark, slowly rising and spreading) and ground dust ring
+  for (let i = 0; i < Math.round(16 * q); i++) {
+    const a = rnd(0.13, 0.24);
+    alphaSys.spawn(px + rnd(-0.7, 0.7), py + rnd(0.3, 1.5), pz + rnd(-0.7, 0.7), rnd(-1.2, 1.2), rnd(1.2, 4), rnd(-1.2, 1.2), rnd(3.5, 6.5), rnd(1.2, 2.2), rnd(5, 8), a, a * 0.95, a * 0.9, 0.82, 1.0, -0.3, 0, 0.18);
   }
   for (let i = 0; i < Math.round(16 * q); i++) {
     const ang = (i / 16) * Math.PI * 2 + rnd(-0.2, 0.2);
@@ -730,9 +753,9 @@ export function explosion(point, water = false) {
     vA.set(rnd(-1, 1), rnd(0, 1), rnd(-1, 1)).normalize().multiplyScalar(rnd(10, 26));
     addSys.spawn(px, py + 0.2, pz, vA.x, vA.y, vA.z, rnd(0.25, 0.6), 0.03, 0.02, 3, 1.8, 0.8, 1, 0.5, 9.8, 0.03, 0);
   }
-  for (let i = 0; i < Math.round(14 * q); i++) {
-    vA.set(rnd(-1, 1), rnd(0.3, 1), rnd(-1, 1)).normalize().multiplyScalar(rnd(4, 10));
-    alphaSys.spawn(px, py + 0.2, pz, vA.x, vA.y, vA.z, rnd(0.8, 1.6), 0.05, 0.04, 0.12, 0.1, 0.08, 1, 0.3, 9.8, 0.012, 0, gy);
+  for (let i = 0; i < Math.round(22 * q); i++) {
+    vA.set(rnd(-1, 1), rnd(0.3, 1.2), rnd(-1, 1)).normalize().multiplyScalar(rnd(4, 12));
+    alphaSys.spawn(px, py + 0.2, pz, vA.x, vA.y, vA.z, rnd(0.9, 1.8), rnd(0.05, 0.11), 0.06, 0.13, 0.1, 0.075, 1, 0.3, 9.8, 0.01, 0, gy);
   }
   flashLight(point, 1);
   decal([px, gy + 0.01, pz], [0, 1, 0], SURFACE.DIRT, rnd(2.6, 3.4), 'scorch');
@@ -776,6 +799,12 @@ function onFire(e) {
   // First-person flash belongs to the viewmodel; scoped shots show none (the scope fills the screen).
   if (!fp && !(e.local && state.local.scoped) && nearCam < 600) muzzleFlash(muzzle, e.dir, scale);
   if (fp || (e.local && state.local.scoped)) muzzleLightAt(muzzle, scale);
+  // first person: propellant smoke drifts off the muzzle (the flash itself is drawn by the viewmodel)
+  if (fp && !state.local.scoped && Math.random() < 0.7 * qual.particles + 0.2) {
+    const d = e.dir;
+    alphaSys.spawn(muzzle[0] + d[0] * 0.45, muzzle[1] + d[1] * 0.45 + 0.02, muzzle[2] + d[2] * 0.45, d[0] * 0.9 + rnd(-0.15, 0.15), 0.25 + rnd(0, 0.2), d[2] * 0.9 + rnd(-0.15, 0.15),
+      rnd(0.7, 1.2), 0.05 * scale, 0.32 * scale, 0.78, 0.77, 0.75, 0.13, 2.2, -0.2, 0, 0.03);
+  }
   // Tracers: every remote shot, every 3rd local one (never from inside the scope).
   let draw = !e.local;
   if (e.local) { localShots++; draw = localShots % TUNE.localTracerEvery === 1 && !state.local.scoped; }
@@ -808,11 +837,12 @@ export function init(sc) {
   for (const k of ['concrete', 'metal', 'wood', 'dirt']) tex['decal_' + k] = decalTexture(k);
   alphaSys = new Particles(TUNE.maxAlpha, tex.puff, false);
   addSys = new Particles(TUNE.maxAdd, tex.glow, true);
+  fireSys = new Particles(TUNE.maxFire, tex.puff, true);     // billowing fire (cloudy texture, additive)
   tracers = buildTracers();
   flashes = buildFlashes();
   decals = buildDecals();
   casings = buildCasings();
-  scene.add(alphaSys.mesh, addSys.mesh, tracers.mesh, flashes.front, flashes.side, casings.mesh);
+  scene.add(alphaSys.mesh, addSys.mesh, fireSys.mesh, tracers.mesh, flashes.front, flashes.side, casings.mesh);
   for (const d of Object.values(decals)) scene.add(d.mesh);
   ensureLights();
   inited = true;
@@ -824,14 +854,14 @@ export function init(sc) {
   on(EV.MATCH_START, clearAll);
   debug.combat = debug.combat || {};
   Object.assign(debug.combat, {
-    vfxStats: () => ({ alpha: alphaSys.n, add: addSys.n, tracers: tracers.mesh.count, flashes: flashes.front.count, casings: casings.mesh.count,
+    vfxStats: () => ({ alpha: alphaSys.n, add: addSys.n, fire: fireSys.n, tracers: tracers.mesh.count, flashes: flashes.front.count, casings: casings.mesh.count,
       decals: Object.fromEntries(Object.entries(decals).map(([k, d]) => [k, d.mesh.count])), lights: !!muzzleLight }),
     clearDecals: () => { for (const d of Object.values(decals)) { d.mesh.count = 0; d.next = 0; } },
   });
 }
 
 function clearAll() {
-  alphaSys.clear(); addSys.clear();
+  alphaSys.clear(); addSys.clear(); fireSys.clear();
   for (const t of tracers.list) t.alive = false;
   for (const f of flashes.list) f.alive = false;
   for (const c of casings.list) c.alive = false;
@@ -842,6 +872,7 @@ export function update(dt) {
   if (!inited) return;
   alphaSys.update(dt);
   addSys.update(dt);
+  fireSys.update(dt);
   updateTracers(dt);
   updateFlashes(dt);
   updateCasings(dt);

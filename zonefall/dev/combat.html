@@ -190,7 +190,7 @@
         <button type="button" data-act="pattern" class="primary">Fire a mag at the wall</button>
         <button type="button" data-act="cleardecals">Clear holes</button>
       </div>
-      <div class="hint">Plot: the config pattern for 30 rounds (shot 1 at the centre, metres at 25 m, ADS). The wall test fires a full magazine with no compensation; holes and the plot should match.</div>
+      <div class="hint">Plot: the deterministic config pattern for one magazine (shot 1 at the bottom centre, metres on a wall at 25 m, ADS, random jitter excluded). The wall test fires a full magazine with no compensation; the wall is 4 m tall, so rounds that climb above it fly on.</div>
     </section>
     <section>
       <h2>Grenades and effects</h2>
@@ -259,7 +259,7 @@
     const canvas = $('#game');
     const logLines = [];
     function log(s) { logLines.push(s); if (logLines.length > 60) logLines.shift(); $('[data-log]').textContent = logLines.slice().reverse().join('\n'); }
-    window.__zf = { ready: false, fatalError: null, state, gfx, bus, debug, config: { WEAPONS }, modules: { weapons, ballistics, damage, grenades, vfx, viewmodel, audio, camera, controller, inventory, input, renderer, world, bots, loot, session, sync } };
+    window.__zf = { ready: false, fatalError: null, state, gfx, bus, debug, config: { WEAPONS }, modules: { weapons, ballistics, damage, grenades, vfx, viewmodel, audio, camera, controller, avatar, inventory, input, renderer, assets, world, bots, loot, session, sync } };
     addEventListener('error', (e) => { window.__zf.fatalError = String(e.message); });
     addEventListener('unhandledrejection', (e) => { window.__zf.fatalError = String(e.reason && e.reason.message || e.reason); });
 
@@ -316,7 +316,9 @@
 
     // ------------------------------------------------------------------ frame
     let fpsT = 0;
-    const loop = createLoop((dt) => {
+    // One simulation + presentation frame. Tests can stop the rAF loop and step frames deterministically with
+    // __zf.harness.step(n, dt) (software WebGL in the sandbox renders far below real time).
+    function frame(dt, draw = true) {
       try {
         input.update();
         sync.update(dt);
@@ -334,14 +336,17 @@
         world.update(dt, gfx.camera.position);
         audio.update(dt);
         hud(dt);
-        renderer.render(dt);
+        if (draw) renderer.render(dt);
         if (window.__zf.onFrame) window.__zf.onFrame(dt);
       } catch (e) {
         loop.stop();
         window.__zf.fatalError = String(e && e.stack || e);
         console.error(e);
       }
-    });
+    }
+    const loop = createLoop((dt) => frame(dt, true));
+    function manual(on) { if (on) loop.stop(); else loop.start(); }
+    function step(n = 1, dt = 1 / 60, drawLast = true) { for (let i = 0; i < n; i++) frame(dt, drawLast && i === n - 1); }
 
     // ------------------------------------------------------------------ HUD
     const crossEls = $$('#cross i[data-s]');
@@ -464,6 +469,8 @@
     function teleport(x, z, yaw = 0) { controller.teleport([x, world.getHeight(x, z), z]); const me = localPlayer(); me.yaw = yaw; me.pitch = 0; }
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     async function frames(n) { for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r)); }
+    // Resolves when cond() is true (checked every frame), or after ms. Keeps the scripted tests frame-rate independent.
+    async function until(cond, ms = 8000) { const t0 = performance.now(); while (!cond() && performance.now() - t0 < ms) await frames(1); return cond(); }
 
     function giveWeapon(id) {
       const inv = inventory.get();
@@ -473,6 +480,7 @@
       drawPlot(id);
     }
 
+    const ready = () => { const ws = debug.combat.weaponState(); return ws.drawn && ws.switch === 'none' && ws.reload == null && ws.bolt < 0; };
     async function patternTest(id) {
       const wid = id || inventory.active()?.weapon || 'm4a1';
       if (inventory.active()?.weapon !== wid) giveWeapon(wid);
@@ -480,72 +488,93 @@
       const Wl = RANGE.wall;
       const cx = (Wl.x0 + Wl.x1) / 2;
       teleport(cx, Wl.z + 25, 0);
-      await frames(4);
-      aimAt(cx, world.getHeight(cx, Wl.z) + 1.6, Wl.z);
+      await until(ready);
+      const aim = () => aimAt(cx, world.getHeight(cx, Wl.z) + 1.0, Wl.z);
+      aim();
       weapons.setForceAds(true);
-      await sleep((WEAPONS[wid].ads + 0.25) * 1000);
-      aimAt(cx, world.getHeight(cx, Wl.z) + 1.6, Wl.z);
+      await until(() => state.local.ads >= 0.99, 3000);
+      aim();
       const W = WEAPONS[wid];
       if (W.mode === 'auto') {
         weapons.setForceFire(true);
-        await sleep((W.mag + 1) * 60000 / W.rpm);
+        await until(() => !inventory.active() || inventory.active().mag === 0, 60000);
         weapons.setForceFire(false);
       } else {
         for (let i = 0; i < W.mag; i++) {
-          weapons.setForceFire(true); await frames(2); weapons.setForceFire(false);
-          await sleep(W.mode === 'bolt' ? W.boltTime * 1000 + 120 : 60000 / W.rpm + 40);
+          const k = debug.combat.weaponState().shots;
+          weapons.setForceFire(true);
+          await until(() => debug.combat.weaponState().shots > k, 3000);
+          weapons.setForceFire(false);
+          await until(ready, 3000);
+          await frames(2);
         }
       }
-      await sleep(250);
+      await frames(10);
       weapons.setForceAds(false);
       log(`pattern test ${wid}: ${debug.combat.weaponState().shots} rounds total`);
     }
-
     function drawPlot(id) {
       const W = WEAPONS[id];
       const cv = $('[data-plot]'), g = cv.getContext('2d');
       const w = cv.width, h = cv.height;
       g.clearRect(0, 0, w, h);
-      g.strokeStyle = 'rgba(233,231,225,.12)'; g.lineWidth = 1;
-      const scale = h / 2.4;                     // px per metre (2.4 m tall view)
-      for (let m = -3; m <= 3; m += 0.25) { g.beginPath(); g.moveTo(w / 2 + m * scale, 0); g.lineTo(w / 2 + m * scale, h); g.stroke(); }
-      for (let m = 0; m <= 2.4; m += 0.25) { g.beginPath(); g.moveTo(0, h - 20 - m * scale); g.lineTo(w, h - 20 - m * scale); g.stroke(); }
       if (!W || !W.recoil) return;
+      // the deterministic part of the ADS pattern (ARCHITECTURE.md 6.3), metres on a wall at 25 m
       const r = W.recoil;
-      let p = 0, y = 0;
       const n = W.mode === 'auto' ? W.mag : Math.min(W.mag, 8);
-      g.fillStyle = '#e8b23a';
-      g.font = '600 18px "JetBrains Mono", monospace';
+      const pts = [];
+      let p = 0, y = 0;
       for (let i = 0; i < n; i++) {
-        const px = w / 2 + Math.tan(y * DEG) * 25 * scale, py = h - 20 - Math.tan(p * DEG) * 25 * scale;
-        g.globalAlpha = 1 - i / (n * 1.4);
-        g.beginPath(); g.arc(px, py, 5, 0, Math.PI * 2); g.fill();
-        if (i === 0 || i === n - 1) g.fillText(String(i + 1), px + 8, py + 5);
+        pts.push([Math.tan(y * DEG) * 25, Math.tan(p * DEG) * 25]);
         if (W.mode !== 'auto') break;
         p += r.vKick * (i === 0 ? r.firstShot : 1) * (1 + r.vRamp * Math.min(i, r.rampShots) / r.rampShots);
         y += r.hKick * Math.sin(i * r.hFreq) + r.hBias;
       }
+      // fit the whole pattern (at least 1 x 1 m) with a 0.25 m grid
+      const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+      const spanX = Math.max(1, 2 * Math.max(...xs.map(Math.abs))), spanY = Math.max(1, Math.max(...ys));
+      const scale = Math.min((w - 40) / spanX, (h - 56) / spanY);
+      const ox = w / 2, oy = h - 20;
+      g.strokeStyle = 'rgba(233,231,225,.10)'; g.lineWidth = 1;
+      for (let m = -Math.ceil(spanX); m <= Math.ceil(spanX); m += 0.25) { g.beginPath(); g.moveTo(ox + m * scale, 0); g.lineTo(ox + m * scale, h); g.stroke(); }
+      for (let m = 0; m <= Math.ceil(spanY) + 0.25; m += 0.25) { g.beginPath(); g.moveTo(0, oy - m * scale); g.lineTo(w, oy - m * scale); g.stroke(); }
+      g.strokeStyle = 'rgba(232,178,58,.35)'; g.lineWidth = 2;
+      g.beginPath();
+      pts.forEach(([px, py], i) => { const X = ox + px * scale, Y = oy - py * scale; if (i) g.lineTo(X, Y); else g.moveTo(X, Y); });
+      g.stroke();
+      g.fillStyle = '#e8b23a';
+      g.font = '600 18px "JetBrains Mono", monospace';
+      pts.forEach(([px, py], i) => {
+        const X = ox + px * scale, Y = oy - py * scale;
+        g.globalAlpha = 1 - i / (n * 1.4);
+        g.beginPath(); g.arc(X, Y, 5, 0, Math.PI * 2); g.fill();
+        if (i === 0 || i === n - 1) g.fillText(String(i + 1), X + 9, Y + 6);
+      });
       g.globalAlpha = 1;
       g.fillStyle = '#b9bbb5';
-      g.fillText(`${W.name}  ${W.rpm} RPM  ${W.mode.toUpperCase()}`, 12, 24);
+      g.fillText(`${W.name}  ${W.rpm} RPM  ${W.mode.toUpperCase()}`, 12, 26);
+      g.fillStyle = '#80847f';
+      g.font = '500 15px "JetBrains Mono", monospace';
+      g.fillText(`${spanY.toFixed(1)} M RISE AT 25 M  GRID 0.25 M`, 12, 48);
     }
-
     async function surfaceSweep() {
       // shoot every cover panel and the floor types from the line
       teleport(18, 4, 0);
       await frames(3);
       const pts = [[11, 1.6, RANGE.cover.z], [15, 1.6, RANGE.cover.z], [19, 1.6, RANGE.cover.z], [23, 1.3, RANGE.cover.z], [27, 0.9, RANGE.cover.z], [24, 0.6, -40], [10, 0.6, -9], [-1, 0.6, -20]];
-      const prev = inventory.active().weapon;
       giveWeapon('ak47');
-      await sleep(700);
+      debug.combat.fillAmmo();
+      await until(ready);
       for (const [x, y, z] of pts) {
         aimAt(x, world.getGround(x, z, y + 0.1).y + (y > 0.7 ? y - 0.6 : 0.02), z);
         await frames(2);
-        weapons.setForceFire(true); await frames(2); weapons.setForceFire(false);
-        await sleep(160);
+        const k = debug.combat.weaponState().shots;
+        weapons.setForceFire(true);
+        await until(() => debug.combat.weaponState().shots > k, 3000);
+        weapons.setForceFire(false);
+        await frames(8);
       }
       log('impact sweep: wood, steel, glass, concrete, sand, water, asphalt, dirt');
-      void prev;
     }
 
     function remoteFire() {
@@ -566,16 +595,22 @@
       const out = [];
       const enc = (ok, s) => out.push(`${ok ? 'PASS' : 'FAIL'} ${s}`);
       session.setOnline(true);
+      state.isHost = true; state.hostId = state.selfId;      // this peer hosts the range bots
       session.sent.length = 0;
       sync.shots.length = 0;
+      bots.resetAll();
       // 1) a local shot at the 25 m target: SHOT encodes, 'hit' payload validates
       teleport(0, 2, 0);
-      await frames(3);
+      debug.combat.fillAmmo();
+      await until(() => { const ws = debug.combat.weaponState(); return ws.drawn && ws.switch === 'none' && ws.reload == null; });
       const t = getPlayer('bot:2');
       aimAt(t.pos.x, t.pos.y + 1.2, t.pos.z);
       await frames(2);
-      weapons.setForceFire(true); await frames(2); weapons.setForceFire(false);
-      await sleep(200);
+      const shots0 = debug.combat.weaponState().shots;
+      weapons.setForceFire(true);
+      await until(() => debug.combat.weaponState().shots > shots0, 4000);
+      weapons.setForceFire(false);
+      await until(() => session.sent.some((m) => m.action === 'hit'), 2000);
       const hit = session.sent.find((m) => m.action === 'hit');
       enc(!!sync.shots.length && sync.shots[0] && sync.shots[0].weapon, `SHOT encoded (${sync.shots.length})`);
       enc(hit && hit.valid, `'hit' payload validates (${hit ? JSON.stringify(hit.data).slice(0, 80) : 'none'})`);
@@ -590,7 +625,11 @@
       enc(me.hp + me.armor === hp1, 'forged 300 dmg hit rejected');
       // 4) a grenade throw broadcasts a valid 'nade'
       inventory.get().frags = Math.max(1, inventory.get().frags);
-      debug.player.hold('grenade', true); await sleep(350); debug.player.hold('grenade', false); await sleep(400);
+      debug.player.hold('grenade', true);
+      await until(() => debug.combat.weaponState().nade === 'cook', 3000);
+      await frames(2);
+      debug.player.hold('grenade', false);
+      await until(() => session.sent.some((m) => m.action === 'nade'), 6000);
       const nade = session.sent.find((m) => m.action === 'nade');
       enc(nade && nade.valid, `'nade' payload validates`);
       session.setOnline(false);
@@ -702,7 +741,7 @@
       $('#collapse').textContent = c ? 'Show' : 'Hide'; $('#collapse').setAttribute('aria-expanded', String(!c));
     });
 
-    window.__zf.harness = { aimAt, teleport, giveWeapon, patternTest, surfaceSweep, remoteFire, netCheck, frames, sleep, log, getPlayer, logLines };
+    window.__zf.harness = { manual, step, aimAt, teleport, giveWeapon, patternTest, surfaceSweep, remoteFire, netCheck, frames, sleep, log, getPlayer, logLines };
     boot().catch((e) => { window.__zf.fatalError = String(e && e.stack || e); console.error(e); });
   </script>
 </body>

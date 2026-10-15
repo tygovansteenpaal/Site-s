@@ -874,10 +874,12 @@ function draw(dpr) {
   if (state.players.size === 0) {
     g.textAlign = 'center';
     g.font = `700 ${22 * dpr}px "Barlow Condensed", sans-serif`; g.fillStyle = 'rgba(233,231,225,0.55)';
-    const head = !state.online ? 'NOT CONNECTED' : session.peers().length ? 'PEERS CONNECTED, NO MATCH YET' : 'WAITING FOR A SECOND PEER';
+    const busyRoom = state.online && lobby.get().matchInProgress;
+    const head = !state.online ? 'NOT CONNECTED' : busyRoom ? 'ROUND IN PROGRESS' : session.peers().length ? 'PEERS CONNECTED, NO MATCH YET' : 'WAITING FOR A SECOND PEER';
     g.fillText(head, W / 2, H / 2 - 6 * dpr);
     g.font = `500 ${11 * dpr}px "JetBrains Mono", monospace`; g.fillStyle = 'rgba(233,231,225,0.35)';
-    const sub = !state.online ? 'Quick play, create a private lobby, or join with a code' : session.peers().length
+    const sub = !state.online ? 'Quick play, create a private lobby, or join with a code' : busyRoom
+      ? 'Their shots still arrive as tracers; you deploy when they return to the lobby' : session.peers().length
       ? (lobby.get().isHost ? 'Start now to deploy both dummies and the host bots' : 'The host starts the match; the countdown is mirrored here')
       : `Open this page in another tab or browser with ?room=${lobby.get().code || 'CODE'}`;
     g.fillText(sub.toUpperCase(), W / 2, H / 2 + 16 * dpr);
@@ -892,7 +894,8 @@ function draw(dpr) {
     lines.push(`RENDER NOW-${st.interpDelay} MS   SNAP ${NET.snapRate} HZ   BOTS ${NET.botRate} HZ${session.isHost() ? '  (SIMULATING)' : ''}`);
   } else if (state.online) {
     lines.push('LOBBY  SNAPSHOTS 5 HZ FOR LIVENESS AND CLOCK OFFSET');
-    lines.push(lobby.get().isHost ? 'YOU ARE HOST: START NOW DEPLOYS EVERYONE WITH BOTS' : 'WAITING FOR THE HOST TO START');
+    lines.push(lobby.get().matchInProgress ? 'ROOM IS MID-ROUND: WAITING FOR THE NEXT ONE'
+      : lobby.get().isHost ? 'YOU ARE HOST: START NOW DEPLOYS EVERYONE WITH BOTS' : 'WAITING FOR THE HOST TO START');
   } else lines.push('OFFLINE: JOIN A ROOM TO BEGIN');
   lines.push(`OUT ${st.psnapOut} PSNAP  ${st.botsOut} BOTS  ${st.shotsOut} SHOT    IN ${st.psnapIn} / ${st.botsIn} / ${st.shotsIn}`);
   g.fillStyle = 'rgba(11,13,12,0.7)'; g.fillRect(10 * dpr, 10 * dpr, 440 * dpr, (lines.length * 15 + 10) * dpr);

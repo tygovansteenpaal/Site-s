@@ -9,12 +9,14 @@ import { on, emit, EV } from '../../../src/core/bus.js';
 import { state, createPlayer, resetMatchState, randomId, botId, LIFE } from '../../../src/core/state.js';
 import * as session from '../../../src/net/session.js';
 import * as sync from '../../../src/net/sync.js';
+import * as lobby from '../../../src/net/lobby.js';
 
 export const HARNESS = { bots: 6, lastStart: null };
 
 export function init() {
   on(EV.NET_START, ({ from, data }) => {
     if (from !== session.hostId()) return;            // only the current host may start a match
+    if (!data.ro.some((r) => r.id === state.selfId)) return;   // full roster without us: wait in the lobby (net/lobby)
     beginFromNetwork(data, from);
   });
   on(EV.PEER_LEAVE, ({ id }) => {
@@ -40,14 +42,14 @@ export function hostBegin(humans) {
   const th = performance.now();
   const msg = { mid: randomId(8), seed, t0h: th + MATCH.startLeadMs, th, ro, ep: session.epoch() };
   session.send('start', msg);
-  begin({ ...msg, ro: ro.map((r) => ({ ...r, kind: r.kind === 'b' ? 'bot' : 'human' })) }, msg.t0h, state.online ? 'private' : 'practice');
+  begin({ ...msg, ro: ro.map((r) => ({ ...r, kind: r.kind === 'b' ? 'bot' : 'human' })) }, msg.t0h, state.online ? lobby.get().mode : 'practice');
 }
 
 export function beginFromNetwork(start, from) {
   const off = sync.clockOffset(from);
   const t0 = off != null ? start.t0h + off : performance.now() + (start.t0h - start.th) - session.rtt(from) / 2;
   HARNESS.lastStart = { from, offset: off, t0, usedFallback: off == null };
-  begin(start, t0, 'private');
+  begin(start, t0, lobby.get().mode);
 }
 
 function begin(start, t0, mode) {

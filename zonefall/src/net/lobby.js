@@ -20,6 +20,7 @@ export const TUNE = {
   joinProbeMs: 2500,         // private join: how long to listen for hellos before deciding the room is not full
   minLeadMs: 10000,          // a human who joins during a countdown always gets at least this long before the drop
   settleMs: 1200,            // after connecting, listen this long before acting as host (avoids a double countdown)
+  maxHumans: MATCH.maxHumans, // humans per room; overridable in tests through debug.net.lobby.TUNE
 };
 
 const SA_ZONES = /^America\/(Sao_Paulo|Argentina|Buenos_Aires|Cordoba|Mendoza|Bogota|Lima|Santiago|Caracas|La_Paz|Montevideo|Asuncion|Guayaquil|Cayenne|Paramaribo|Guyana|Recife|Fortaleza|Belem|Manaus|Cuiaba|Porto_Velho|Rio_Branco|Boa_Vista|Maceio|Bahia|Araguaina|Santarem|Campo_Grande|Noronha|Punta_Arenas|Eirunepe)/;
@@ -122,8 +123,21 @@ export function init() {
     if (handover && data.cd != null && phase === 'settled' && !started) L.countdownEndsAt = now() + data.cd;
     if (state.app === APP.LOBBY) refresh(true);
   });
-  on(EV.NET_START, ({ from }) => {
+  on(EV.NET_START, ({ from, data }) => {
     if (from !== session.hostId()) return;
+    if (!data.ro.some((r) => r.id === state.selfId)) {
+      // The host started with a full roster that does not include us (joined in the same instant as others):
+      // mark everyone it deployed as live, so we wait for the next round instead of showing a countdown.
+      for (const r of data.ro) {
+        const info = infos.get(r.id);
+        if (info) { info.st = 'live'; info.mid = data.mid; }
+      }
+      lastHostLobby = null;
+      L.countdownEndsAt = null;
+      L.matchInProgress = true;
+      setStatus('waiting', `This round is full (${TUNE.maxHumans} players). You deploy in the next one.`);
+      return;
+    }
     started = true;
     setStatus('starting', 'Deploying');
   });
@@ -184,7 +198,7 @@ function buildRoster() {
     for (const r of lastHostLobby.ro) if (ids.includes(r.id) && !seen.has(r.id)) { seen.add(r.id); list.push(r.id); }
     for (const id of ids.sort((a, b) => order(a) - order(b))) if (!seen.has(id)) list.push(id);
   } else list = ids.sort((a, b) => order(a) - order(b));
-  return list.slice(0, MATCH.maxHumans).map((id) => ({
+  return list.slice(0, TUNE.maxHumans).map((id) => ({
     id,
     name: id === self ? (state.name || 'Operator') : (infos.get(id)?.name || lastHostLobby?.ro.find((r) => r.id === id)?.name || 'Joining'),
     self: id === self,
@@ -224,9 +238,26 @@ async function probe(ms, myToken, stopEarly) {
   return myToken === token;
 }
 
-function full() { return session.peers().length + 1 > MATCH.maxHumans; }
+function full() { return session.peers().length + 1 > TUNE.maxHumans; }
 
-function busy() { return liveElsewhere() || full(); }
+/**
+ * Seat check against the host's last 'lobby' roster, which is authoritative (join order as the host saw it), so two
+ * players who arrive in the same instant at a 9-player room do not both bounce: only the one the host left out does.
+ * Returns null while there is no definite answer (no recent host roster, or one that predates our arrival); callers
+ * then fall back to counting peers.
+ */
+function hostSaysFull() {
+  const hl = lastHostLobby;
+  if (!hl || session.isHost() || hl.from !== session.hostId() || now() - hl.at > 4000) return null;
+  if (hl.ro.some((r) => r.id === state.selfId)) return false;
+  return hl.ro.length >= TUNE.maxHumans ? true : null;   // not listed yet but room left: the host has not seen us yet
+}
+
+/** Early exit while probing: only definite answers (a live match, or the host's roster is full without us). */
+function busyEarly() { return liveElsewhere() || hostSaysFull() === true; }
+
+/** Final decision after probing. */
+function busy() { return liveElsewhere() || (hostSaysFull() ?? full()); }
 
 function settle() {
   phase = 'settled';
@@ -274,7 +305,7 @@ export async function quickPlay() {
     if (!(await connectOrFail(L.roomId, null, myToken))) return;
     phase = 'probing';
     setStatus('connecting', `Searching ${L.region.toUpperCase()} lobby ${n}`);
-    if (!(await probe(NET.bucketProbeMs, myToken, busy))) return;
+    if (!(await probe(NET.bucketProbeMs, myToken, busyEarly))) return;
     if (!busy()) { settle(); return; }
     session.leave();
     infos.clear();
@@ -303,10 +334,12 @@ export async function joinPrivate(input) {
   setStatus('connecting', `Joining lobby ${code}`);
   if (!(await connectOrFail(L.roomId, code, myToken))) return;
   phase = 'probing';
-  if (!(await probe(TUNE.joinProbeMs, myToken, () => session.peers().length > 0 && infos.size >= session.peers().length))) return;
-  if (full()) {
+  const heardEveryone = () => session.peers().length > 0 && infos.size >= session.peers().length
+    && (session.isHost() || hostSaysFull() !== null || liveElsewhere());
+  if (!(await probe(TUNE.joinProbeMs, myToken, heardEveryone))) return;
+  if (hostSaysFull() ?? full()) {
     leave();
-    throw new Error(`Lobby ${code} is full (${MATCH.maxHumans} players).`);
+    throw new Error(`Lobby ${code} is full (${TUNE.maxHumans} players).`);
   }
   settle();
 }
