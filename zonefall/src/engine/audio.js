@@ -13,7 +13,7 @@
 // 'heartbeat') are driven from state in update().
 import { AUDIO, WEAPONS, SURFACE, PLAYER, audioUrl } from '../config.js';
 import { on, EV, registerEvents } from '../core/bus.js';
-import { state, localPlayer, LIFE, APP } from '../core/state.js';
+import { state, localPlayer, LIFE, APP, debug } from '../core/state.js';
 import * as settings from '../core/settings.js';
 import { clamp } from '../core/util.js';
 
@@ -142,7 +142,21 @@ export function init() {
   addEventListener('keydown', gesture, true);
   on(EV.SETTINGS_CHANGED, ({ key }) => { if (/Volume$|^muted$/.test(key)) applyVolumes(); });
   subscribe();
+  debug.combat = debug.combat || {};
+  Object.assign(debug.combat, {
+    /** Peak absolute sample of the output over the last ~43 ms (tests prove that events make sound). */
+    audioPeak: () => {
+      if (!ctx || !limiter) return 0;
+      if (!meter) { meter = ctx.createAnalyser(); meter.fftSize = 2048; limiter.connect(meter); meterBuf = new Float32Array(meter.fftSize); }
+      meter.getFloatTimeDomainData(meterBuf);
+      let m = 0;
+      for (let i = 0; i < meterBuf.length; i++) m = Math.max(m, Math.abs(meterBuf[i]));
+      return m;
+    },
+    audioVoices: () => voices.length,
+  });
 }
+let meter = null, meterBuf = null;
 
 /** Resume the context; call from the first user gesture (menu click). */
 export function unlock() {

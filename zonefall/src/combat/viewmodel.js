@@ -14,7 +14,7 @@
 // FX in the overlay: muzzle flash cards + a point light at SOCKET_FX_FIRE, brass from the ejection port.
 // The scope overlay (full-screen lens, duplex mil-dot reticle, edge vignette) is drawn here when state.local.scoped,
 // offset by the scope sway from combat/weapons; the viewmodel itself is hidden then and outside first person.
-// Extra exports: getOverlay() -> {scene, camera}, scopeOverlayVisible().
+// Extra exports: getOverlay() -> {scene, camera}, scopeOverlayVisible(), setScopeOverlay(on).
 import * as THREE from 'three';
 import { WEAPONS, RENDER, PLAYER } from '../config.js';
 import { on, EV } from '../core/bus.js';
@@ -32,26 +32,26 @@ const TUNE = {
   near: 0.01, far: 40,
   vmFovFollow: 0.55,          // share of the ADS zoom the viewmodel follows (1 = same FOV as the world)
   // ADS eye point per weapon (weapon space: y = sight line height, z = eye relief behind the grip)
-  eye: { ak47: [0, 0.1440, 0.105], m4a1: [-0.001, 0.1425, 0.165], mp5: [0, 0.1762, 0.11], m700: [0, 0.0972, 0.115], m1911: [0, 0.0885, 0.34] },
+  eye: { ak47: [0, 0.1475, 0.12], m4a1: [-0.001, 0.1425, 0.165], mp5: [0, 0.1835, 0.10], m700: [0, 0.0972, 0.115], m1911: [0, 0.0885, 0.34] },
   // Left-hand grip shift on the handguard (weapon space, added to the baked Rifle_Aim grip)
   gripShift: { ak47: [0, -0.004, -0.06], m4a1: [0, 0, -0.03], mp5: [0, 0.012, 0.025], m700: [0, -0.012, -0.08] },
   pose: {
     rifle: {
       hip: [0.118, -0.098, -0.05], hipRot: [0.01, 0.04, -0.07],
-      sprint: { pos: [-0.04, -0.065, 0.06], rot: [-0.38, 0.72, 0.42] },
-      reload: { pos: [-0.015, -0.035, 0.02], rot: [0.16, -0.16, 0.62] },
+      sprint: { pos: [0.0, 0.01, -0.03], rot: [-0.28, 0.62, 0.38] },
+      reload: { pos: [-0.06, 0.09, -0.07], rot: [0.36, 0.12, -0.72] },
       lower: { pos: [0.03, -0.26, 0.06], rot: [-0.95, 0.3, 0.25] },
-      plate: { pos: [0.05, -0.12, 0.04], rot: [-0.35, -0.2, -0.25] },
-      nade: { pos: [0.07, -0.16, 0.05], rot: [-0.55, -0.25, -0.2] },
+      plate: { pos: [0.03, -0.045, 0.015], rot: [-0.14, -0.16, -0.36] },
+      nade: { pos: [0.035, -0.05, 0.02], rot: [-0.18, -0.18, -0.3] },
       swim: { pos: [0.02, -0.3, 0.05], rot: [-1.0, 0.2, 0.2] },
     },
     pistol: {
       hip: [0.07, -0.092, -0.03], hipRot: [0.02, 0.05, -0.05],
-      sprint: { pos: [0.0, -0.14, 0.08], rot: [-0.9, 0.3, 0.1] },
-      reload: { pos: [-0.02, -0.02, 0.02], rot: [0.32, 0.22, 0.42] },
+      sprint: { pos: [0.0, -0.04, 0.0], rot: [-0.7, 0.3, 0.1] },
+      reload: { pos: [-0.035, 0.035, 0.02], rot: [0.42, 0.24, -0.38] },
       lower: { pos: [0.02, -0.25, 0.08], rot: [-1.05, 0.2, 0.15] },
-      plate: { pos: [0.06, -0.12, 0.06], rot: [-0.6, -0.15, -0.2] },
-      nade: { pos: [0.08, -0.16, 0.06], rot: [-0.7, -0.2, -0.2] },
+      plate: { pos: [0.05, -0.08, 0.04], rot: [-0.55, -0.15, -0.2] },
+      nade: { pos: [0.06, -0.1, 0.04], rot: [-0.6, -0.2, -0.2] },
       swim: { pos: [0.02, -0.3, 0.08], rot: [-1.1, 0.2, 0.1] },
     },
   },
@@ -67,6 +67,10 @@ const TUNE = {
   casings: 10,
   scope: { radius: 0.9, edge: 0.03 },
   sunShadowEvery: 5,
+  // left-hand paths in camera space [t, x, y, z] (plate: t = fraction of the insert time; throw: seconds)
+  platePath: [[0, -0.08, -0.3, -0.35], [0.12, -0.2, -0.42, -0.25], [0.38, -0.1, -0.235, -0.42], [0.62, -0.05, -0.26, -0.38], [0.8, -0.02, -0.5, -0.22], [1, -0.02, -0.5, -0.22]],
+  plateHold: [0.06, 0.06, -0.02],      // plate centre from the palm (camera space)
+  throwPath: [[0, -0.16, -0.14, -0.33], [0.08, -0.24, -0.03, -0.16], [0.17, -0.07, -0.02, -0.46], [0.3, 0.03, -0.24, -0.42], [0.55, -0.04, -0.46, -0.3]],
 };
 const ARM_BONES = /UpperArm|Forearm|Hand|Finger/;
 
@@ -88,7 +92,7 @@ let plateMesh = null, fragMesh = null;
 let visibleNow = false;
 // springs
 const sway = { x: 0, y: 0, vx: 0, vy: 0 };
-const kick = { z: 0, vz: 0, p: 0, vp: 0, r: 0, vr: 0, y: 0, vy: 0 };
+const kickS = { z: 0, vz: 0, p: 0, vp: 0, r: 0, vr: 0, y: 0, vy: 0 };
 const land = { y: 0, v: 0 };
 let shotT = 1, slideLock = false, breathT = 0;
 let bobX = 0, bobY = 0;
@@ -157,7 +161,7 @@ function buildRig() {
   const B = (n) => { const b = rig.getObjectByName(n); if (!b) throw err(`bone ${n} missing`); return b; };
   bones = {
     socket: B('WeaponSocket_R'), lUpper: B('Bip01_L_UpperArm'), lFore: B('Bip01_L_Forearm'), lHand: B('Bip01_L_Hand'),
-    rHand: B('Bip01_R_Hand'), head: B('Bip01_Head'),
+    rUpper: B('Bip01_R_UpperArm'), rFore: B('Bip01_R_Forearm'), rHand: B('Bip01_R_Hand'), head: B('Bip01_Head'),
   };
   mixer = new THREE.AnimationMixer(rig);
   const clips = assets.clips();
@@ -252,14 +256,61 @@ function equip(id) {
 }
 
 // ------------------------------------------------------------------------------------------ props in hand, fx
+/** Armor plate insert: cordura cover (procedural weave + stitching + spec label) with a matching normal map. */
+function plateTextures() {
+  const N = 256;
+  const c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  const n = document.createElement('canvas'); n.width = n.height = N;
+  const gn = n.getContext('2d');
+  g.fillStyle = '#5f5642'; g.fillRect(0, 0, N, N);
+  gn.fillStyle = 'rgb(128,128,255)'; gn.fillRect(0, 0, N, N);
+  // basket weave: alternating light/dark threads, mirrored into the normal map as small ridges
+  for (let y = 0; y < N; y += 2) {
+    for (let x = 0; x < N; x += 2) {
+      const over = ((x >> 1) + (y >> 1)) & 1;
+      const j = (Math.sin(x * 12.9898 + y * 78.233) * 43758.5453) % 1;
+      const l = 0.9 + 0.12 * over + 0.06 * j;
+      g.fillStyle = `rgb(${(95 * l) | 0},${(86 * l) | 0},${(66 * l) | 0})`;
+      g.fillRect(x, y, 2, 2);
+      gn.fillStyle = over ? 'rgb(150,128,240)' : 'rgb(128,150,240)';
+      gn.fillRect(x, y, 2, 2);
+    }
+  }
+  // grime toward the edges, stitched border, spec label (white panel, black text)
+  const rg = g.createRadialGradient(N / 2, N / 2, N * 0.2, N / 2, N / 2, N * 0.75);
+  rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(1, 'rgba(20,16,10,0.45)');
+  g.fillStyle = rg; g.fillRect(0, 0, N, N);
+  g.setLineDash([5, 4]); g.strokeStyle = 'rgba(40,34,24,0.9)'; g.lineWidth = 2;
+  g.strokeRect(10, 10, N - 20, N - 20);
+  gn.setLineDash([5, 4]); gn.strokeStyle = 'rgb(128,100,250)'; gn.lineWidth = 3; gn.strokeRect(10, 10, N - 20, N - 20);
+  g.setLineDash([]);
+  g.fillStyle = 'rgba(214,208,192,0.92)'; g.fillRect(64, 150, 128, 58);
+  g.fillStyle = '#1d1c19'; g.font = '700 17px "Barlow Condensed", Arial, sans-serif'; g.textAlign = 'center';
+  g.fillText('LEVEL IV  STAND ALONE', 128, 172);
+  g.font = '500 11px "JetBrains Mono", monospace';
+  g.fillText('SA-PL4 / 10 x 12 / 2.6 KG', 128, 188);
+  g.fillText('THIS SIDE TOWARD BODY', 128, 202);
+  const map = new THREE.CanvasTexture(c); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 4;
+  const nor = new THREE.CanvasTexture(n); nor.anisotropy = 4;
+  return { map, nor };
+}
+
 function buildProps() {
-  const g = new THREE.BoxGeometry(0.25, 0.3, 0.022, 1, 1, 1);
+  const g = new THREE.BoxGeometry(0.25, 0.31, 0.024, 6, 6, 1);
   const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i++) { const x = pos.getX(i), y = pos.getY(i); pos.setZ(i, pos.getZ(i) - (x * x + y * y * 0.4) * 0.35); }
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    // multi-curve plate with chamfered top corners (shooter's cut)
+    let px = x;
+    const top = clamp((y - 0.08) / 0.075, 0, 1);
+    px *= 1 - 0.32 * top * top;
+    pos.setX(i, px);
+    pos.setZ(i, pos.getZ(i) - (px * px * 1.4 + y * y * 0.35) * 0.35);
+  }
   g.computeVertexNormals();
-  plateMesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ color: 0x2b2d2a, roughness: 0.62, metalness: 0.05 }));
-  const strap = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.31, 0.026), new THREE.MeshStandardMaterial({ color: 0x4a4636, roughness: 0.9 }));
-  plateMesh.add(strap);
+  const pt = plateTextures();
+  plateMesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ map: pt.map, normalMap: pt.nor, normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.92, metalness: 0 }));
   plateMesh.visible = false;
   fragMesh = assets.cloneModel(WEAPONS.frag.model.key);
   fragMesh.traverse((o) => { if (o.isMesh) { o.material = vmMaterial(o.material); o.frustumCulled = false; } });
@@ -352,7 +403,7 @@ export function init() {
   on(EV.WEAPON_FIRE, (e) => { if (e.local) onLocalFire(e); });
   on(EV.PLAYER_LAND, ({ id, speed }) => { if (id === state.selfId) land.v -= clamp((speed || 0) * 0.03, 0, 0.35); });
   on(EV.WEAPON_RELOAD, ({ id, phase }) => { if (id === state.selfId && (phase === 'magin' || phase === 'end')) slideLock = false; });
-  on(EV.MATCH_START, () => { slideLock = false; kick.z = kick.p = kick.r = kick.y = 0; });
+  on(EV.MATCH_START, () => { slideLock = false; kickS.z = kickS.p = kickS.r = kickS.y = 0; });
   debug.combat = debug.combat || {};
   Object.assign(debug.combat, {
     viewmodel: () => ({ visible: visibleNow, weapon: cur ? cur.id : null, scope: scope.visible, sunK: +sunK.toFixed(2) }),
@@ -368,10 +419,10 @@ function kickImpl(weaponId) {
   const r = W.recoil;
   const ads = state.local.ads || 0;
   const m = lerp(1, TUNE.kick.adsMult, ads);
-  kick.vz += r.viewKickZ * 30 * m;
-  kick.vp += r.viewKickRotDeg * DEG * 26 * m;
-  kick.vr += (Math.random() - 0.5) * r.viewKickRotDeg * DEG * 12 * m;
-  kick.vy += (Math.random() - 0.5) * r.viewKickRotDeg * DEG * 8 * m;
+  kickS.vz += r.viewKickZ * 30 * m;
+  kickS.vp += r.viewKickRotDeg * DEG * 26 * m;
+  kickS.vr += (Math.random() - 0.5) * r.viewKickRotDeg * DEG * 12 * m;
+  kickS.vy += (Math.random() - 0.5) * r.viewKickRotDeg * DEG * 8 * m;
   shotT = 0;
   const slot = state.local.inv && state.local.inv.slots[state.local.inv.active];
   if (W.class === 'pistol' && slot && slot.mag === 0) slideLock = true;
@@ -394,6 +445,9 @@ export function setVisible(on) { externalVisible = !!on; }
 /** The overlay scene and camera (registered with renderer.setOverlay at init). */
 export function getOverlay() { return { scene: ovScene, camera: ovCam }; }
 export function scopeOverlayVisible() { return !!(scope && scope.visible); }
+/** The 3D scope lens + reticle (with sway) is drawn here by default; pass false if the UI draws its own scope. */
+export function setScopeOverlay(on) { scopeEnabled = !!on; }
+let scopeEnabled = true;
 
 // ------------------------------------------------------------------------------------------ helpers
 function spring(s, key, vkey, target, k, c, dt) {
@@ -459,6 +513,21 @@ function addPose(acc, p, w) {
   acc.rx += p.rot[0] * w; acc.ry += p.rot[1] * w; acc.rz += p.rot[2] * w;
 }
 
+/** Smoothstep-eased keyframe path [[t, x, y, z], ...] sampled at t into out. */
+function keyPath(keys, t, out) {
+  if (t <= keys[0][0]) return out.set(keys[0][1], keys[0][2], keys[0][3]);
+  for (let i = 1; i < keys.length; i++) {
+    const b = keys[i];
+    if (t <= b[0]) {
+      const a = keys[i - 1];
+      const k = smoothstep(a[0], b[0], t);
+      return out.set(lerp(a[1], b[1], k), lerp(a[2], b[2], k), lerp(a[3], b[3], k));
+    }
+  }
+  const l = keys[keys.length - 1];
+  return out.set(l[1], l[2], l[3]);
+}
+
 // Reload choreography: phase of the left hand and the magazine for progress u.
 const rl = { phase: 'none', k: 0, pose: 0 };
 function reloadPhase(W, u, empty) {
@@ -482,7 +551,7 @@ function onLocalFire() {
   flash.userData.roll = Math.random() * Math.PI * 2;
   flash.userData.scale = (cur.W.class === 'sniper' ? 1.3 : cur.pistol ? 0.7 : cur.W.class === 'smg' ? 0.8 : 1) * (0.85 + Math.random() * 0.3);
   // brass
-  if (cur.W.mode !== 'bolt') ejectBrass(cur.pistol ? 0.75 : 1);
+  if (cur.W.mode !== 'bolt') ejectBrass(cur.pistol ? 0.45 : 0.6);
 }
 
 function ejectBrass(scale) {
@@ -493,8 +562,12 @@ function ejectBrass(scale) {
   // into view space
   m1.copy(view.matrixWorld).invert().multiply(cur.casing.matrixWorld);
   c.p.setFromMatrixPosition(m1);
-  m2.extractRotation(m1);
-  c.v.set(1.9 + Math.random() * 0.8, 1.2 + Math.random() * 0.7, 0.35 + Math.random() * 0.3).applyMatrix4(m2);
+  // velocity in the weapon frame (the port node's own axes differ per model): out to the right, up, slightly forward
+  cur.group.updateWorldMatrix(true, false);
+  m2.copy(view.matrixWorld).invert().multiply(cur.group.matrixWorld);
+  m2.extractRotation(m2);
+  c.v.set(2.3 + Math.random() * 0.9, 0.9 + Math.random() * 0.6, -0.25 + Math.random() * 0.3).applyMatrix4(m2);
+  // drawn at 60 % size: the eye is a hand span from the port, true-size brass reads as oversized on screen
   c.r.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
   c.rv.set((Math.random() - 0.5) * 40, (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 40);
   c.t = 0;
@@ -548,7 +621,7 @@ export function update(dt) {
   visibleNow = show;
   rigRoot.visible = show;
   // scope overlay (first and third person)
-  updateScope(scopedNow);
+  updateScope(scopedNow && scopeEnabled);
   if (!show) {
     flash.visible = false; flashLight.intensity = 0; casings.mesh.count = 0; plateMesh.visible = false; fragMesh.visible = false;
     ovCam.fov = cam.fov; ovCam.updateProjectionMatrix();
@@ -583,10 +656,10 @@ export function update(dt) {
   sway.vx += swayTX * 60 * Math.min(dt, 0.05); sway.vy += swayTY * 60 * Math.min(dt, 0.05);
   spring(sway, 'x', 'vx', 0, sw.k, sw.c, dt);
   spring(sway, 'y', 'vy', 0, sw.k, sw.c, dt);
-  spring(kick, 'z', 'vz', 0, TUNE.kick.k, TUNE.kick.c, dt);
-  spring(kick, 'p', 'vp', 0, TUNE.kick.k, TUNE.kick.c, dt);
-  spring(kick, 'r', 'vr', 0, TUNE.kick.k * 0.8, TUNE.kick.c, dt);
-  spring(kick, 'y', 'vy', 0, TUNE.kick.k * 0.8, TUNE.kick.c, dt);
+  spring(kickS, 'z', 'vz', 0, TUNE.kick.k, TUNE.kick.c, dt);
+  spring(kickS, 'p', 'vp', 0, TUNE.kick.k, TUNE.kick.c, dt);
+  spring(kickS, 'r', 'vr', 0, TUNE.kick.k * 0.8, TUNE.kick.c, dt);
+  spring(kickS, 'y', 'vy', 0, TUNE.kick.k * 0.8, TUNE.kick.c, dt);
   spring(land, 'y', 'v', 0, TUNE.land.k, TUNE.land.c, dt);
   breathT += dt * TUNE.breath.rate;
   // bob from the gait phase (synchronised with footsteps)
@@ -611,6 +684,7 @@ export function update(dt) {
   e1.set(brx + sway.y + breath * 0.5, bry + sway.x, brz + sway.x * 0.6, 'YXZ');
   q1.setFromEuler(e1);
   m1.compose(v1.set(bx + bobX + sway.x * -sw.posK * 0.1, by + bobY + breath + land.y, bz), q1, s1.set(1, 1, 1));
+  if (TUNE.eye[cur.id]) cur.eye.fromArray(TUNE.eye[cur.id]);   // live-tunable (debug.combat.viewmodelTune)
   m2.makeTranslation(-cur.eye.x, -cur.eye.y, -cur.eye.z);
   m1.multiply(m2);                                   // M1: weapon origin (grip) in camera space
   // layered handling poses around the grip
@@ -638,7 +712,7 @@ export function update(dt) {
   // airborne: weapon floats up slightly
   if (!grounded) acc.py += 0.012;
   // recoil kick about the grip
-  acc.pz += kick.z; acc.rx += kick.p; acc.rz += kick.r; acc.ry += kick.y;
+  acc.pz += kickS.z; acc.rx += kickS.p; acc.rz += kickS.r; acc.ry += kickS.y;
   v2.setFromMatrixPosition(m1);                      // grip in camera space
   e1.set(acc.rx, acc.ry, acc.rz, 'YXZ');
   q2.setFromEuler(e1);
@@ -646,15 +720,17 @@ export function update(dt) {
   m2.makeTranslation(-v2.x, -v2.y, -v2.z);
   m3.multiply(m2).multiply(m1);                      // final weapon pose in camera space
 
-  // ---- place the rig so the socket lands on that pose
+  // ---- place the rig (shoulders) from the base pose only, so handling layers do not swing the whole body into
+  // view; the right arm then reaches the layered pose with IK and the hand takes the exact orientation
   mixer.update(dt);
   rigRoot.matrix.identity();
   rigRoot.updateMatrixWorld(true);
   mRigInv.copy(rigRoot.matrixWorld).invert();
   mSock.multiplyMatrices(mRigInv, bones.socket.matrixWorld);   // socket in rig space
-  rigRoot.matrix.multiplyMatrices(m3, mSock.invert());
+  rigRoot.matrix.multiplyMatrices(m1, mSock.invert());
   rigRoot.matrixWorldNeedsUpdate = true;
   rigRoot.updateMatrixWorld(true);
+  rightArm(m3);
 
   // ---- weapon parts: magazine, bolt / slide
   animateParts(vs, boltU);
@@ -665,6 +741,19 @@ export function update(dt) {
   // ---- fx
   updateFlash();
   updateBrass(dt);
+}
+
+const mTgt = new THREE.Matrix4(), mRel = new THREE.Matrix4(), rPos = new THREE.Vector3(), rQuat = new THREE.Quaternion(), rPole = new THREE.Vector3();
+/** Right arm IK: put WeaponSocket_R (child of the right hand) on the camera-space pose m. */
+function rightArm(m) {
+  mTgt.multiplyMatrices(view.matrixWorld, m);                          // socket target, world
+  mRel.copy(bones.rHand.matrixWorld).invert().multiply(bones.socket.matrixWorld);   // socket relative to the hand
+  mTgt.multiply(mRel.invert());                                        // hand target, world
+  mTgt.decompose(rPos, rQuat, s1);
+  bones.rUpper.getWorldPosition(rPole);
+  rPole.add(v4.set(0.8, -1.0, 0.2).applyQuaternion(gfx.camera.quaternion));
+  ikTwoBone(bones.rUpper, bones.rFore, bones.rHand, rPos, rPole, 1);
+  setBoneWorldQuat(bones.rHand, rQuat);
 }
 
 const boltOff = new THREE.Vector3();
@@ -678,7 +767,7 @@ function animateParts(vs, boltU) {
     if (vs.reload && vs.reload.weapon === cur.id) {
       const r = reloadPhase(W, vs.reload.u, vs.reload.empty);
       if (r.phase === 'pull') { cur.mag.position.y -= 0.24 * r.k * r.k; cur.mag.position.z += 0.03 * r.k; cur.mag.rotateX(-0.35 * r.k); }
-      else if (r.phase === 'away') cur.mag.visible = false;
+      else if (r.phase === 'away') cur.mag.visible = true;
       else if (r.phase === 'insert') { const k = 1 - r.k; cur.mag.position.y -= 0.32 * k * k + 0.01; cur.mag.position.z += 0.05 * k; cur.mag.rotateX(-0.3 * k); }
     }
   }
@@ -742,7 +831,7 @@ function leftHand(vs, reloadW, plateW, nadeW) {
       case 'insert': handT.copy(v3); break;
       case 'charge': {
         if (cur.bolt) { cur.bolt.updateWorldMatrix(true, false); v2.setFromMatrixPosition(cur.bolt.matrixWorld); } else v2.copy(gripPos);
-        v2.add(v1.set(-0.03, 0.03, 0.02).applyQuaternion(camQ));
+        v2.add(v1.set(-0.045, -0.015, 0.03).applyQuaternion(camQ));
         handT.lerpVectors(v3, v2, Math.sin(Math.PI * clamp(r.k, 0, 1)));
         break;
       }
@@ -750,40 +839,57 @@ function leftHand(vs, reloadW, plateW, nadeW) {
     }
     weight = 1;
   } else if (plateW > 0) {
-    // plate from the pouch, slapped into the carrier below the view
-    const t = vs.plate.t / PLAYER.armor.insertTime;
-    v2.set(-0.07, -0.2 - 0.12 * smoothstep(0.55, 0.9, t), -0.3 + 0.08 * smoothstep(0.55, 0.9, t)).applyQuaternion(camQ).add(camP);
-    handT.lerpVectors(gripPos, v2, plateW);
+    // down to the pouch, the plate rises into view lower left, lines up with the carrier, slammed home below
+    const t = clamp(vs.plate.t / PLAYER.armor.insertTime, 0, 1);
+    keyPath(TUNE.platePath, t, v2);
+    const hw = smoothstep(0, 0.1, t) * (1 - smoothstep(0.86, 1, t));
+    v2.applyQuaternion(camQ).add(camP);
+    handT.lerpVectors(gripPos, v2, hw);
     weight = 1;
-    plateMesh.visible = t > 0.08 && t < 0.92;
+    plateMesh.visible = t > 0.15 && t < 0.8;
+    if (plateMesh.visible) {
+      keyPath(TUNE.platePath, t, v1);
+      const H = TUNE.plateHold;
+      plateMesh.position.set(v1.x + H[0], v1.y + H[1], v1.z + H[2]);
+      const slam = smoothstep(0.62, 0.8, t), lift = smoothstep(0.15, 0.38, t);
+      plateMesh.rotation.set(lerp(-1.25, -0.5, slam) + 0.25 * (1 - lift), 0.32 - 0.12 * slam, 0.14 + 0.2 * (1 - lift), 'YXZ');
+    }
   } else if (nadeW > 0 && vs.nade) {
     const N = vs.nade;
-    if (N.phase === 'cook') v2.set(-0.15, -0.11, -0.34);
-    else if (N.phase === 'throw') {
-      const k = smoothstep(0, 0.17, N.t);
-      v2.set(lerp(-0.15, -0.02, k), lerp(-0.11, 0.08, k), lerp(-0.34, -0.62, k));
-      if (N.thrown) v2.y -= smoothstep(0.17, 0.5, N.t) * 0.3;
-    } else v2.set(-0.1, -0.3, -0.3);
+    if (N.phase === 'cook') { keyPath(TUNE.throwPath, 0, v2); v2.y += Math.sin(N.t * 5) * 0.004; }
+    else if (N.phase === 'throw') keyPath(TUNE.throwPath, N.t, v2);
+    else v2.set(-0.05, -0.46, -0.3);
     v2.applyQuaternion(camQ).add(camP);
-    handT.lerpVectors(gripPos, v2, nadeW);
+    const hw = N.phase === 'cook' ? smoothstep(0, 0.2, N.t) : N.phase === 'throw' ? 1 - smoothstep(0.4, WEAPONS.frag.throwTime, N.t) : 1 - smoothstep(0, 0.3, N.t);
+    handT.lerpVectors(gripPos, v2, hw);
     weight = 1;
     fragMesh.visible = N.phase === 'cook' || (N.phase === 'throw' && !N.thrown);
   }
   if (weight > 0.01) {
     ikTwoBone(bones.lUpper, bones.lFore, bones.lHand, handT, pole, weight);
-    // hand orientation: the baked grip on the handguard; palm-in carrying pose otherwise
+    // hand orientation: the baked handguard grip (relative to the weapon) on the gun, which also reads as a palm
+    // cupping the magazine during a reload; the IK result elsewhere (pouch, plate, grenade)
     bones.lHand.getWorldQuaternion(qt);
-    if (!(vs.reload || plateW > 0 || nadeW > 0)) { qt.slerp(gripQuat, weight); setBoneWorldQuat(bones.lHand, qt); }
+    let ow = weight;
+    if (vs.reload) ow = rl.phase === 'away' ? 0.35 : rl.phase === 'charge' ? 0.45 : 1;
+    else if (plateW > 0 || nadeW > 0) ow = 0;
+    if (ow > 0) { qt.slerp(gripQuat, ow); setBoneWorldQuat(bones.lHand, qt); }
+    // the magazine travels with the hand between the well and the pouch (old one out, fresh one back)
+    if (vs.reload && cur.mag && rl.phase === 'away') {
+      bones.lHand.updateWorldMatrix(true, false);
+      v1.setFromMatrixPosition(bones.lHand.matrixWorld);
+      q1.setFromRotationMatrix(m1.extractRotation(bones.socket.matrixWorld));
+      v1.add(v2.set(0, 0.07, -0.01).applyQuaternion(q1));
+      cur.mag.parent.updateWorldMatrix(true, false);
+      cur.mag.position.copy(cur.mag.parent.worldToLocal(v1));
+      cur.mag.visible = rl.k < 0.42 || rl.k > 0.58;
+    }
   }
   // props in the left hand (view space)
-  if (plateMesh.visible || fragMesh.visible) {
+  if (fragMesh.visible) {
     bones.lHand.updateWorldMatrix(true, false);
     m2.copy(view.matrix).invert().multiply(bones.lHand.matrixWorld);
     m2.decompose(v1, q1, v2);
-    if (plateMesh.visible) {
-      plateMesh.position.copy(v1).add(v3.set(0.02, -0.02, -0.06).applyQuaternion(q1));
-      plateMesh.quaternion.copy(q1).multiply(q2.setFromEuler(e1.set(0.2, 1.2, 1.6)));
-    }
     if (fragMesh.visible) {
       fragMesh.position.copy(v1).add(v3.set(0.085, 0.02, -0.03).applyQuaternion(q1));
       fragMesh.quaternion.copy(q1);
