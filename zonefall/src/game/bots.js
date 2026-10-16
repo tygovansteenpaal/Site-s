@@ -222,6 +222,25 @@ function placeOnGround(b, x, z) {
 /** Ids of all bots in the match. */
 export function list() { return [...brains.keys()]; }
 
+/**
+ * Put a living bot on the ground at (x, z), facing yaw, in roam mode with no target (host only; test hooks and the
+ * integration suite use it to bring a fight to the player). Returns false when the bot is unknown, dead, or this peer
+ * is not the bot authority. INTEGRATION addition.
+ */
+export function placeNear(botId, x, z, yaw = 0) {
+  if (!authority()) return false;
+  const b = brains.get(botId);
+  if (!b || !b.e || !b.e.alive || b.e.life === LIFE.DEAD) return false;
+  clearActions(b);
+  placeOnGround(b, x, z);
+  b.mode = 'roam';
+  b.lootUntil = now();
+  b.goal = null; b.path = []; b.pathI = 0; b.target = null; b.targetVisible = false; b.threat = null; b.heard = null;
+  b.stuckRef.copy(b.e.pos); b.stuckClock = 0;
+  b.e.yaw = yaw; b.faceYaw = yaw;
+  return true;
+}
+
 /** Host: apply damage to a bot (combat/damage.applyToEntity); on death combat/damage.kill. */
 export function applyDamage(botId, amount, info = {}) {
   const e = getPlayer(botId);

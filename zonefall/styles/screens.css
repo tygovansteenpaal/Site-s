@@ -68,6 +68,7 @@
 .zf-results__sub { margin-bottom: calc(30 * var(--u)); font: 600 calc(16 * var(--u))/1.3 var(--zf-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--zf-ink); }
 .zf-results__actions { display: flex; gap: calc(10 * var(--u)); margin-top: calc(32 * var(--u)); }
 .zf-results .zf-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.zf-results .zf-stats > .zf-stat:nth-child(5n+1) { padding-left: 0; border-left: 0; }
 .zf-results.is-win .zf-stat dd { color: var(--zf-ink); }
 
 /* ---------------------------------------------------------------------------------------- pause */
@@ -115,5 +116,6 @@
 
 @media (max-width: 1000px), (max-height: 560px) {
   .zf-results .zf-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .zf-results .zf-stats > .zf-stat:nth-child(3n+1) { padding-left: 0; border-left: 0; }
   .zf-pause__side { width: 46vw; }
 }

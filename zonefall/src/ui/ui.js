@@ -197,7 +197,9 @@ function updateMatch(dt) {
   const practice = state.match.mode === 'practice';
   // the overlay shows whenever the pointer is free, and also when practice is paused while the lock is still held
   // (the simulation would otherwise sit frozen with no way back except Escape)
-  const pauseOpen = (!locked || (practice && state.paused)) && (!dead || practice) && state.match.phase !== 'ended';
+  // A dead player uses the death screen and the spectate bar instead (both have Leave match); practice does not pause
+  // once the local player is dead (main.js).
+  const pauseOpen = (!locked || (practice && state.paused)) && !dead && state.match.phase !== 'ended';
   if (locked) lockedThisMatch = true;
   screens.showPause(pauseOpen, { fresh: !lockedThisMatch && !dead });
 

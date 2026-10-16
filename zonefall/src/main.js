@@ -2,11 +2,13 @@
 // Boot order, the per-frame update order and the UI intent handlers live here and nowhere else.
 // Every module is checked against CONTRACT at boot, and any exception during boot or a frame stops the loop and
 // shows the fatal screen naming the module, so a missing or broken piece can never fail silently.
+// window.__zf.test holds the automation hooks used by the integration suite (ARCHITECTURE.md 12.2).
+import * as THREE from 'three';
 import * as config from './config.js';
 import { DEV, MATCH, GAME_NAME, VERSION } from './config.js';
 import * as bus from './core/bus.js';
 import { EV } from './core/bus.js';
-import { state, gfx, debug, APP, setAppState } from './core/state.js';
+import { state, gfx, debug, APP, LIFE, setAppState, localPlayer, getPlayer } from './core/state.js';
 import * as settings from './core/settings.js';
 import * as mapdata from './core/mapdata.js';
 import { createLoop } from './core/loop.js';
@@ -106,7 +108,8 @@ function fatal(err) {
 }
 
 // ------------------------------------------------------------------------------------------ boot
-const loop = createLoop(frame);
+// Online play keeps simulating in a hidden tab (the host runs the bots for everyone); offline the loop just idles.
+const loop = createLoop(frame, { background: () => state.online });
 
 window.__zf = {
   name: GAME_NAME, version: VERSION, ready: false, fatalError: null,
@@ -175,6 +178,7 @@ async function boot() {
   progress('shaders', 1, 'Ready');
 
   wireFlow();
+  exposeTestHooks();
   loop.start();
   setAppState(APP.MENU);
   window.__zf.ready = true;
@@ -243,14 +247,19 @@ function wireFlow() {
     }, MATCH.endDelay * 1000);
   });
   bus.on(EV.INPUT_LOCK, ({ locked }) => {
-    if (!locked && state.app === APP.MATCH && state.match.mode === 'practice') setPaused(true);
+    if (state.app !== APP.MATCH || state.match.mode !== 'practice') return;
+    // practice: losing the pointer pauses a living player, getting it back (canvas click, resume button) continues.
+    // Once dead there is nothing to protect: the death screen and spectating keep running with a free cursor.
+    const me = localPlayer();
+    setPaused(!locked && !!me && me.alive && state.match.phase !== 'ended');
   });
+  bus.on(EV.PLAYER_KILLED, ({ id }) => { if (id === state.selfId) setPaused(false); });
   bus.on(EV.APP_STATE, ({ to }) => input.setEnabled(to === APP.MATCH));
   addEventListener('pagehide', () => { if (state.online) session.leave(); });
 }
 
 // ------------------------------------------------------------------------------------------ frame
-function frame(dt) {
+function frame(dt, now, hidden = false) {
   try {
     input.update();
     if (state.online) sync.update(dt);
@@ -277,11 +286,163 @@ function frame(dt) {
     world.update(dt, gfx.camera.position);
     audio.update(dt);
     ui.update(dt);
-    renderer.render(dt);
+    if (!hidden) renderer.render(dt);   // hidden tab (online only): simulate and send, draw nothing
   } catch (err) {
     loop.stop();
     fatal(err);
   }
+}
+
+// ------------------------------------------------------------------------------------------ automation hooks
+// window.__zf.test drives a whole match from a test (Playwright) or the console. Nothing in the game calls these.
+const v3 = (p) => [+p.x.toFixed(2), +p.y.toFixed(2), +p.z.toFixed(2)];
+const LIFE_NAME = Object.fromEntries(Object.entries(LIFE).map(([k, v]) => [v, k.toLowerCase()]));
+
+function exposeTestHooks() {
+  const need = (cond, msg) => { if (!cond) throw new Error(`[__zf.test] ${msg}`); };
+  const inMatch = () => state.app === APP.MATCH && state.match.phase !== 'idle';
+  const groundAt = (x, z) => world.getGround(x, z).y;
+  /** Nearest open ground (no roof, wall or prop on top of the terrain) around (x, z), spiralling out to 60 m. */
+  const openGround = (x, z) => {
+    for (let r = 0; r <= 60; r += 3) {
+      const n = r === 0 ? 1 : Math.ceil((2 * Math.PI * r) / 3);
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2, px = x + Math.cos(a) * r, pz = z + Math.sin(a) * r;
+        const h = world.getHeight(px, pz);
+        if (h > 0.5 && !world.isWater(px, pz) && Math.abs(groundAt(px, pz) - h) < 0.25) return [px, pz];
+      }
+    }
+    return [x, z];
+  };
+  const T = {
+    /** Snapshot of the flow state for assertions. */
+    info() {
+      const me = localPlayer();
+      const l = lobby.get();
+      return {
+        app: state.app, paused: state.paused, online: state.online, host: state.isHost, locked: input.isLocked(),
+        lobby: { status: l.status, text: l.text, humans: l.humans, countdown: l.countdownEndsAt == null ? null : +((l.countdownEndsAt - performance.now()) / 1000).toFixed(1) },
+        match: { mode: state.match.mode, phase: state.match.phase, time: +state.match.time.toFixed(1), alive: state.match.alive, roster: state.match.roster.length,
+          bots: state.match.roster.filter((r) => r.kind === 'bot').length, winner: state.match.winnerId, placement: state.match.placement, stats: { ...state.match.stats } },
+        zone: { phase: state.zone.phase, state: state.zone.state, r: Math.round(state.zone.r), timeLeft: +state.zone.timeLeft.toFixed(1), outside: state.zone.outside },
+        me: me ? { life: LIFE_NAME[me.life], alive: me.alive, hp: Math.round(me.hp), armor: Math.round(me.armor), pos: v3(me.pos), weapon: me.weapon,
+          inv: state.local.inv ? { slots: state.local.inv.slots.map((x) => (x ? `${x.weapon}:${x.mag}` : null)), ammo: { ...state.local.inv.ammo }, plates: state.local.inv.plates, frags: state.local.inv.frags } : null,
+          nearby: state.local.nearby ? state.local.nearby.label || state.local.nearby.type : null, spectating: state.local.spectating, view: state.local.mode } : null,
+        screens: debug.ui && debug.ui.visible ? debug.ui.visible() : [],
+        fps: loop.fps, render: renderer.stats(),
+      };
+    },
+    /** Act as if pointer lock were granted (headless browsers cannot lock); practice unpauses with it. */
+    lock(on = true) { debug.player.testLock(on); return input.isLocked(); },
+    /** Send a UI intent exactly like a menu button would. */
+    intent(type, extra = {}) { bus.emit(EV.UI_INTENT, { type, ...extra }); return type; },
+    /** Skip the lobby timer: the host starts now (alone: bots fill the match). */
+    skipLobby() { need(state.app === APP.LOBBY, 'not in a lobby'); return lobby.requestStart(); },
+    /** Jump the shared match clock to t seconds (practice and host tests). */
+    skipTo(t) { need(inMatch(), 'no match running'); return debug.game.skipTo(t); },
+    /** Fast-forward the plane to the open doors (optionally jump out at once). */
+    skipToDoors(jump = true) {
+      need(inMatch(), 'no match running');
+      const p = match.planePath();
+      if (state.match.time < p.doorsOpenAt + 0.3) debug.game.skipTo(p.doorsOpenAt + 0.3);
+      if (jump) controller.jumpFromPlane();
+      return +state.match.time.toFixed(1);
+    },
+    /** Leave the plane now. */
+    jump() { controller.jumpFromPlane(); return LIFE_NAME[localPlayer()?.life]; },
+    /** Put the local player on the ground: on open ground at a site id ('harrow'), at [x, z] or [x, y, z], or below them. */
+    teleport(target) {
+      const me = localPlayer();
+      need(me && me.alive, 'no living local player');
+      let x = me.pos.x, z = me.pos.z, y = null;
+      if (typeof target === 'string') { const site = mapdata.siteById(target); need(site, `unknown site '${target}'`); [x, z] = openGround(site.x, site.z); }
+      else if (Array.isArray(target)) { x = target[0]; z = target[target.length - 1]; if (target.length === 3) y = target[1]; }
+      if (me.life !== LIFE.GROUND) controller.spawn('ground', [x, y ?? groundAt(x, z), z]);
+      else controller.teleport([x, y ?? groundAt(x, z), z]);
+      me.pitch = 0;
+      return v3(me.pos);
+    },
+    /** Give a weapon (ak47 | m4a1 | mp5 | m700 | m1911), full reserves, plates and frags. */
+    give(weaponId = 'm4a1', slot = null) {
+      need(localPlayer(), 'no local player');
+      debug.combat.give(weaponId, slot);
+      debug.combat.fillAmmo();
+      return state.local.inv.slots.map((x) => (x ? x.weapon : null));
+    },
+    /** Bring a living bot to `dist` metres in front of the local player, facing them. Returns its id. */
+    spawnBot(dist = 14, id = null) {
+      const me = localPlayer();
+      need(me && me.alive, 'no living local player');
+      need(state.isHost || !state.online, 'only the bot authority can place bots');
+      const fx = -Math.sin(me.yaw), fz = -Math.cos(me.yaw);
+      const x = me.pos.x + fx * dist, z = me.pos.z + fz * dist;
+      let pickId = id;
+      if (!pickId) {
+        let best = Infinity;
+        for (const bid of bots.list()) {
+          const e = getPlayer(bid);
+          if (!e || !e.alive) continue;
+          const d = e.pos.distanceTo(me.pos);
+          if (d < best) { best = d; pickId = bid; }
+        }
+      }
+      need(pickId, 'no living bot left');
+      const ok = bots.placeNear(pickId, x, z, Math.atan2(fx, fz));
+      need(ok, `bot ${pickId} could not be placed`);
+      return pickId;
+    },
+    /** Eliminate every bot (zone kill, no credit). Returns how many died. */
+    killAllBots() { need(inMatch(), 'no match running'); return debug.game.killAllBots(); },
+    /** Kill the local player (by a bot when one is alive, else the zone). */
+    killSelf(byId = null) {
+      const me = localPlayer();
+      need(me && me.alive, 'no living local player');
+      const by = byId || bots.list().find((b) => getPlayer(b)?.alive) || null;
+      damage.kill(me.id, by, by ? (getPlayer(by)?.weapon || 'm4a1') : 'zone', false, null);
+      return by;
+    },
+    /** Advance the match clock to the next zone event (wait -> shrink -> next wait). Returns the new zone state. */
+    stepZone() {
+      need(inMatch(), 'no match running');
+      const t = state.match.time;
+      const marks = [];
+      for (const s of zone.timeline()) marks.push(s.waitAt, s.shrinkAt, s.endAt);
+      const next = marks.find((m) => m > t + 0.05);
+      need(next != null, 'the zone is already final');
+      debug.game.skipTo(next + 0.05);
+      zone.update(0.016);
+      return { phase: state.zone.phase, state: state.zone.state, r: Math.round(state.zone.r), time: +state.match.time.toFixed(1) };
+    },
+    /** Invulnerability for the local player. */
+    god(on = true) { return debug.combat.godMode(on); },
+    /** Press (one frame) or hold a game action without a keyboard. */
+    press(action) { debug.player.press(action); return action; },
+    hold(action, on = true) { debug.player.hold(action, on); return action; },
+    /** Turn the view by yaw/pitch radians (applied through camera.look like mouse movement). */
+    look(yawRad = 0, pitchRad = 0) {
+      const k = config.PLAYER.mouseRadPerPx * settings.get('sensitivity');
+      debug.player.look(-yawRad / k, -pitchRad / k);
+    },
+    /** Aim the crosshair at a world point ([x, z] or [x, y, z]) or at another entity's chest (id). */
+    face(target) {
+      const me = localPlayer();
+      need(me, 'no local player');
+      const e = typeof target === 'string' ? getPlayer(target) : null;
+      need(typeof target !== 'string' || e, 'unknown target');
+      const tx = e ? e.pos.x : target[0], tz = e ? e.pos.z : target[target.length - 1];
+      const ty = e ? e.pos.y + 1.2 : target.length === 3 ? target[1] : me.pos.y + 1.4;
+      // the aim ray starts on the camera line (third person), which moves with the yaw: converge in a few passes
+      const o = new THREE.Vector3(), d = new THREE.Vector3();
+      for (let k = 0; k < 3; k++) {
+        camera.getAimRay(o, d);
+        const dx = tx - o.x, dy = ty - o.y, dz = tz - o.z;
+        me.yaw = Math.atan2(-dx, -dz);
+        me.pitch = Math.atan2(dy, Math.hypot(dx, dz));
+      }
+      return [+me.yaw.toFixed(3), +me.pitch.toFixed(3)];
+    },
+  };
+  window.__zf.test = T;
 }
 
 addEventListener('error', (e) => { if (!window.__zf.ready) fatal(e.error || e.message); });

@@ -227,12 +227,12 @@ export const WEAPONS = Object.freeze({
 
 // ---------------------------------------------------------------- match flow
 export const MATCH = Object.freeze({
-  maxPlayers: 16,             // humans + bots
+  maxPlayers: 10,             // humans + bots: bots fill every empty slot up to this
   maxHumans: 10,
   minHumansToCountdown: 2,
   lobbyCountdown: 45,         // s, once >= 2 humans
   lobbyCountdownFull: 10,     // s, once >= 6 humans
-  aloneStartAfter: 25,        // quick play: start vs bots if still alone after this many s
+  aloneStartAfter: 20,        // quick play: start vs bots if still alone after this many s
   startLeadMs: 4000,          // 'start' message is sent this long before plane launch
   plane: { altitude: 380, speed: 55, preDistance: 900, postDistance: 900, doorsOpenRadius: 520, forceJumpAt: 420, centerJitter: 150 },
   endDelay: 6,                // s between the last kill and the results screen
