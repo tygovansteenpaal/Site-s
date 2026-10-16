@@ -24,6 +24,9 @@ const TUNE = {
   lootSpacing: 2.5, lootWallMargin: 0.65, lootLift: 0.05,
   lootTolerance: 0.15,
   mapSize: 1024,
+  // A site mesh spread wider than this (the scattered countryside farms, cabins and power poles) is cut into square
+  // cells so the camera and the sun's shadow camera can cull the parts that are far away (INTEGRATION).
+  splitRadius: 200, splitCell: 150,
 };
 
 let built = false;
@@ -43,6 +46,46 @@ const stats = { buildMs: 0, stages: {} };
 
 const err = (m) => new Error(`[WORLD/world] ${m}`);
 const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+/** Split an indexed geometry into one geometry per square XZ cell (by triangle centroid), keeping every attribute. */
+function splitByCell(geo, cell) {
+  const idx = geo.index.array, pos = geo.attributes.position;
+  const buckets = new Map();
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+    const cx = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3, cz = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
+    const key = `${Math.floor(cx / cell)},${Math.floor(cz / cell)}`;
+    let list = buckets.get(key);
+    if (!list) buckets.set(key, (list = []));
+    list.push(a, b, c);
+  }
+  if (buckets.size < 2) return [geo];
+  const names = Object.keys(geo.attributes);
+  const remap = new Int32Array(pos.count);
+  const out = [];
+  for (const list of buckets.values()) {
+    remap.fill(-1);
+    const order = [];
+    const index = new Uint32Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i];
+      if (remap[v] < 0) { remap[v] = order.length; order.push(v); }
+      index[i] = remap[v];
+    }
+    const g = new THREE.BufferGeometry();
+    for (const n of names) {
+      const src = geo.attributes[n], k = src.itemSize;
+      const arr = new src.array.constructor(order.length * k);
+      for (let i = 0; i < order.length; i++) for (let j = 0; j < k; j++) arr[i * k + j] = src.array[order[i] * k + j];
+      g.setAttribute(n, new THREE.BufferAttribute(arr, k, src.normalized));
+    }
+    g.setIndex(order.length > 65535 ? new THREE.BufferAttribute(index, 1) : new THREE.BufferAttribute(Uint16Array.from(index), 1));
+    g.computeBoundingSphere();
+    out.push(g);
+  }
+  geo.dispose();
+  return out;
+}
 
 // ------------------------------------------------------------------------------------------ build
 /**
@@ -87,12 +130,16 @@ export async function build(opts) {
   buildingsOut = await run('buildings', (p) => buildBuildings(layout, p));
   const surf = surfaceMaterial();
   for (const g of buildingsOut.groups) {
-    const mesh = new THREE.Mesh(g.geometry, surf);
-    mesh.name = `site_${g.site}`;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.matrixAutoUpdate = false;
-    worldRoot.add(mesh);
+    const r = g.geometry.boundingSphere ? g.geometry.boundingSphere.radius : 0;
+    const parts = r > TUNE.splitRadius ? splitByCell(g.geometry, TUNE.splitCell) : [g.geometry];
+    parts.forEach((geo, i) => {
+      const mesh = new THREE.Mesh(geo, surf);
+      mesh.name = parts.length > 1 ? `site_${g.site}_${i}` : `site_${g.site}`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      worldRoot.add(mesh);
+    });
   }
   await run('props', (p) => props.buildProps(worldRoot, layout, quality, groundForProps, p));
   layout.hedges = buildingsOut.hedges;

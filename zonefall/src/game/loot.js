@@ -32,7 +32,13 @@ const TUNE = {
   drawDistance: 80,            // m: item meshes
   lodDistance: 13,             // m: full detail (and shadows) inside, simplified LOD beyond
   lod0Tris: 4000,              // per item kind, after simplification
+  lod0TrisSmall: 1200,         // ammo box, frag, plate: a few centimetres of screen even up close
   lod1Tris: 520,
+  tierScale: { low: 0.6, medium: 0.85, high: 1 },   // drawDistance and lodDistance per quality tier
+  shadowTiers: { low: false, medium: true, high: true },
+  cullMarginDeg: 22,           // view-cone culling: margin beyond the camera's half-diagonal FOV
+  cullNear: 4,                 // m: items this close are never culled (their shadows reach into view)
+  rebuildTurnDeg: 10,          // camera turn that rebuilds the visible set
   ringDistance: 125,           // m: glow rings
   rebuildMove: 3,              // m of camera travel before the visible set is rebuilt
   capacity: 160,               // instances per part
@@ -60,6 +66,8 @@ const remoteTaken = new Map();    // uid -> {by, t}
 const dropCounters = new Map();   // owner id -> next drop number
 let dirty = true;
 const lastRebuildAt = new THREE.Vector3(1e9, 0, 0);
+const lastRebuildDir = new THREE.Vector3(0, 0, 0);
+const SMALL_KINDS = new Set(['ammo', 'frag', 'plate']);
 let nearbyUid = null;
 let ringTime = 0;
 
@@ -435,7 +443,7 @@ const kinds = new Map();     // key -> {parts: [{mesh}], base: Matrix4}
 let ringMesh = null;
 let visualsReady = false;
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _s = new THREE.Vector3(1, 1, 1);
-const _up = new THREE.Vector3(0, 1, 0), _col = new THREE.Color();
+const _up = new THREE.Vector3(0, 1, 0), _col = new THREE.Color(), _fwd = new THREE.Vector3();
 
 /** Bake a loaded model into per-material merged geometries laid down and centred (base y = 0). */
 function bakeModel(key, { lay = true, size = null, scope = null } = {}) {
@@ -574,7 +582,7 @@ function buildVisuals() {
       m.name = `loot:${key}:${lod}`;
       m.count = 0;
       m.frustumCulled = false;
-      m.castShadow = lod === 0;                 // only nearby items cast shadows
+      m.castShadow = lod === 0 && TUNE.shadowTiers[state.quality] !== false;   // only nearby items cast shadows
       m.receiveShadow = true;
       m.visible = false;
       if (opts.tint) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(TUNE.capacity * 3).fill(1), 3);
@@ -620,11 +628,12 @@ async function buildLods() {
     console.warn('[GAME/loot] simplifier unavailable; loot renders without LODs', e);
     return;
   }
-  for (const kind of kinds.values()) {
+  for (const [key, kind] of kinds) {
     let total = 0;
     for (const p of kind.parts) total += (p.geo.index ? p.geo.index.count : p.geo.getAttribute('position').count) / 3;
+    const cap = SMALL_KINDS.has(key) ? TUNE.lod0TrisSmall : TUNE.lod0Tris;
     kind.parts.forEach((p, i) => {
-      const lod0 = total > TUNE.lod0Tris ? simplifyGeo(simp, p.geo, TUNE.lod0Tris / total, 0.004) : null;
+      const lod0 = total > cap ? simplifyGeo(simp, p.geo, cap / total, 0.004) : null;
       const lod1 = simplifyGeo(simp, p.geo, Math.min(0.5, TUNE.lod1Tris / total), 0.03, true);
       if (lod0) { kind.meshes[i].geometry = lod0; }
       if (lod1) { kind.far[i].geometry = lod1; }
@@ -682,13 +691,26 @@ function writeVisible(force) {
   const cam = gfx.camera;
   const cx = cam ? cam.position.x : 0, cy = cam ? cam.position.y : 0, cz = cam ? cam.position.z : 0;
   const moved = Math.hypot(cx - lastRebuildAt.x, cy - lastRebuildAt.y, cz - lastRebuildAt.z);
-  if (!force && !dirty && moved < TUNE.rebuildMove) return;
+  if (cam) cam.getWorldDirection(_fwd); else _fwd.set(0, 0, -1);
+  const turned = _fwd.dot(lastRebuildDir) < Math.cos(TUNE.rebuildTurnDeg * Math.PI / 180);
+  if (!force && !dirty && moved < TUNE.rebuildMove && !turned) return;
   dirty = false;
   lastRebuildAt.set(cx, cy, cz);
+  lastRebuildDir.copy(_fwd);
+  // Item meshes outside the view cone (camera half-diagonal FOV + margin) are skipped; rings stay (2 triangles each).
+  let cosCull = -2;
+  if (cam && cam.isPerspectiveCamera) {
+    const tv = Math.tan((cam.fov * Math.PI) / 360), th = tv * (cam.aspect || 1);
+    const half = Math.atan(Math.hypot(tv, th)) + (TUNE.cullMarginDeg * Math.PI) / 180;
+    if (half < Math.PI * 0.95) cosCull = Math.cos(half);
+  }
+  const scale = TUNE.tierScale[state.quality] || 1;
+  const drawD = TUNE.drawDistance * scale, lodD = TUNE.lodDistance * scale;
+  const d2Near = TUNE.cullNear * TUNE.cullNear;
   counts.clear();
   let rings = 0;
   const show = state.match.phase !== 'idle';
-  const d2Mesh = TUNE.drawDistance * TUNE.drawDistance, d2Ring = TUNE.ringDistance * TUNE.ringDistance;
+  const d2Mesh = drawD * drawD, d2Ring = TUNE.ringDistance * TUNE.ringDistance;
   if (show) {
     for (const it of items.values()) {
       const dx = it.pos[0] - cx, dy = it.pos[1] - cy, dz = it.pos[2] - cz;
@@ -710,11 +732,12 @@ function writeVisible(force) {
         rings++;
       }
       if (isCrate || d2 > d2Mesh) continue;
+      if (d2 > d2Near && (dx * _fwd.x + dy * _fwd.y + dz * _fwd.z) < cosCull * Math.sqrt(d2)) continue;
       const key = keyOf(it);
       const kind = key && kinds.get(key);
       if (!kind) continue;
       const stack = it.type === 'plate' ? clamp(it.qty, 1, 3) : 1;
-      const far = d2 > TUNE.lodDistance * TUNE.lodDistance;
+      const far = d2 > lodD * lodD;
       const ck = far ? key + '|1' : key;
       const list = far ? kind.far : kind.meshes;
       for (let si = 0; si < stack; si++) {
@@ -755,7 +778,11 @@ export function init(sc) {
   buildVisuals();
   on(EV.NET_PICK, onNetPick);
   on(EV.NET_DROP, onNetDrop);
-  on(EV.QUALITY_CHANGED, () => { dirty = true; });
+  on(EV.QUALITY_CHANGED, ({ tier }) => {
+    dirty = true;
+    const cast = TUNE.shadowTiers[tier] !== false;
+    for (const kind of kinds.values()) for (const m of kind.meshes) m.castShadow = cast;
+  });
   debug.game = debug.game || {};
   Object.assign(debug.game, {
     /** Spawn an item next to the local player (or at pos). type: weapon|ammo|plate|frag. */
