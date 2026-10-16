@@ -625,7 +625,7 @@ async function buildLods() {
     for (const p of kind.parts) total += (p.geo.index ? p.geo.index.count : p.geo.getAttribute('position').count) / 3;
     kind.parts.forEach((p, i) => {
       const lod0 = total > TUNE.lod0Tris ? simplifyGeo(simp, p.geo, TUNE.lod0Tris / total, 0.004) : null;
-      const lod1 = simplifyGeo(simp, p.geo, Math.min(0.5, TUNE.lod1Tris / total), 0.03);
+      const lod1 = simplifyGeo(simp, p.geo, Math.min(0.5, TUNE.lod1Tris / total), 0.03, true);
       if (lod0) { kind.meshes[i].geometry = lod0; }
       if (lod1) { kind.far[i].geometry = lod1; }
     });
@@ -634,12 +634,26 @@ async function buildLods() {
   dirty = true;
 }
 
-function simplifyGeo(simp, g, ratio, maxErr) {
+function simplifyGeo(simp, g, ratio, maxErr, far = false) {
   try {
     const src = g.index ? g : mergeVertices(g, 1e-5);
     const idx = src.index.array instanceof Uint32Array ? src.index.array : Uint32Array.from(src.index.array);
-    const target = Math.max(36, Math.floor((idx.length * ratio) / 3) * 3);
-    const [out] = simp.simplify(idx, src.attributes.position.array, 3, target, maxErr, ['LockBorder']);
+    const target = Math.min(idx.length, Math.max(36, Math.floor((idx.length * ratio) / 3) * 3));
+    if (target >= idx.length) return null;
+    // GLB positions can be quantized or interleaved (meshopt + KHR_mesh_quantization): the simplifier wants packed floats.
+    const pa = src.attributes.position;
+    let pos = pa.array;
+    if (!(pos instanceof Float32Array) || pa.isInterleavedBufferAttribute || pa.normalized || pa.itemSize !== 3) {
+      pos = new Float32Array(pa.count * 3);
+      for (let i = 0; i < pa.count; i++) { pos[i * 3] = pa.getX(i); pos[i * 3 + 1] = pa.getY(i); pos[i * 3 + 2] = pa.getZ(i); }
+    }
+    let [out] = simp.simplify(idx, pos, 3, target, maxErr, far ? [] : ['LockBorder']);
+    // far LOD: weapon GLBs are many small open shells, so edge collapse stalls well above the target; sloppy
+    // clustering gets there (the item is a few pixels tall beyond TUNE.lodDistance)
+    if (far && out && out.length > target * 2 && typeof simp.simplifySloppy === 'function') {
+      const [sl] = simp.simplifySloppy(idx, pos, 3, null, target, maxErr * 2);
+      if (sl && sl.length >= 12) out = sl;
+    }
     if (!out || out.length < 12 || out.length > idx.length * 0.92) return null;
     const res = new THREE.BufferGeometry();
     for (const k of ['position', 'normal', 'uv']) if (src.attributes[k]) res.setAttribute(k, src.attributes[k]);

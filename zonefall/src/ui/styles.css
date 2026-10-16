@@ -1,4 +1,9 @@
-/* ZONEFALL - UI styles. OWNER: UI. Design tokens agreed in ARCHITECTURE.md 9.1; the UI group builds everything else here. */
+/* ZONEFALL - UI styles. OWNER: UI. Design tokens agreed in ARCHITECTURE.md 9.1 live here; the component sheets are in
+   zonefall/styles/ and are imported below (relative to this file, so index.html and dev/*.html both resolve them). */
+@import url('../../styles/base.css');
+@import url('../../styles/menu.css');
+@import url('../../styles/hud.css');
+@import url('../../styles/screens.css');
 
 :root {
   --zf-bg: #0d0f0e;
@@ -20,6 +25,18 @@
 
   --zf-gutter: clamp(16px, 2.2vw, 28px);
   --zf-ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+
+  /* UI group additions */
+  --zf-line-strong: rgba(233, 231, 225, 0.32);
+  --zf-scrim: rgba(7, 8, 8, 0.86);
+  --zf-ts: 0 1px 2px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.45), 0 0 20px rgba(0, 0, 0, 0.25);
+  --zf-hud-dim: rgba(240, 238, 232, 0.78);
+  --zf-hud-faint: rgba(240, 238, 232, 0.56);
+  --zf-r-common: #d8d4c8;
+  --zf-r-uncommon: #6fcf6a;
+  --zf-r-rare: #4fa3ff;
+  --zf-r-epic: #b27cff;
+  --zf-r-legendary: #f2b636;
 }
 
 #ui {

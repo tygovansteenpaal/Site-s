@@ -21,6 +21,7 @@ const TUNE = {
   rampOpenDeg: 13,              // ramp angle when open (positive = tip down), closed follows the tail upsweep
   rampClosedDeg: -12,
   rampSpeed: 0.55,              // 1/s
+  noseDroop: 1.75,              // m the crown drops toward the radome (gives the cockpit brow)
   bobAmp: 0.35, rollAmpDeg: 1.1, pitchAmpDeg: 0.5,
   hideAfterExit: 6,             // s after reaching the end of the flight line
 };
@@ -111,23 +112,104 @@ function upsweep(z) {
   return TUNE.fuselageRadius * 0.78 * Math.pow(k, 1.45);
 }
 
+/**
+ * Vertical shaping of a lathe point (x, y, z) -> y: slightly taller section, flattened cargo floor, tail upsweep and a
+ * drooped nose (the crown slopes down to a low radome, the belly line stays straight) so the cockpit sits on a brow.
+ */
+function shapeY(y, z) {
+  const R = TUNE.fuselageRadius;
+  y *= 1.06;
+  const fl = -0.84 * R;
+  if (y < fl) y = fl + (y - fl) * 0.35;
+  const k = clamp((-z - 9.5) / 7.6, 0, 1);
+  const d = TUNE.noseDroop * Math.pow(k, 1.7);
+  y -= d * (0.5 + 0.5 * clamp(y / (1.06 * R), -1, 1));
+  return y + upsweep(z);
+}
+
+/** Lathe radius at height h (h = -z, nose at +17.1). */
+function radiusAt(h) {
+  const lathe = fuselageProfile();
+  for (let i = 0; i < lathe.length - 1; i++) {
+    const a = lathe[i], b = lathe[i + 1];
+    if (h >= Math.min(a.y, b.y) && h <= Math.max(a.y, b.y)) return a.x + (b.x - a.x) * ((h - a.y) / (b.y - a.y || 1));
+  }
+  return 0;
+}
+
+/** Outer skin point at angle a (0 = crown, + toward +x) and lathe height h, pushed out by off along the normal. */
+function skinPoint(a, h, off, out) {
+  const at = (aa, hh, v) => { const r = radiusAt(hh); const y0 = Math.cos(aa) * r; return v.set(Math.sin(aa) * r, shapeY(y0, -hh), -hh); };
+  at(a, h, out);
+  if (off) {
+    const e = 0.01;
+    const du = at(a + e, h, new THREE.Vector3()).sub(at(a - e, h, new THREE.Vector3()));
+    const dv = at(a, h + e, new THREE.Vector3()).sub(at(a, h - e, new THREE.Vector3()));
+    const n = du.cross(dv).normalize();
+    if (n.dot(_tmp.set(Math.sin(a), Math.cos(a), 0)) < 0) n.negate();
+    out.addScaledVector(n, off);
+  }
+  return out;
+}
+
+/** A pane conforming to the skin: angles a0..a1 (rad), heights h0..h1, a small grid offset out of the surface. */
+function skinPane(a0, a1, h0, h1, off, nu = 4, nv = 3) {
+  const pos = [], uv = [], idx = [];
+  const v = new THREE.Vector3();
+  for (let j = 0; j <= nv; j++) {
+    for (let i = 0; i <= nu; i++) {
+      skinPoint(a0 + (a1 - a0) * (i / nu), h0 + (h1 - h0) * (j / nv), off, v);
+      pos.push(v.x, v.y, v.z);
+      uv.push(i / nu, j / nv);
+    }
+  }
+  for (let j = 0; j < nv; j++) {
+    for (let i = 0; i < nu; i++) {
+      const a = j * (nu + 1) + i, b = a + 1, c = a + nu + 1, d = c + 1;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // face outward
+  const n = g.getAttribute('normal');
+  const mid = Math.floor(pos.length / 6);
+  const ac = (a0 + a1) / 2;
+  if (n.getX(mid) * Math.sin(ac) + n.getY(mid) * Math.cos(ac) < 0) {
+    for (let i = 0; i < idx.length; i += 3) { const t = idx[i + 1]; idx[i + 1] = idx[i + 2]; idx[i + 2] = t; }
+    g.setIndex(idx);
+    g.computeVertexNormals();
+  }
+  return g;
+}
+
 /** Lathe the fuselage; the cargo opening (below the upswept tail) is cut out when cut = true. */
 function buildFuselage(cut, inner = false) {
   const R = TUNE.fuselageRadius;
   let prof = fuselageProfile();
   if (inner) prof = prof.map((v) => new THREE.Vector2(Math.max(0, v.x - 0.09), v.y));
-  const g = new THREE.LatheGeometry(prof, 48);
+  const g = new THREE.LatheGeometry(prof, 64);
   g.rotateX(-Math.PI / 2);          // lathe height -> -z (nose forward at -z)
   const p = g.getAttribute('position');
+  const col = inner ? null : new Float32Array(p.count * 3);
   for (let i = 0; i < p.count; i++) {
-    let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    y *= 1.06;
-    // flatten the belly a little (cargo floor)
-    const fl = -0.84 * R;
-    if (y < fl) y = fl + (y - fl) * 0.35;
-    y += upsweep(z);
-    p.setXYZ(i, x, y, z);
+    const x = p.getX(i), y0 = p.getY(i), z = p.getZ(i);
+    p.setXYZ(i, x, shapeY(y0, z), z);
+    if (col) {
+      // paint zones as vertex tint over the panel texture: dark radome, matte anti-glare panel ahead of the windscreen,
+      // a slightly darker belly (exhaust and runway grime)
+      const h = -z, r = Math.hypot(x, y0) || 1, up = y0 / r;
+      let c = 1;
+      if (h > 15.95) c = 0.42;
+      else if (h > 15.42 && up > 0.3 && Math.abs(x) < 1.2) c = 0.3;
+      if (up < -0.55) c *= 0.88;
+      col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = c;
+    }
   }
+  if (col) g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
   if (cut) {
     // remove the faces of the ramp opening: bottom of the tail between z 5.6 and 12.6, |x| < 1.65
     const idx = g.getIndex().array;
@@ -238,26 +320,43 @@ function propTexture() {
   const g = c.getContext('2d');
   const cx = S / 2;
   g.clearRect(0, 0, S, S);
-  // soft annulus of motion blur with eight faint blade sweeps
-  for (let b = 0; b < 8; b++) {
-    const a0 = (b / 8) * Math.PI * 2;
-    const grad = g.createRadialGradient(cx, cx, S * 0.08, cx, cx, S * 0.5);
-    grad.addColorStop(0, 'rgba(30,32,30,0.0)');
-    grad.addColorStop(0.25, 'rgba(32,34,32,0.22)');
-    grad.addColorStop(0.85, 'rgba(38,40,38,0.16)');
-    grad.addColorStop(0.97, 'rgba(210,200,120,0.18)');
-    grad.addColorStop(1, 'rgba(40,40,40,0)');
-    g.fillStyle = grad;
-    g.beginPath();
-    g.moveTo(cx, cx);
-    g.arc(cx, cx, S * 0.5, a0, a0 + 0.42);
-    g.closePath();
-    g.fill();
+  // motion blur: each of the eight blades leaves a sweep that is densest at the blade and fades behind it
+  // (angular falloff via a conic gradient), masked radially so the disc is faint at the hub and the tips
+  const blades = document.createElement('canvas');
+  blades.width = blades.height = S;
+  const bg = blades.getContext('2d');
+  if (typeof bg.createConicGradient === 'function') {
+    const cg = bg.createConicGradient(0, cx, cx);
+    for (let b = 0; b < 8; b++) {
+      const a0 = b / 8;
+      cg.addColorStop(a0, 'rgba(34,36,34,0.2)');
+      cg.addColorStop(a0 + 0.012, 'rgba(34,36,34,0.13)');
+      cg.addColorStop(a0 + 0.07, 'rgba(34,36,34,0.035)');
+      cg.addColorStop(a0 + 0.124, 'rgba(34,36,34,0.0)');
+    }
+    bg.fillStyle = cg;
+    bg.fillRect(0, 0, S, S);
+  } else {
+    bg.fillStyle = 'rgba(34,36,34,0.06)';
+    bg.fillRect(0, 0, S, S);
   }
+  bg.globalCompositeOperation = 'destination-in';
+  const mask = bg.createRadialGradient(cx, cx, S * 0.06, cx, cx, S * 0.5);
+  mask.addColorStop(0, 'rgba(0,0,0,0)');
+  mask.addColorStop(0.3, 'rgba(0,0,0,1)');
+  mask.addColorStop(0.9, 'rgba(0,0,0,0.75)');
+  mask.addColorStop(1, 'rgba(0,0,0,0)');
+  bg.fillStyle = mask;
+  bg.fillRect(0, 0, S, S);
+  g.drawImage(blades, 0, 0);
+  // painted blade tips leave a thin yellow ring
+  g.strokeStyle = 'rgba(210,190,90,0.13)';
+  g.lineWidth = S * 0.018;
+  g.beginPath(); g.arc(cx, cx, S * 0.475, 0, Math.PI * 2); g.stroke();
   const ring = g.createRadialGradient(cx, cx, S * 0.1, cx, cx, S * 0.5);
   ring.addColorStop(0, 'rgba(30,30,30,0.0)');
-  ring.addColorStop(0.3, 'rgba(30,30,30,0.07)');
-  ring.addColorStop(0.95, 'rgba(30,30,30,0.06)');
+  ring.addColorStop(0.3, 'rgba(30,30,30,0.05)');
+  ring.addColorStop(0.95, 'rgba(30,30,30,0.04)');
   ring.addColorStop(1, 'rgba(30,30,30,0)');
   g.fillStyle = ring;
   g.fillRect(0, 0, S, S);
@@ -297,8 +396,10 @@ function build() {
   let rampMat;
   try { rampMat = assets.pbr('green_metal_rust', { tint: 0x9aa094, roughness: 0.9, metalness: 1 }); } catch (e) { rampMat = darkMetal; }
 
-  // fuselage + inner cargo bay
-  const fus = new THREE.Mesh(buildFuselage(true), paint);
+  // fuselage + inner cargo bay (fuselage paint zones come from vertex colours)
+  const fusPaint = paint.clone();
+  fusPaint.vertexColors = true;
+  const fus = new THREE.Mesh(buildFuselage(true), fusPaint);
   fus.name = 'fuselage';
   root.add(fus);
   const bay = new THREE.Mesh(buildFuselage(false, true), interior);
@@ -379,31 +480,42 @@ function build() {
     root.add(m);
   });
 
-  // cockpit glazing: panels tangent to the nose
+  // cockpit glazing conforming to the drooped nose: four windscreen panes, eyebrow windows above them, two side
+  // windows per side and the lower chin windows; then troop-compartment portholes and paratroop door frames
+  const D = Math.PI / 180;
   const glassParts = [];
-  const lathe = fuselageProfile();
-  const radiusAt = (h) => {
-    for (let i = 0; i < lathe.length - 1; i++) {
-      const a = lathe[i], b = lathe[i + 1];
-      if (h >= Math.min(a.y, b.y) && h <= Math.max(a.y, b.y)) return a.x + (b.x - a.x) * ((h - a.y) / (b.y - a.y || 1));
-    }
-    return R;
-  };
-  const panel = new THREE.PlaneGeometry(0.8, 0.52);
-  for (const [h, angs] of [[15.0, [-48, -24, 0, 24, 48]], [14.2, [-64, -40, 40, 64]]]) {
-    for (const deg of angs) {
-      const a = deg * Math.PI / 180;
-      const r = radiusAt(h) + 0.025;
-      const p = new THREE.Vector3(Math.sin(a) * r, Math.cos(a) * r * 1.06, -h);
-      const nrmv = new THREE.Vector3(Math.sin(a), Math.cos(a), -0.55).normalize();
-      const m = new THREE.Object3D();
-      m.position.copy(p);
-      m.lookAt(p.clone().add(nrmv));
-      m.updateMatrix();
-      glassParts.push(panel.clone().applyMatrix4(m.matrix));
+  for (const [a0, a1] of [[-47, -24.5], [-23, -1], [1, 23], [24.5, 47]]) glassParts.push(skinPane(a0 * D, a1 * D, 14.45, 15.35, 0.035));
+  for (const [a0, a1] of [[-40, -22], [-19, -2], [2, 19], [22, 40]]) glassParts.push(skinPane(a0 * D, a1 * D, 13.75, 14.18, 0.035, 3, 2));
+  for (const sd of [-1, 1]) {
+    for (const [a0, a1] of [[50, 70], [72, 92]]) glassParts.push(skinPane(sd * a0 * D, sd * a1 * D, 13.95, 15.05, 0.035, 3, 3));
+    glassParts.push(skinPane(sd * 104 * D, sd * 124 * D, 15.05, 15.75, 0.035, 3, 2));
+  }
+  // portholes: small rounded panes along both sides of the hold
+  const hole = new THREE.CircleGeometry(0.17, 14);
+  const v = new THREE.Vector3(), q = new THREE.Object3D();
+  for (const sd of [-1, 1]) {
+    for (let h = 8.6; h > -4.2; h -= 1.45) {
+      if (Math.abs(h - 3.4) < 0.9) continue;                  // the paratroop door sits here
+      skinPoint(sd * 74 * D, h, 0.03, v);
+      q.position.copy(v);
+      q.lookAt(v.x + sd * 4, v.y + 1.1, v.z);
+      q.updateMatrix();
+      glassParts.push(hole.clone().applyMatrix4(q.matrix));
     }
   }
-  root.add(named(new THREE.Mesh(mergeGeometries(glassParts), glass), 'glazing'));
+  root.add(named(new THREE.Mesh(mergeGeometries(glassParts.map(cleanForMerge)), glass), 'glazing'));
+  // window frames and door outlines: thin dark strips on the skin
+  const frames = [];
+  const strip = (a0, a1, h0, h1) => frames.push(skinPane(a0 * D, a1 * D, h0, h1, 0.02, 2, 1));
+  for (const sd of [-1, 1]) {
+    // paratroop door (aft of the wing, ahead of the ramp)
+    const aT = 58, aB = 100;
+    strip(sd * aT, sd * aB, 4.2, 4.27); strip(sd * aT, sd * aB, 2.55, 2.62);
+    strip(sd * aT, sd * (aT + 1.6), 2.55, 4.27); strip(sd * (aB - 1.6), sd * aB, 2.55, 4.27);
+    // crew entry door behind the cockpit
+    strip(sd * 72, sd * 112, 12.6, 12.66); strip(sd * 72, sd * 112, 11.7, 11.76);
+  }
+  root.add(named(new THREE.Mesh(mergeGeometries(frames.map(cleanForMerge)), darkMetal), 'frames'));
 
   // cargo ramp (hinged at its front edge)
   const rampGeo = new THREE.BoxGeometry(3.15, 0.14, 5.6);
