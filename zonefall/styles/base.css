@@ -189,6 +189,7 @@
 .zf-stat dt { font: 600 calc(11 * var(--u))/1 var(--zf-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--zf-ink-dim); }
 .zf-stat dd { margin-top: calc(10 * var(--u)); font: 600 calc(34 * var(--u))/1 var(--zf-display); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
 .zf-stats--row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.zf-stats--row > .zf-stat:nth-child(3n+1) { padding-left: 0; border-left: 0; }
 
 /* ---------------------------------------------------------------------------------------- toasts */
 .zf-toasts {

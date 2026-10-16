@@ -411,12 +411,18 @@ function syncOverlayEnv() {
 }
 
 // ------------------------------------------------------------------------------------------ frame
-function adapt(dt) {
+let lastRenderAt = 0;
+function adapt(simDt) {
+  // Measure the real frame interval: the loop clamps dt to 50 ms for the simulation, which would hide slow frames.
+  const t = performance.now();
+  const dt = lastRenderAt ? Math.min(2, Math.max(1e-3, (t - lastRenderAt) / 1000)) : simDt;
+  lastRenderAt = t;
   const ms = dt * 1000;
-  avgMs += (ms - avgMs) * (1 - Math.exp(-dt * 3));
-  fpsAvg += (1 / Math.max(dt, 1e-3) - fpsAvg) * (1 - Math.exp(-dt * 2));
+  const w = Math.min(dt, 0.1);    // one long hitch (shader compile, tab switch) must not dominate the averages
+  avgMs += (ms - avgMs) * (1 - Math.exp(-w * 3));
+  fpsAvg += (1 / Math.max(dt, 1e-3) - fpsAvg) * (1 - Math.exp(-w * 2));
   if (!adaptive) return;
-  if (avgMs > TUNE.slowMs) { slowT += dt; fastT = 0; } else if (avgMs < TUNE.fastMs) { fastT += dt; slowT = 0; } else { slowT = 0; fastT = 0; }
+  if (avgMs > TUNE.slowMs) { slowT += w; fastT = 0; } else if (avgMs < TUNE.fastMs) { fastT += w; slowT = 0; } else { slowT = 0; fastT = 0; }
   if (slowT > TUNE.slowHold && dprTarget > q.dprMin + 1e-3) {
     dprTarget = Math.max(q.dprMin, dprTarget - TUNE.dprStep); slowT = 0; applyDpr();
   } else if (fastT > TUNE.fastHold && dprTarget < q.dprCap - 1e-3) {

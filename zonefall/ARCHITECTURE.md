@@ -2,7 +2,7 @@
 
 ZONEFALL is a realistic modern-military battle royale that runs entirely in the browser from static GitHub Pages
 (`https://tygovansteenpaal.github.io/Site-s/zonefall/`). Up to 10 humans play together over serverless WebRTC
-(Trystero on Nostr relays), and bots fill the match to 16. The product name is ZONEFALL. Never use the names of
+(Trystero on Nostr relays), and bots fill every empty slot up to 10 players (`MATCH.maxPlayers`). The product name is ZONEFALL. Never use the names of
 existing commercial shooters anywhere in the product, code comments or assets.
 
 This document is the contract between six builder groups working in parallel. If code and this document disagree,
@@ -123,8 +123,9 @@ groups are allowed as long as no module calls another at import time. Only call 
 - **loading:** the UI loading screen shows `LOAD_PROGRESS` (weights: assets 55, audio 10, world 30, shaders 5).
 - **menu:** the 3D island is rendered behind the menu as a slow cinematic flyover (player/camera menu mode).
 - **lobby:** the same flyover is behind the lobby UI. net/lobby runs matchmaking and the countdown.
-- **match:** simulation runs (section 2.3). In practice, Escape or losing pointer lock pauses the simulation; online
-  play never pauses.
+- **match:** simulation runs (section 2.3). In practice, Escape or losing pointer lock pauses the simulation while the
+  local player is alive, and getting the lock back resumes it; a dead player (death screen, spectating) never pauses.
+  Online play never pauses.
 - **results:** the simulation is frozen, and the scene stays as the backdrop of the results screen.
 
 ### 2.2 Match timeline (shared clock)
@@ -187,8 +188,10 @@ the host damages bots. `?fastzone` multiplies all zone times by 0.1 for tests.
 
 ### 2.5 Local life states (`entity.life`, config enum `LIFE`)
 `PLANE -> FREEFALL -> CHUTE -> GROUND -> DEAD -> (SPECTATE)`. `SPECTATE` is also the state of a peer that is in the
-room but not in the match. The camera is third-person for PLANE, FREEFALL, CHUTE and the 2.5 s death cam, and first-person on
-GROUND.
+room but not in the match. The camera is third-person for PLANE, FREEFALL, CHUTE and the 2.5 s death cam. On GROUND it is
+third-person over the shoulder by default (Q swaps the shoulder) and V toggles first person (remembered per browser). ADS in
+third person moves the camera into the weapon's own sight (`state.local.mode = 'ads'`, arms only); the COMBAT viewmodel draws
+only when `state.local.mode === 'fp'`.
 
 ---
 
@@ -296,7 +299,7 @@ hasFlag(e, f), setFlag(e, f, on), aliveCount(), setAppState(to), resetMatchState
 ```
 **PlayerEntity:** `{id, name, kind:'local'|'remote'|'bot', owner, slot, alive, life, hp, armor, pos:Vector3, vel:Vector3,
 yaw, pitch, flags, weapon, kills, damage, speed, stale, lastSeen}`. Ids: humans use their Trystero peer id (a random
-20-char id offline), and bots use `bot:<slot>`. `slot` (0..15) is the roster index; it picks the avatar model (even slot = soldier_a)
+20-char id offline), and bots use `bot:<slot>`. `slot` (0..MATCH.maxPlayers-1) is the roster index; it picks the avatar model (even slot = soldier_a)
 and camo tint.
 
 **Single writer per field:**
@@ -515,6 +518,8 @@ world.getLootSpawns/getGround/setCrateOpen, inventory, assets, session.send('pic
 
 **game/bots.js:** `init()`, `setup(roster, seed)`, `update(dt)`, `applyDamage(botId, amount, info)`, `takeOver()`, `list()`.
 Uses world, loot, ballistics.fire, damage.applyToEntity/kill/regen, grenades.spawn, zone, match.planePosAt.
+Integration additions: `forceJump()` (eject every bot still aboard) and `placeNear(botId, x, z, yaw)` (host only; used by
+the `__zf.test.spawnBot` hook).
 
 ### 5.7 UI: `ui/*`
 **ui/ui.js:** `init(root)`, `update(dt)`, `setLoading(p, label)`, `toast(text, kind, ms)`, `fatal(title, detail)`.
@@ -524,7 +529,10 @@ isBigOpen`), `screens.js` (`mount, showDeath, showSpectate, showResults, showPau
 (`mountSettings(container)`). Only `ui/ui.js` is called by main.js; the sub-module APIs are the UI group's business.
 The UI emits UI_INTENT and reads state. It may call read-only getters: `lobby.get()`, `world.getMapImage()`,
 `renderer.stats()`, `session.diagnostics()`, `input.pressed/down` (map, scoreboard), `audio.ui()`, `settings.*`,
-and `world.lineOfSight` for the aimed-at enemy nameplate.
+and `world.lineOfSight` for the aimed-at enemy nameplate. Also agreed at integration: `match.planePath()`,
+`match.scoreboard()` (read-only), `lobby.regionFromTimeZone`, the input rebinding helpers (`captureNext`, `rebind`,
+`resetBindings`, `codeLabel`, `actionLabel`), and `viewmodel.setScopeOverlay(false)` at match start, because the UI draws
+the scope reticle (6.4).
 
 ---
 
@@ -695,7 +703,8 @@ Remote entities render at `now - interpDelay`, where `interpDelay = clamp(2 x in
 lerp and yaw takes the shortest arc. When snapshots run out, the entity extrapolates for at most 100 ms, then holds. After 3 s of
 silence it is `stale` (drawn as a ghost, excluded from host election). After 10 s, or on `onPeerLeave`, it is removed.
 Out-of-order packets are discarded with `seqNewer`. The local player keeps 1 s of its own pose history for validation.
-Background tabs throttle timers, so a backgrounded player goes stale: this is accepted.
+Browsers stop `requestAnimationFrame` in hidden tabs. While online, `core/loop.js` then drives the frame from a worker
+timer at 20 Hz without rendering, so a hidden host keeps simulating bots and every hidden player keeps sending snapshots.
 
 ### 8.7 Lobby and matchmaking
 - **Quick play:** room `zf1-qp-<region>-<n>`. The region comes from the time zone: Europe, Africa, America (north/south), Asia,
@@ -704,7 +713,8 @@ Background tabs throttle timers, so a backgrounded player goes stale: this is ac
 - **Private:** a 5-character code from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, room `zf1-pv-<CODE>`, with `password = CODE`.
   The share link is `.../zonefall/?room=CODE`.
 - **Countdown (host):** 45 s once there are 2 or more humans, 10 s once there are 6 or more. A quick-play player who is
-  still alone after 25 s starts against bots. `START NOW` (host) starts immediately. Empty slots up to 16 are filled with bots
+  still alone after 20 s (`MATCH.aloneStartAfter`) starts against 9 bots. `START NOW` (host) starts immediately. Empty slots up to
+  10 (`MATCH.maxPlayers`) are filled with bots
   named from `BOTS.names` (`stream(seed, 'bots')`).
 - If no relay socket is open after 8 s: NET_STATUS `error` with "Can't reach matchmaking servers", and the UI offers practice.
 
@@ -811,6 +821,12 @@ Any throw during boot, or during a frame, stops the loop and shows the fatal scr
 - NET: `diag()`;
 - UI: `showScreen(name, mock)`.
 Tests drive the game through these hooks and `bus.emit`.
+
+`window.__zf.test` (main.js) drives a whole match end to end: `info()` (flow snapshot), `lock(on)` (behave as if pointer lock
+were granted; headless browsers cannot lock), `intent(type)`, `skipLobby()`, `skipTo(t)`, `skipToDoors(jump)`, `jump()`,
+`teleport(siteId | [x, z] | [x, y, z])`, `give(weaponId, slot)`, `spawnBot(dist, id)`, `killAllBots()`, `killSelf(byId)`,
+`stepZone()`, `god(on)`, `press(action)`, `hold(action, on)`, `look(yaw, pitch)`, `face(target)`. `__zf.loop.frames` counts
+ticks; software WebGL can take seconds per frame and the simulation runs per frame, so tests wait on frames, not time.
 
 **URL switches** (config.DEV): `?quality=low|medium|high`, `?practice`, `?seed=N`, `?bots=N`, `?skipplane` (with `&spawn=<site id>`),
 `?mute`, `?room=CODE`, `?name=X`, `?debug` (stats overlay, strict bus), `?fastzone`, `?nopost`.

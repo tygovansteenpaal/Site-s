@@ -30,7 +30,7 @@ const TIPS = [
 ];
 
 const ITEMS = [
-  { id: 'quickplay', label: 'Quick play', sub: `Public lobby. Up to ${MATCH.maxHumans} players, bots fill to ${MATCH.maxPlayers}.`, primary: true },
+  { id: 'quickplay', label: 'Quick play', sub: `Public lobby for up to ${MATCH.maxHumans} players. Bots fill every empty slot.`, primary: true },
   { id: 'private', label: 'Private match', sub: 'Create a lobby and share the code, or join one.' },
   { id: 'practice', label: 'Practice vs bots', sub: `Offline match against ${MATCH.maxPlayers - 1} bots. Pauses when you open the menu.` },
   { id: 'settings', label: 'Settings', sub: 'Sensitivity, field of view, graphics, audio, controls.' },

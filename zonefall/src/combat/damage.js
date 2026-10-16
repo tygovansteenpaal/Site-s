@@ -375,6 +375,16 @@ export function init() {
   on(EV.NET_HIT, onNetHit);
   on(EV.NET_DEATH, onNetDeath);
   on(EV.MATCH_START, () => { lastHitAt.clear(); lastShotT.clear(); seenHits.length = 0; seenSet.clear(); });
+  // A practice pause freezes the match clock; the regen delay (wall clock) must not run on while paused either.
+  let pausedAt = 0;
+  on(EV.PAUSE, ({ paused }) => {
+    if (paused) { pausedAt = performance.now(); return; }
+    if (!pausedAt) return;
+    const shift = performance.now() - pausedAt;
+    pausedAt = 0;
+    state.local.lastDamageAt += shift;
+    for (const [id, t] of lastHitAt) lastHitAt.set(id, t + shift);
+  });
   debug.combat = debug.combat || {};
   Object.assign(debug.combat, {
     godMode: (on = true) => { setGodMode(on); return godMode; },

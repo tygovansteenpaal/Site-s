@@ -66,6 +66,7 @@ let canvasEl = null;
 let enabled = true;
 let locked = false;
 let allowUnlocked = false;
+let testLock = false;                 // automation: behave as if the pointer were locked (headless browsers cannot lock)
 let lastDevice = 'kbm';
 let capture = null;                   // {resolve, reject} while the settings UI waits for a key
 let initDone = false;
@@ -168,6 +169,7 @@ function onWheel(e) {
 function onContextMenu(e) { if (e.target === canvasEl) e.preventDefault(); }
 
 function onLockChange() {
+  if (testLock) return;
   const now = !!canvasEl && document.pointerLockElement === canvasEl;
   if (now === locked) return;
   locked = now;
@@ -176,6 +178,7 @@ function onLockChange() {
 }
 
 function onLockError() {
+  if (testLock) return;
   locked = false;
   emit(EV.INPUT_LOCK, { locked: false });
 }
@@ -271,6 +274,11 @@ export function init(canvas) {
     hold: (action, on = true) => { if (on) { if (!virtualHeld.has(action)) { virtualHeld.add(action); virtualPressQ.add(action); } } else if (virtualHeld.delete(action)) virtualReleaseQ.add(action); },
     releaseAll: () => { for (const a of virtualHeld) virtualReleaseQ.add(a); virtualHeld.clear(); },
     look: (dx, dy) => { virtualDX += dx; virtualDY += dy; },
+    /** Automation only: act as if pointer lock were granted (on) or released (off); real lock events are ignored while on. */
+    testLock: (on = true) => {
+      if (on) { testLock = true; setTestLocked(true); } else { setTestLocked(false); testLock = false; }
+      return locked;
+    },
   });
 }
 
@@ -340,6 +348,7 @@ export function mouse() {
 export function wheel() { return enabled ? wheelFrame : 0; }
 
 export function lock() {
+  if (testLock) { setTestLocked(true); return; }
   if (!canvasEl || locked || typeof canvasEl.requestPointerLock !== 'function') return;
   try {
     const p = canvasEl.requestPointerLock({ unadjustedMovement: true });
@@ -359,7 +368,15 @@ export function lock() {
 }
 
 export function unlock() {
+  if (testLock) { setTestLocked(false); return; }
   if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function setTestLocked(on) {
+  if (locked === on) return;
+  locked = on;
+  if (!locked) clearHeld();
+  emit(EV.INPUT_LOCK, { locked });
 }
 
 export function isLocked() { return locked; }
