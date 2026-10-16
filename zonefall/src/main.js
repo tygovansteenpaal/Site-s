@@ -240,8 +240,9 @@ function wireFlow() {
   });
   bus.on(EV.MATCH_START, () => { setPaused(false); setAppState(APP.MATCH); input.setEnabled(true); input.lock(); });
   bus.on(EV.MATCH_END, () => {
+    const mid = state.match.id;
     setTimeout(() => {
-      if (state.app !== APP.MATCH) return;
+      if (state.app !== APP.MATCH || state.match.id !== mid) return;   // left, or already in the next match
       input.unlock();
       setAppState(APP.RESULTS);
     }, MATCH.endDelay * 1000);
