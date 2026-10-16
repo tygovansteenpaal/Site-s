@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZONEFALL - UI harness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../src/ui/styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/",
+      "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js",
+      "trystero": "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm",
+      "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js",
+      "ez-tree": "https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js",
+      "../src/engine/audio.js": "./stubs/ui/audio.js",
+      "../src/engine/input.js": "./stubs/ui/input.js",
+      "../src/engine/renderer.js": "./stubs/ui/renderer.js",
+      "../src/net/lobby.js": "./stubs/ui/lobby.js",
+      "../src/net/session.js": "./stubs/ui/session.js",
+      "../src/world/world.js": "./stubs/ui/world.js",
+      "../src/combat/viewmodel.js": "./stubs/ui/viewmodel.js",
+      "../src/game/match.js": "./stubs/ui/match.js"
+    }
+  }
+  </script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0f0e; color: #e9e7e1; overflow: hidden; }
+    #backdrop { position: fixed; inset: 0; background: #2a3a40 center / cover no-repeat; }
+    #ui { position: fixed; inset: 0; pointer-events: none; }
+    #dev {
+      position: fixed; left: 8px; bottom: 8px; z-index: 100; width: 300px; max-height: calc(100vh - 16px); overflow: auto;
+      padding: 10px; background: rgba(8, 9, 9, 0.92); border: 1px solid rgba(233, 231, 225, 0.2);
+      font: 500 11px/1.3 'JetBrains Mono', monospace; color: #c9ccc7;
+    }
+    #dev[hidden] { display: none; }
+    #dev h2 { margin: 8px 0 5px; font: 600 10px/1 'Barlow Condensed', sans-serif; letter-spacing: .24em; text-transform: uppercase; color: #8f948f; }
+    #dev h2:first-child { margin-top: 0; }
+    #dev .row { display: flex; flex-wrap: wrap; gap: 4px; }
+    #dev button { font: 600 10.5px/1 'Barlow Condensed', sans-serif; letter-spacing: .12em; text-transform: uppercase; padding: 5px 7px;
+      color: #e9e7e1; background: rgba(233, 231, 225, 0.07); border: 1px solid rgba(233, 231, 225, 0.16); cursor: pointer; }
+    #dev button:hover { background: rgba(233, 231, 225, 0.16); }
+    #dev button.on { background: #e8b23a; color: #0d0f0e; border-color: #e8b23a; }
+    #dev button:focus-visible { outline: 2px solid #e8b23a; }
+    #dev p { margin: 6px 0 0; color: #6d726d; }
+  </style>
+</head>
+<body>
+  <div id="backdrop"></div>
+  <div id="ui"></div>
+  <aside id="dev" aria-label="UI harness controls">
+    <h2>Boot</h2>
+    <div class="row" data-group="boot"></div>
+    <h2>Menus</h2>
+    <div class="row" data-group="menus"></div>
+    <h2>Lobby</h2>
+    <div class="row" data-group="lobby"></div>
+    <h2>HUD states</h2>
+    <div class="row" data-group="hud"></div>
+    <h2>Air</h2>
+    <div class="row" data-group="air"></div>
+    <h2>Overlays</h2>
+    <div class="row" data-group="over"></div>
+    <h2>Feedback events</h2>
+    <div class="row" data-group="fx"></div>
+    <p>Backquote toggles this panel. URL: ?preset=name&amp;clean hides it.</p>
+  </aside>
+  <script type="module">
+    import * as ui from '../src/ui/ui.js';
+    import * as bus from '../src/core/bus.js';
+    import { EV } from '../src/core/bus.js';
+    import { state, debug, APP, LIFE, FLAG, setAppState, resetMatchState, createPlayer, getPlayer, setFlag } from '../src/core/state.js';
+    import * as settings from '../src/core/settings.js';
+    import * as input from '../src/engine/input.js';
+    import { ZONE, PLAYER, WEAPONS } from '../src/config.js';
+
+    const Q = new URLSearchParams(location.search);
+    settings.load();
+    ui.init(document.getElementById('ui'));
+    window.__uiMock = {};
+    window.__uiHarnessLocked = true;
+    const backdrop = document.getElementById('backdrop');
+    backdrop.style.backgroundImage = 'url(./stubs/ui/backdrop_menu.jpg)';
+
+    const NAMES = ['Viper', 'Ghost', 'Nomad', 'Kestrel', 'Rook', 'Havoc', 'Mako', 'Saber', 'Draven', 'Onyx', 'Talon', 'Jinx', 'Wraith', 'Bishop', 'Cinder'];
+    let spin = true, demo = false, demoT = 0;
+
+    // ------------------------------------------------------------------------------------- mock match
+    function mockMatch(opts = {}) {
+      resetMatchState();
+      state.selfId = 'self-0000000000000000';
+      state.name = settings.get('name');
+      const roster = [{ id: state.selfId, name: state.name, kind: 'human', slot: 0 }];
+      NAMES.forEach((n, i) => roster.push({ id: `bot:${i + 1}`, name: n, kind: i < 3 ? 'human' : 'bot', slot: i + 1 }));
+      roster[1].id = 'peerKestrelxxxxxxxxx'; roster[2].id = 'peerNomadxxxxxxxxxxx'; roster[3].id = 'peerRookxxxxxxxxxxxx';
+      Object.assign(state.match, { id: 'mock', seed: 7, mode: opts.mode || 'quick', phase: opts.phase || 'live', t0: performance.now(), time: opts.time ?? 190, roster, alive: opts.alive ?? 11 });
+      state.match.stats = { kills: 3, damage: 642, headshots: 1, survived: 312, longest: 87 };
+      roster.forEach((r, i) => {
+        const p = createPlayer({ id: r.id, name: r.name, kind: i === 0 ? 'local' : r.kind === 'bot' ? 'bot' : 'remote', slot: r.slot });
+        const a = i * 0.71, d = 40 + i * 9;
+        p.pos.set(-40 + Math.cos(a) * d, 14, 40 + Math.sin(a) * d);
+        p.life = LIFE.GROUND; p.alive = i < (opts.alive ?? 11); p.kills = [3, 2, 0, 1, 4, 0, 0, 1, 0, 2, 0, 0, 1, 0, 0, 0][i]; p.damage = 120 + i * 37;
+        p.hp = 100; p.armor = 100;
+      });
+      const me = getPlayer(state.selfId);
+      me.pos.set(-40, 14, 40);
+      me.yaw = -0.9;
+      me.hp = opts.hp ?? 100; me.armor = opts.armor ?? 150;
+      me.life = opts.life ?? LIFE.GROUND;
+      me.vel.set(0, opts.vy ?? 0, 0);
+      state.local.inv = { slots: [{ weapon: opts.weapon || 'm4a1', mag: opts.mag ?? 27 }, { weapon: 'm1911', mag: 8 }], active: 0, ammo: { ar: 120, light: 48, sniper: 15 }, plates: opts.plates ?? 3, frags: 2 };
+      Object.assign(state.zone, opts.zone || { phase: 1, state: 'waiting', x: -10, z: 30, r: 300, nx: 20, nz: 70, nr: 160, timeLeft: 70, dps: 4, outside: false });
+      state.local.lastDamageAt = performance.now() - 10000;
+      window.__uiHarnessLocked = true;
+      window.__uiHeld = new Set();
+      if (state.app !== APP.MATCH) setAppState(APP.MATCH);
+      backdrop.style.backgroundImage = 'url(./stubs/ui/backdrop.jpg)';
+      debug.ui.modules.hud.reset();
+      debug.ui.modules.screens.hideAll();
+      debug.ui.modules.map.setBigOpen(false);
+      seedFeed();
+      return me;
+    }
+
+    function seedFeed() {
+      bus.emit(EV.PLAYER_KILLED, { id: 'bot:9', by: 'bot:5', weapon: 'ak47', headshot: false });
+      bus.emit(EV.PLAYER_KILLED, { id: 'bot:12', by: null, weapon: 'zone', headshot: false });
+      bus.emit(EV.PLAYER_KILLED, { id: 'bot:7', by: 'peerKestrelxxxxxxxxx', weapon: 'm700', headshot: true });
+      bus.emit(EV.PLAYER_KILLED, { id: 'bot:11', by: state.selfId, weapon: 'm4a1', headshot: true });
+    }
+
+    function lobbyMock(kind) {
+      backdrop.style.backgroundImage = 'url(./stubs/ui/backdrop_menu.jpg)';
+      const now = performance.now();
+      const roster = [
+        { id: 'peerKestrelxxxxxxxxx', name: 'Kestrel', self: false, host: true },
+        { id: 'self-0000000000000000', name: settings.get('name'), self: true, host: false },
+        { id: 'peerNomadxxxxxxxxxxx', name: 'Nomad', self: false, host: false },
+        { id: 'peerRookxxxxxxxxxxxx', name: 'Rook_77', self: false, host: false },
+      ];
+      const base = { mode: 'private', code: 'K7QX2', roomId: 'zf1-pv-K7QX2', status: 'countdown', text: 'Match starts when the countdown ends. The host can start now.', hostId: roster[0].id, isHost: false,
+        roster, countdownEndsAt: now + 32000, link: location.origin + '/zonefall/?room=K7QX2', region: 'eu', bucket: 1, humans: 4, matchInProgress: false };
+      if (kind === 'host') Object.assign(base, { isHost: true, roster: roster.map((r) => ({ ...r, host: r.self, self: r.self })) });
+      if (kind === 'quick') Object.assign(base, { mode: 'quick', code: null, roomId: 'zf1-qp-eu-2', status: 'waiting', bucket: 2, countdownEndsAt: null, roster: roster.slice(0, 2), text: 'Waiting for more players. You start against bots in 18 s if nobody joins.' });
+      if (kind === 'connecting') Object.assign(base, { mode: 'quick', code: null, status: 'connecting', roster: [], countdownEndsAt: null, text: 'Searching EU lobby 1' });
+      if (kind === 'error') Object.assign(base, { mode: 'quick', code: null, status: 'error', roster: [], countdownEndsAt: null, text: "Can't reach matchmaking servers. Check your connection or play a practice match." });
+      if (kind === 'final') Object.assign(base, { countdownEndsAt: now + 7400 });
+      window.__uiMock.lobby = base;
+      window.__uiMock.diag = { status: kind === 'error' ? 'error' : 'online', transport: 'nostr', relaysOpen: kind === 'error' ? 0 : 7, hostId: base.hostId, isHost: base.isHost,
+        peers: kind === 'error' || kind === 'connecting' ? [] : [
+          { id: 'peerKestrelxxxxxxxxx', rtt: 38, channel: 'unreliable', pair: 'host', stale: false },
+          { id: 'peerNomadxxxxxxxxxxx', rtt: 112, channel: 'unreliable', pair: 'srflx', stale: false },
+          { id: 'peerRookxxxxxxxxxxxx', rtt: 186, channel: 'fallback', pair: 'relay', stale: false }] };
+      return base;
+    }
+
+    // ------------------------------------------------------------------------------------- presets
+    const P = {
+      boot: {
+        'loading 12%': () => { setAppState(APP.LOADING); bus.emit(EV.LOAD_PROGRESS, { p: 0.12, label: 'Models and textures' }); },
+        'loading 68%': () => { setAppState(APP.LOADING); bus.emit(EV.LOAD_PROGRESS, { p: 0.68, label: 'Island' }); },
+        'loading anim': () => { setAppState(APP.LOADING); let p = 0; const id = setInterval(() => { p = Math.min(1, p + 0.012); bus.emit(EV.LOAD_PROGRESS, { p, label: p < 0.55 ? 'Models and textures' : p < 0.65 ? 'Sound' : p < 0.95 ? 'Island' : 'Compiling shaders' }); if (p >= 1) clearInterval(id); }, 60); },
+        fatal: () => ui.fatal('WORLD - src/world/world.js', '[WORLD/world] getMapImage before build\n    at getMapImage (world.js:410)\n    at applyApp (ui.js:121)'),
+      },
+      menus: {
+        menu: () => { backdrop.style.backgroundImage = 'url(./stubs/ui/backdrop_menu.jpg)'; resetMatchState(); setAppState(APP.MENU); },
+        private: () => { P.menus.menu(); debug.ui.showScreen('private'); },
+        settings: () => { P.menus.menu(); debug.ui.showScreen('settings'); },
+        'settings controls': () => { P.menus.menu(); debug.ui.showScreen('settings'); document.querySelectorAll('.zf-tabs__btn')[3]?.click(); },
+        'settings graphics': () => { P.menus.menu(); debug.ui.showScreen('settings'); document.querySelectorAll('.zf-tabs__btn')[1]?.click(); },
+        credits: () => { P.menus.menu(); debug.ui.showScreen('credits'); },
+      },
+      lobby: {
+        'private countdown': () => { lobbyMock('guest'); setAppState(APP.LOBBY); bus.emit(EV.LOBBY_UPDATE, { lobby: window.__uiMock.lobby }); },
+        'host': () => { lobbyMock('host'); setAppState(APP.LOBBY); bus.emit(EV.LOBBY_UPDATE, { lobby: window.__uiMock.lobby }); },
+        'final 10 s': () => { lobbyMock('final'); setAppState(APP.LOBBY); bus.emit(EV.LOBBY_UPDATE, { lobby: window.__uiMock.lobby }); },
+        'quick waiting': () => { lobbyMock('quick'); setAppState(APP.LOBBY); bus.emit(EV.LOBBY_UPDATE, { lobby: window.__uiMock.lobby }); },
+        'connecting': () => { lobbyMock('connecting'); setAppState(APP.LOBBY); bus.emit(EV.LOBBY_UPDATE, { lobby: window.__uiMock.lobby }); },
+        'error': () => { lobbyMock('error'); setAppState(APP.LOBBY); bus.emit(EV.LOBBY_UPDATE, { lobby: window.__uiMock.lobby }); },
+      },
+      hud: {
+        full: () => { mockMatch(); },
+        'low health': () => { const me = mockMatch({ hp: 24, armor: 0, plates: 0, mag: 4 }); state.local.lastDamageAt = performance.now(); },
+        plating: () => { mockMatch({ armor: 62, hp: 100 }); state.local.action = 'plate'; state.local.actionT = 0.55; },
+        reloading: () => { mockMatch({ mag: 0 }); state.local.action = 'reload'; state.local.actionT = 0.4; },
+        'empty mag': () => { mockMatch({ mag: 0 }); },
+        'loot prompt': () => { mockMatch(); state.local.nearby = { uid: 's12', type: 'weapon', ref: 'm700', qty: 5, label: 'M700', rarity: 'epic' }; },
+        'crate prompt': () => { mockMatch(); state.local.nearby = { uid: 'k3', type: 'crate', label: 'SUPPLY CRATE', rarity: 'legendary' }; },
+        'outside zone': () => { mockMatch({ hp: 71, armor: 50, zone: { phase: 2, state: 'shrinking', x: 120, z: -90, r: 140, nx: 150, nz: -110, nr: 60, timeLeft: 28, dps: 7, outside: true } }); },
+        scoped: () => { mockMatch({ weapon: 'm700', mag: 4 }); state.local.scoped = true; state.local.ads = 1; state.local.breath = 0.62; },
+        pistol: () => { mockMatch({ weapon: 'm1911', mag: 6 }); state.local.spread = 3.4; },
+        unarmed: () => { mockMatch(); state.local.inv.slots = [null, null]; },
+      },
+      air: {
+        'plane doors closed': () => { mockMatch({ life: LIFE.PLANE, phase: 'plane', time: 4 }); state.local.altitude = 380; state.local.canDeploy = false; state.local.inPlane = true; },
+        'plane jump': () => { mockMatch({ life: LIFE.PLANE, phase: 'plane', time: 12 }); state.local.altitude = 380; state.local.canDeploy = true; },
+        freefall: () => { mockMatch({ life: LIFE.FREEFALL, vy: -38 }); state.local.altitude = 212; state.local.canDeploy = true; },
+        chute: () => { mockMatch({ life: LIFE.CHUTE, vy: -5 }); state.local.altitude = 64; state.local.canDeploy = true; },
+      },
+      over: {
+        death: () => { const me = mockMatch(); me.alive = false; me.life = LIFE.DEAD; state.local.killer = { id: 'bot:5', name: 'Havoc', weapon: 'ak47', headshot: true, distance: 46 }; state.match.placement = 7; debug.ui.showScreen('death', {}); },
+        spectate: () => { const me = mockMatch(); me.alive = false; me.life = LIFE.DEAD; state.local.spectating = 'bot:5'; getPlayer('bot:5').hp = 64; getPlayer('bot:5').armor = 50; },
+        'results win': () => { mockMatch(); state.match.placement = 1; state.match.winnerId = state.selfId; state.match.stats = { kills: 7, damage: 1384, headshots: 3, survived: 551, longest: 212 }; setAppState(APP.RESULTS); },
+        'results #4': () => { mockMatch(); state.match.placement = 4; state.match.winnerId = 'bot:5'; setAppState(APP.RESULTS); },
+        pause: () => { mockMatch({ mode: 'practice' }); unlockSoon(); },
+        'pause online': () => { mockMatch({ mode: 'quick' }); unlockSoon(); },
+        'pause settings': () => { mockMatch({ mode: 'practice' }); unlockSoon(() => document.querySelector('.zf-pause__actions .zf-btn:nth-child(2)')?.click()); },
+        'ready (net start)': () => { mockMatch({ mode: 'quick', life: LIFE.PLANE, phase: 'plane', time: 2 }); state.local.altitude = 380; bus.emit(EV.MATCH_START, { id: 'mock', seed: 7, t0: performance.now(), roster: state.match.roster, mode: 'quick' }); window.__uiHarnessLocked = false; },
+        map: () => { mockMatch(); debug.ui.showScreen('map'); },
+        'map plane': () => { mockMatch({ life: LIFE.PLANE, phase: 'plane', time: 12 }); debug.ui.showScreen('map'); },
+        scoreboard: () => { mockMatch(); window.__uiHeld = new Set(['scoreboard']); },
+      },
+      fx: {
+        'hit body': () => bus.emit(EV.HIT_CONFIRMED, { target: 'bot:4', dmg: 28, zone: 'body', kill: false, armorBroke: false }),
+        'hit head': () => bus.emit(EV.HIT_CONFIRMED, { target: 'bot:4', dmg: 39, zone: 'head', kill: false, armorBroke: false }),
+        'armor break': () => bus.emit(EV.HIT_CONFIRMED, { target: 'bot:4', dmg: 28, zone: 'body', kill: false, armorBroke: true }),
+        'kill': () => bus.emit(EV.PLAYER_KILLED, { id: 'bot:6', by: state.selfId, weapon: 'm4a1', headshot: false }),
+        'damage left': () => { damage('bot:8', 18); },
+        'damage behind': () => { const me = getPlayer(state.selfId); damage(null, 22, [Math.sin(me ? -me.yaw : 0), 0, -Math.cos(me ? -me.yaw : 0)]); },
+        'pickup': () => { bus.emit(EV.LOOT_PICKED, { uid: 's1', by: state.selfId, item: { type: 'ammo', ref: 'ar', qty: 60 } }); bus.emit(EV.LOOT_PICKED, { uid: 's2', by: state.selfId, item: { type: 'plate', ref: null, qty: 2 } }); },
+        'ping x3': () => { const me = getPlayer(state.selfId); if (!me) return; for (let i = 0; i < 3; i++) debug.ui.addPing(me.pos.x + 30 * Math.cos(i * 2), me.pos.z + 30 * Math.sin(i * 2), 'p' + i); },
+        'zone phase': () => bus.emit(EV.ZONE_PHASE, { phase: 2, state: 'shrinking', next: { x: 0, z: 0, r: 115 }, seconds: 40 }),
+        'toasts': () => { ui.toast('Invite link copied to the clipboard'); ui.toast('Someone grabbed that M4A1 first', 'warn'); ui.toast("Can't reach matchmaking servers", 'danger', 5000); },
+        'spin compass': () => { spin = !spin; },
+        'live demo': () => { demo = !demo; },
+      },
+    };
+
+    /** Unlock the pointer after the HUD has seen one locked frame (so the overlay reads as a pause, not a first start). */
+    function unlockSoon(then) {
+      window.__uiHarnessLocked = true;
+      requestAnimationFrame(() => requestAnimationFrame(() => { window.__uiHarnessLocked = false; if (then) requestAnimationFrame(() => requestAnimationFrame(then)); }));
+    }
+
+    function damage(from, amount, dir) {
+      const me = getPlayer(state.selfId);
+      if (!me) return;
+      let d = dir;
+      if (!d && from) { const s = getPlayer(from); const dx = me.pos.x - s.pos.x, dz = me.pos.z - s.pos.z, l = Math.hypot(dx, dz) || 1; d = [dx / l, 0, dz / l]; }
+      me.hp = Math.max(1, me.hp - amount);
+      state.local.lastDamageAt = performance.now();
+      bus.emit(EV.PLAYER_DAMAGED, { id: me.id, amount, hp: me.hp, armor: me.armor, armorBroke: false, from, weapon: 'ak47', zone: 'body', dir: d, kind: 'bullet' });
+    }
+
+    const groups = Object.fromEntries([...document.querySelectorAll('#dev [data-group]')].map((el) => [el.dataset.group, el]));
+    for (const [g, presets] of Object.entries(P)) {
+      for (const [name, fn] of Object.entries(presets)) {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = name;
+        b.addEventListener('click', () => { if (name !== 'fatal') document.querySelector('.zf-fatal')?.remove(); fn(); document.querySelectorAll('#dev button').forEach((x) => x.classList.toggle('on', x === b)); });
+        groups[g].append(b);
+      }
+    }
+    addEventListener('keydown', (e) => { if (e.code === 'Backquote') document.getElementById('dev').hidden = !document.getElementById('dev').hidden; });
+    if (Q.has('clean')) document.getElementById('dev').hidden = true;
+
+    // ------------------------------------------------------------------------------------- loop
+    let last = performance.now();
+    function frame(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      input.update();
+      if (state.app === APP.MATCH) {
+        state.match.time += dt;
+        if (state.zone.state === 'waiting' || state.zone.state === 'shrinking') state.zone.timeLeft = Math.max(0, state.zone.timeLeft - dt);
+        const me = getPlayer(state.selfId);
+        if (me && spin && !Q.has('still')) me.yaw += dt * 0.12;
+        if (me && me.hp < 100 && now - state.local.lastDamageAt > 5000) me.hp = Math.min(100, me.hp + 25 * dt);
+        if (demo) {
+          demoT -= dt;
+          if (demoT <= 0) {
+            demoT = 1.6 + Math.random() * 1.4;
+            const r = Math.random();
+            const ids = [...state.players.keys()].filter((id) => id !== state.selfId);
+            const a = ids[Math.floor(Math.random() * ids.length)], b = ids[Math.floor(Math.random() * ids.length)];
+            if (r < 0.3) bus.emit(EV.PLAYER_KILLED, { id: a, by: b, weapon: ['ak47', 'm4a1', 'mp5', 'm700'][Math.floor(Math.random() * 4)], headshot: Math.random() < 0.3 });
+            else if (r < 0.55) bus.emit(EV.HIT_CONFIRMED, { target: a, dmg: 28, zone: Math.random() < 0.3 ? 'head' : 'body', kill: false, armorBroke: Math.random() < 0.2 });
+            else if (r < 0.75) damage(a, 12 + Math.random() * 20);
+            else { const p = getPlayer(a); debug.ui.addPing(p.pos.x, p.pos.z, a); }
+          }
+        }
+      }
+      ui.update(dt);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+
+    window.__uiHarness = { P, run(group, name) { if (name !== 'fatal') document.querySelector('.zf-fatal')?.remove(); P[group][name](); }, mockMatch, lobbyMock, damage };
+    const pre = Q.get('preset');
+    if (pre) { for (const g of Object.values(P)) if (g[pre]) g[pre](); }
+    else P.menus.menu();
+    window.__uiReady = true;
+  </script>
+</body>
+</html>

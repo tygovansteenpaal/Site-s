@@ -34,6 +34,7 @@ const TUNE = {
 let inited = false;
 let pathCache = null, pathSeed = -1;
 const dead = new Set();
+const fates = new Map();       // id -> {place, by, weapon, at}: final placement and cause, for the scoreboard
 let lastVictim = null;
 let doorsOpen = false;
 let endedAt = 0;
@@ -136,6 +137,7 @@ export function beginFromNetwork(start, fromPeerId) {
 function begin(start, t0, mode) {
   resetMatchState();
   dead.clear();
+  fates.clear();
   lastVictim = null;
   doorsOpen = false;
   endedAt = 0;
@@ -232,6 +234,7 @@ function finish() {
   for (const e of state.players.values()) if (e.alive && e.life !== LIFE.SPECTATE && !dead.has(e.id)) { winner = e.id; break; }
   if (!winner) winner = lastVictim;
   m.winnerId = winner;
+  if (winner) fates.set(winner, { place: 1, by: null, weapon: null, at: m.time });
   if (winner === state.selfId) m.placement = 1;
   else if (!m.placement) m.placement = Math.max(1, m.alive + 1);
   endedAt = performance.now();
@@ -246,6 +249,7 @@ export function leave() {
   plane.setVisible(false);
   zone.setVisible(false);
   dead.clear();
+  fates.clear();
   lastVictim = null;
   doorsOpen = false;
   resetMatchState();
@@ -262,6 +266,7 @@ function onKilled({ id, by, weapon, headshot, pos }) {
   let alive = 0;
   for (const e of state.players.values()) if (e.alive && e.life !== LIFE.SPECTATE && !dead.has(e.id)) alive++;
   m.alive = alive;
+  fates.set(id, { place: alive + 1, by: by || null, weapon: weapon || null, at: m.time });
   if (by && by !== id && weapon !== 'left') {
     const k = getPlayer(by);
     if (k) k.kills = (k.kills || 0) + 1;
@@ -351,8 +356,39 @@ export function init() {
     planePath: () => ({ ...planePath() }),
     matchInfo: () => ({ phase: state.match.phase, time: state.match.time, alive: state.match.alive, winnerId: state.match.winnerId, placement: state.match.placement, stats: { ...state.match.stats } }),
     spectate: (id) => camera.setSpectate(id ?? null),
+    scoreboard: () => scoreboard(),
   });
 }
 
 /** Seconds since the match ended (0 while running). GAME addition for the UI. */
 export const endedFor = () => (endedAt ? (performance.now() - endedAt) / 1000 : 0);
+
+/**
+ * Scoreboard rows (GAME addition for the UI's Tab overlay and results screen): every roster entry with
+ * {id, name, kind:'human'|'bot', self, alive, kills, damage, place (0 while alive), by, byName, weapon}.
+ * Sorted: living players by kills then damage, then the dead by placement (best first).
+ */
+export function scoreboard() {
+  const rows = [];
+  for (const r of state.match.roster) {
+    const e = getPlayer(r.id);
+    const f = fates.get(r.id);
+    const alive = !!(e && e.alive && !dead.has(r.id)) && !(f && f.place > 1);
+    const by = f && f.by ? getPlayer(f.by) : null;
+    rows.push({
+      id: r.id, name: r.name, kind: r.kind, self: r.id === state.selfId, alive,
+      kills: e ? e.kills || 0 : 0, damage: Math.round(e ? e.damage || 0 : 0),
+      place: f ? f.place : 0, by: f ? f.by : null, byName: by ? by.name : null, weapon: f ? f.weapon : null,
+    });
+  }
+  rows.sort((a, b) => {
+    const pa = a.place || 0, pb = b.place || 0;
+    if (a.alive !== b.alive) return a.alive ? -1 : 1;
+    if (a.alive || (pa === 1) || (pb === 1)) {
+      if (pa === 1 || pb === 1) return pa === 1 ? -1 : 1;
+      return b.kills - a.kills || b.damage - a.damage;
+    }
+    return pa - pb;
+  });
+  return rows;
+}

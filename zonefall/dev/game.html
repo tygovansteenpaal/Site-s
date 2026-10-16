@@ -65,6 +65,21 @@
     #center small { display: block; font: 500 12px var(--mono); letter-spacing: .06em; color: var(--dim); margin-top: 6px; }
     #feed { position: fixed; right: 330px; top: 12px; text-align: right; font: 600 12px/1.5 var(--cond); letter-spacing: .08em; pointer-events: none; }
     #feed div { background: rgba(12,14,13,.6); padding: 2px 8px; margin-bottom: 3px; }
+    #scores { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, 92vw); max-height: 78vh; overflow: auto; padding: 14px 16px; display: none; z-index: 5; }
+    #scores.show { display: block; }
+    #scores .hd { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    #scores .hd b { font: 700 22px/1 var(--cond); letter-spacing: .14em; }
+    #scores .hd span { font: 500 11px var(--mono); color: var(--dim); }
+    #scores table { width: 100%; border-collapse: collapse; font: 500 12px/1 var(--mono); }
+    #scores th { font: 600 10px/1 var(--cond); letter-spacing: .18em; color: var(--mute); text-align: right; padding: 0 6px 6px; text-transform: uppercase; }
+    #scores td { padding: 5px 6px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
+    #scores th:nth-child(2), #scores td:nth-child(2) { text-align: left; }
+    #scores td:nth-child(2) { font: 600 13px/1 var(--cond); letter-spacing: .08em; text-transform: uppercase; }
+    #scores tr.me td { background: rgba(232,178,58,.12); } #scores tr.me td:nth-child(2) { color: var(--accent); }
+    #scores tr.out td { color: var(--mute); } #scores tr.out td:nth-child(2) { color: var(--dim); }
+    #scores .tag { font: 600 9px/1 var(--cond); letter-spacing: .14em; color: var(--mute); border: 1px solid var(--line); padding: 2px 4px; margin-left: 6px; vertical-align: 1px; }
+    #spec { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: none; gap: 6px; align-items: center; padding: 6px 8px; z-index: 4; }
+    #spec.show { display: flex; } #spec span { font: 600 13px/1 var(--cond); letter-spacing: .12em; padding: 0 8px; text-transform: uppercase; }
     #gas { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, rgba(255,110,50,.12), rgba(255,90,40,.38)); opacity: 0; transition: opacity .6s; }
     #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #0d0f0e; z-index: 9; font: 500 12px var(--mono); letter-spacing: .08em; color: var(--dim); }
     #boot b { display: block; font: 700 48px/1 var(--cond); color: var(--ink); letter-spacing: .06em; margin-bottom: 8px; }
@@ -104,7 +119,7 @@
       <button id="killBots">Kill all bots</button><select id="itemType"><option value="weapon:m4a1">M4A1</option><option value="weapon:ak47">AK-47</option>
       <option value="weapon:mp5">MP5</option><option value="weapon:m700">M700</option><option value="ammo:ar">AR ammo</option><option value="ammo:light">Light ammo</option>
       <option value="ammo:sniper">Sniper ammo</option><option value="plate:">Plate</option><option value="frag:">Frag</option></select><button id="spawnItem">Spawn item</button>
-      <button id="toPoi">Teleport to crate</button>
+      <button id="toPoi">Teleport to crate</button><button id="scoresBtn" title="Scoreboard (Tab)">Scores</button>
     </div>
   </div>
 
@@ -117,6 +132,8 @@
   </div>
 
   <div id="info" class="panel"></div>
+  <div id="scores" class="panel" role="dialog" aria-label="Scoreboard"></div>
+  <div id="spec" class="panel"><button id="specPrev" aria-label="Previous player">Prev</button><span id="specName">Spectating</span><button id="specNext" aria-label="Next player">Next</button></div>
   <div id="feed"></div>
   <div id="center"></div>
   <div id="prompt"><kbd>F</kbd><span id="promptT"></span><span class="r" id="promptR"></span></div>
@@ -258,7 +275,14 @@
       addEventListener('keydown', (e) => {
         if (e.code === 'KeyV') setView(H.view === 'game' ? 'overview' : 'game');
         if (e.code === 'KeyH') fold();
+        if (e.code === 'Tab') { e.preventDefault(); H.scoresHeld = true; }
+        if (e.code === 'BracketRight') camera.cycleSpectate(1);
+        if (e.code === 'BracketLeft') camera.cycleSpectate(-1);
       });
+      addEventListener('keyup', (e) => { if (e.code === 'Tab') H.scoresHeld = false; });
+      $('scoresBtn').onclick = () => { H.scoresPinned = !H.scoresPinned; $('scoresBtn').classList.toggle('on', H.scoresPinned); };
+      $('specNext').onclick = () => camera.cycleSpectate(1);
+      $('specPrev').onclick = () => camera.cycleSpectate(-1);
       $('fold').onclick = () => fold();
       if (innerWidth < 900) fold(true);
       $('game').addEventListener('pointerdown', () => audio.unlock());
@@ -484,8 +508,23 @@
       if (m.phase === 'ended' && H.ended) c = H.ended.winnerId === state.selfId ? 'VICTORY<small>Last one standing</small>' : `MATCH OVER<small>Winner: ${esc(getPlayer(H.ended.winnerId)?.name || '-')} - you placed #${m.placement}</small>`;
       else if (me && !me.alive && m.phase !== 'idle') c = `ELIMINATED<small>by ${esc(state.local.killer ? state.local.killer.name : '-')} - #${m.placement} - spectating</small>`;
       $('center').innerHTML = c;
+      const showScores = H.scoresHeld || H.scoresPinned || (m.phase === 'ended' && H.ended);
+      $('scores').classList.toggle('show', !!showScores && m.phase !== 'idle');
+      if (showScores && m.phase !== 'idle' && nowMs - (H.scoresAt || 0) > 250) { H.scoresAt = nowMs; scores(); }
+      const specId = me && !me.alive && m.phase === 'live' ? state.local.spectating : null;
+      $('spec').classList.toggle('show', !!specId);
+      if (specId) { const sp = getPlayer(specId); $('specName').textContent = sp ? `Spectating ${sp.name}${state.local.killer && state.local.killer.id === specId ? ' (your killer)' : ''}` : 'Spectating'; }
       $('feed').innerHTML = H.kills.filter((k) => nowMs - k.t < 9000).map((k) => `<div>${esc(k.text)}</div>`).join('');
       if (nowMs - lastInfo > 300) { lastInfo = nowMs; info(); }
+    }
+
+    function scores() {
+      const m = state.match;
+      const rows = match.scoreboard();
+      const how = (r) => r.alive ? (r.place === 1 ? 'winner' : 'alive') : r.weapon === 'left' ? 'left' : r.byName ? `by ${esc(r.byName)}` : r.weapon === 'zone' ? 'zone' : r.weapon === 'fall' ? 'fall' : 'out';
+      $('scores').innerHTML = `<div class="hd"><b>${m.phase === 'ended' ? 'FINAL STANDINGS' : 'SCOREBOARD'}</b><span>${m.alive} ALIVE &middot; ${fmtTime(Math.max(0, m.time))} &middot; SEED ${m.seed}</span></div>
+        <table><tr><th>#</th><th>Operator</th><th>Kills</th><th>Damage</th><th>Status</th></tr>
+        ${rows.map((r) => `<tr class="${r.self ? 'me' : ''} ${r.alive || r.place === 1 ? '' : 'out'}"><td>${r.place || '-'}</td><td>${esc(r.name)}${r.kind === 'bot' ? '<span class="tag">BOT</span>' : ''}</td><td>${r.kills}</td><td>${r.damage}</td><td>${how(r)}</td></tr>`).join('')}</table>`;
     }
 
     function info() {

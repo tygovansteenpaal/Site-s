@@ -267,16 +267,16 @@ const WALL_FS = /* glsl */`
 
     // rising gas: two fbm layers at different scales drifting up and sideways
     vec2 p1 = vec2(s * 0.018, y * 0.012 - uTime * 0.09);
-    vec2 p2 = vec2(s * 0.05 + uTime * 0.05, y * 0.035 - uTime * 0.26);
+    vec2 p2 = vec2(s * 0.034 + uTime * 0.05, y * 0.03 - uTime * 0.26);
     float n1 = fbm(p1);
     float n2 = fbm(p2 + n1 * 1.7);
     float streak = smoothstep(0.32, 0.86, n2 * 0.65 + n1 * 0.55);
     // fine vertical striations
-    float stria = 0.75 + 0.25 * sin(s * 0.55 + n1 * 6.0 + uTime * 0.4);
+    float stria = 0.88 + 0.12 * sin(s * 0.21 + n1 * 7.0 + uTime * 0.4);
 
     // density: heavy near the ground, thinning with height, never fully clear low down
     float low = 1.0 - smoothstep(0.0, 0.55, hNorm);
-    float density = mix(0.32, 1.0, low) * (0.3 + 1.0 * streak) * stria;
+    float density = mix(0.42, 1.0, low) * (0.45 + 0.95 * streak) * stria;
     density *= 1.0 - smoothstep(0.7, 1.0, hNorm);
     // bright band where the gas meets the ground
     float band = exp(-max(y - 2.0, 0.0) * 0.06) * 0.6;
@@ -314,7 +314,7 @@ function buildVisual() {
     name: 'zone-wall',
     uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uTime: { value: 0 }, uRadius: { value: 100 }, uCenter: { value: new THREE.Vector3() },
-      uColorLow: { value: new THREE.Color(1.3, 0.4, 0.09) }, uColorHigh: { value: new THREE.Color(0.78, 0.2, 0.07) },
+      uColorLow: { value: new THREE.Color(1.15, 0.3, 0.06) }, uColorHigh: { value: new THREE.Color(0.62, 0.13, 0.05) },
       uOpacity: { value: 0.72 }, uTop: { value: top },
     }]),
     vertexShader: WALL_VS, fragmentShader: WALL_FS,
@@ -342,7 +342,7 @@ function updateVisual(dt, t, inGas) {
     u.uRadius.value = zs.r;
     u.uCenter.value.set(zs.x, 0, zs.z);
     // shrinking walls pulse slightly brighter
-    u.uOpacity.value = zs.state === 'shrinking' ? 0.8 : 0.72;
+    u.uOpacity.value = zs.state === 'shrinking' ? 0.9 : 0.8;
   }
   gasFog(dt, inGas);
 }
