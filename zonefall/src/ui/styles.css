@@ -1,0 +1,49 @@
+/* ZONEFALL - UI styles. OWNER: UI. Design tokens agreed in ARCHITECTURE.md 9.1 live here; the component sheets are in
+   zonefall/styles/ and are imported below (relative to this file, so index.html and dev/*.html both resolve them). */
+@import url('../../styles/base.css');
+@import url('../../styles/menu.css');
+@import url('../../styles/hud.css');
+@import url('../../styles/screens.css');
+
+:root {
+  --zf-bg: #0d0f0e;
+  --zf-panel: rgba(12, 14, 13, 0.62);
+  --zf-panel-solid: #121413;
+  --zf-line: rgba(233, 231, 225, 0.16);
+  --zf-ink: #e9e7e1;          /* primary text, health */
+  --zf-ink-dim: #a3a7a2;
+  --zf-ink-faint: #6d726d;
+  --zf-accent: #e8b23a;       /* signal amber: focus, highlights, your name */
+  --zf-danger: #e5484d;       /* damage, kill hitmarker, low health */
+  --zf-armor: #5aa9e6;        /* armor plates */
+  --zf-zone: #ff6a3d;         /* gas, zone timer */
+  --zf-ok: #7bc47f;
+
+  --zf-display: 'Barlow Condensed', 'Barlow', system-ui, sans-serif;
+  --zf-body: 'Barlow', system-ui, sans-serif;
+  --zf-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  --zf-gutter: clamp(16px, 2.2vw, 28px);
+  --zf-ease: cubic-bezier(0.2, 0.7, 0.1, 1);
+
+  /* UI group additions */
+  --zf-line-strong: rgba(233, 231, 225, 0.32);
+  --zf-scrim: rgba(7, 8, 8, 0.86);
+  --zf-ts: 0 1px 2px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.45), 0 0 20px rgba(0, 0, 0, 0.25);
+  --zf-hud-dim: rgba(240, 238, 232, 0.78);
+  --zf-hud-faint: rgba(240, 238, 232, 0.56);
+  --zf-r-common: #d8d4c8;
+  --zf-r-uncommon: #6fcf6a;
+  --zf-r-rare: #4fa3ff;
+  --zf-r-epic: #b27cff;
+  --zf-r-legendary: #f2b636;
+}
+
+#ui {
+  font-family: var(--zf-body);
+  color: var(--zf-ink);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+#ui :is(button, input, select, a, [data-interactive]) { pointer-events: auto; }

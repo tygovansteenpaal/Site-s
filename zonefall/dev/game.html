@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZONEFALL - GAME harness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/",
+      "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js",
+      "trystero": "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm",
+      "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js",
+      "ez-tree": "https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --ink: #e9e7e1; --dim: #9a9e98; --mute: #6c706b; --line: rgba(233,231,225,.14); --panel: rgba(12,14,13,.78);
+      --accent: #e8b23a; --danger: #e5484d; --armor: #5aa9e6; --zone: #ff6a3d; --ok: #6fcf6a;
+      --mono: 'JetBrains Mono', ui-monospace, monospace; --cond: 'Barlow Condensed', system-ui, sans-serif; --body: 'Barlow', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0d0f0e; color: var(--ink); overflow: hidden; font: 13px/1.4 var(--body); }
+    #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+    .panel { position: fixed; background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(6px); }
+    h2 { margin: 0 0 6px; font: 600 11px/1 var(--cond); letter-spacing: .22em; color: var(--dim); text-transform: uppercase; }
+    button, select, input { font: 600 12px/1 var(--cond); letter-spacing: .1em; color: var(--ink); background: rgba(233,231,225,.06);
+      border: 1px solid var(--line); padding: 6px 9px; text-transform: uppercase; cursor: pointer; }
+    input { width: 74px; font-family: var(--mono); letter-spacing: 0; text-transform: none; cursor: text; }
+    button:hover { background: rgba(233,231,225,.13); }
+    button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button.on { background: var(--accent); color: #0d0f0e; border-color: var(--accent); }
+    #controls { left: 10px; top: 10px; padding: 10px; display: flex; flex-direction: column; gap: 7px; max-width: 420px; }
+    .row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+    .lbl { font: 600 10px/1 var(--cond); letter-spacing: .18em; color: var(--mute); text-transform: uppercase; min-width: 44px; }
+    #map { right: 10px; top: 10px; padding: 8px; }
+    #map canvas { display: block; width: 300px; height: 300px; image-rendering: auto; cursor: crosshair; }
+    #legend { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; font: 500 10px/1 var(--mono); color: var(--dim); }
+    #legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+    #slider { width: 300px; margin-top: 6px; display: flex; gap: 6px; align-items: center; font: 500 11px var(--mono); color: var(--dim); }
+    #slider input { flex: 1; width: auto; accent-color: var(--accent); }
+    #info { left: 10px; bottom: 10px; padding: 10px; width: 420px; max-height: 46vh; overflow: auto; font: 11px/1.45 var(--mono); }
+    #info table { border-collapse: collapse; width: 100%; }
+    #info td, #info th { padding: 1px 6px 1px 0; text-align: right; white-space: nowrap; }
+    #info th { color: var(--mute); font-weight: 500; }
+    #info td:first-child, #info th:first-child { text-align: left; }
+    .k { color: var(--mute); } .v { color: var(--ink); } .a { color: var(--accent); } .z { color: var(--zone); }
+    #hud { position: fixed; right: 10px; bottom: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; pointer-events: none; }
+    .bars { padding: 8px 10px; width: 230px; }
+    .bar { height: 7px; background: rgba(233,231,225,.12); margin-top: 4px; position: relative; }
+    .bar > b { position: absolute; inset: 0 auto 0 0; background: var(--ink); }
+    .plates { display: flex; gap: 3px; margin-top: 4px; } .plates b { flex: 1; height: 6px; background: rgba(90,169,230,.2); } .plates b.f { background: var(--armor); }
+    .wpn { font: 700 26px/1 var(--cond); letter-spacing: .04em; } .wpn small { font: 500 12px var(--mono); color: var(--dim); margin-left: 6px; }
+    #prompt { position: fixed; left: 50%; top: 61%; transform: translateX(-50%); pointer-events: none; font: 600 16px/1 var(--cond);
+      letter-spacing: .12em; padding: 8px 14px; background: rgba(12,14,13,.72); border: 1px solid var(--line); display: none; text-transform: uppercase; }
+    #prompt kbd { font: 700 13px var(--mono); color: #0d0f0e; background: var(--ink); padding: 2px 6px; margin-right: 8px; }
+    #prompt .r { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-left: 8px; }
+    #center { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); text-align: center; pointer-events: none; font: 700 22px/1.1 var(--cond); letter-spacing: .14em; text-shadow: 0 2px 10px rgba(0,0,0,.6); }
+    #center small { display: block; font: 500 12px var(--mono); letter-spacing: .06em; color: var(--dim); margin-top: 6px; }
+    #feed { position: fixed; right: 330px; top: 12px; text-align: right; font: 600 12px/1.5 var(--cond); letter-spacing: .08em; pointer-events: none; }
+    #feed div { background: rgba(12,14,13,.6); padding: 2px 8px; margin-bottom: 3px; }
+    #scores { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(560px, 92vw); max-height: 78vh; overflow: auto; padding: 14px 16px; display: none; z-index: 5; }
+    #scores.show { display: block; }
+    #scores .hd { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+    #scores .hd b { font: 700 22px/1 var(--cond); letter-spacing: .14em; }
+    #scores .hd span { font: 500 11px var(--mono); color: var(--dim); }
+    #scores table { width: 100%; border-collapse: collapse; font: 500 12px/1 var(--mono); }
+    #scores th { font: 600 10px/1 var(--cond); letter-spacing: .18em; color: var(--mute); text-align: right; padding: 0 6px 6px; text-transform: uppercase; }
+    #scores td { padding: 5px 6px; text-align: right; border-top: 1px solid var(--line); white-space: nowrap; }
+    #scores th:nth-child(2), #scores td:nth-child(2) { text-align: left; }
+    #scores td:nth-child(2) { font: 600 13px/1 var(--cond); letter-spacing: .08em; text-transform: uppercase; }
+    #scores tr.me td { background: rgba(232,178,58,.12); } #scores tr.me td:nth-child(2) { color: var(--accent); }
+    #scores tr.out td { color: var(--mute); } #scores tr.out td:nth-child(2) { color: var(--dim); }
+    #scores .tag { font: 600 9px/1 var(--cond); letter-spacing: .14em; color: var(--mute); border: 1px solid var(--line); padding: 2px 4px; margin-left: 6px; vertical-align: 1px; }
+    #spec { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: none; gap: 6px; align-items: center; padding: 6px 8px; z-index: 4; }
+    #spec.show { display: flex; } #spec span { font: 600 13px/1 var(--cond); letter-spacing: .12em; padding: 0 8px; text-transform: uppercase; }
+    #gas { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, rgba(255,110,50,.12), rgba(255,90,40,.38)); opacity: 0; transition: opacity .6s; }
+    #boot { position: fixed; inset: 0; display: grid; place-items: center; background: #0d0f0e; z-index: 9; font: 500 12px var(--mono); letter-spacing: .08em; color: var(--dim); }
+    #boot b { display: block; font: 700 48px/1 var(--cond); color: var(--ink); letter-spacing: .06em; margin-bottom: 8px; }
+    #err { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: 640px; padding: 18px; background: #1a0f0f; border: 1px solid var(--danger); display: none; z-index: 10; font: 12px var(--mono); white-space: pre-wrap; }
+    body.folded #controls > :not(:first-child), body.folded #info, body.folded #legend, body.folded #slider { display: none; }
+    body.folded #map canvas { width: 150px; height: 150px; }
+    @media (max-width: 900px) {
+      #map canvas { width: 190px; height: 190px; } #slider { width: 190px; } #controls { max-width: 330px; padding: 7px; gap: 5px; }
+      #info { width: 330px; max-height: 32vh; font-size: 10px; } button, select { padding: 4px 6px; font-size: 11px; }
+      #feed { right: 216px; } .bars { width: 180px; } .wpn { font-size: 20px; } #legend { display: none; } #center { font-size: 18px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  </style>
+</head>
+<body>
+  <canvas id="game" tabindex="0" aria-label="ZONEFALL game harness view"></canvas>
+  <div id="gas"></div>
+  <div id="boot"><div><b>ZONEFALL</b><span id="bootText">GAME harness: loading the island</span></div></div>
+  <div id="err" role="alert"></div>
+
+  <div id="controls" class="panel">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Game harness: match, zone, loot, bots</h2><button id="fold" title="Hide panels (H)">Hide</button></div>
+    <div class="row"><span class="lbl">Match</span>
+      <label class="k">seed <input id="seed" type="number" min="0" step="1"></label>
+      <label class="k">bots <input id="botsN" type="number" min="0" max="15" step="1" value="15" style="width:48px"></label>
+      <button id="start">Start practice</button><button id="leave">Leave</button>
+    </div>
+    <div class="row"><span class="lbl">Time</span>
+      <button data-ff="0">Pause</button><button data-ff="1" class="on">x1</button><button data-ff="4">x4</button><button data-ff="10">x10</button>
+      <button id="jumpBtn">Jump</button><button id="skipZone">Next zone step</button>
+    </div>
+    <div class="row"><span class="lbl">View</span>
+      <button data-view="game" class="on">Player</button><button data-view="overview">Overview</button><button data-view="plane">Plane</button>
+      <button data-view="bot">Follow bot</button><button id="nextBot">Next bot</button>
+    </div>
+    <div class="row"><span class="lbl">Test</span>
+      <button id="killBots">Kill all bots</button><select id="itemType"><option value="weapon:m4a1">M4A1</option><option value="weapon:ak47">AK-47</option>
+      <option value="weapon:mp5">MP5</option><option value="weapon:m700">M700</option><option value="ammo:ar">AR ammo</option><option value="ammo:light">Light ammo</option>
+      <option value="ammo:sniper">Sniper ammo</option><option value="plate:">Plate</option><option value="frag:">Frag</option></select><button id="spawnItem">Spawn item</button>
+      <button id="toPoi">Teleport to crate</button><button id="scoresBtn" title="Scoreboard (Tab)">Scores</button>
+    </div>
+  </div>
+
+  <div id="map" class="panel">
+    <h2>Tactical</h2>
+    <canvas id="mapc" width="600" height="600" aria-label="Top-down map of the match"></canvas>
+    <div id="slider"><span>ZONE AT</span><input id="tprev" type="range" min="0" max="560" step="1" value="0" aria-label="Zone preview time"><span id="tprevL">LIVE</span></div>
+    <div id="legend"><span><i style="background:#ff6a3d"></i>zone</span><span><i style="background:#fff"></i>next</span><span><i style="background:#e8b23a"></i>plane</span>
+      <span><i style="background:#6fcf6a"></i>bot loot</span><span><i style="background:#4fa3ff"></i>roam</span><span><i style="background:#e5484d"></i>engage</span><span><i style="background:#b27cff"></i>zone run</span></div>
+  </div>
+
+  <div id="info" class="panel"></div>
+  <div id="scores" class="panel" role="dialog" aria-label="Scoreboard"></div>
+  <div id="spec" class="panel"><button id="specPrev" aria-label="Previous player">Prev</button><span id="specName">Spectating</span><button id="specNext" aria-label="Next player">Next</button></div>
+  <div id="feed"></div>
+  <div id="center"></div>
+  <div id="prompt"><kbd>F</kbd><span id="promptT"></span><span class="r" id="promptR"></span></div>
+  <div id="hud">
+    <div class="panel bars" style="position:static">
+      <div class="row" style="justify-content:space-between"><span class="wpn" id="wpn">1911<small id="ammo">8 / 24</small></span><span class="k" id="slot2"></span></div>
+      <div class="k" style="margin-top:6px">HEALTH <span class="v" id="hpT">100</span></div><div class="bar"><b id="hpB" style="width:100%"></b></div>
+      <div class="plates" id="plates"><b></b><b></b><b></b></div>
+      <div class="k" style="margin-top:5px">PLATES <span class="v" id="pl">2</span> &nbsp; FRAGS <span class="v" id="fr">0</span></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { DEV, WEAPONS, ZONE, MATCH, AMMO } from '../src/config.js';
+    import * as bus from '../src/core/bus.js';
+    import { EV } from '../src/core/bus.js';
+    import { state, gfx, debug, LIFE, APP, setAppState, localPlayer, getPlayer } from '../src/core/state.js';
+    import * as settings from '../src/core/settings.js';
+    import { createLoop } from '../src/core/loop.js';
+    import { ALL_SITES } from '../src/core/mapdata.js';
+    import { fmtTime, worldToMap, mapToWorld } from '../src/core/util.js';
+    import * as renderer from '../src/engine/renderer.js';
+    import * as assets from '../src/engine/assets.js';
+    import * as input from '../src/engine/input.js';
+    import * as audio from '../src/engine/audio.js';
+    import * as world from '../src/world/world.js';
+    import * as controller from '../src/player/controller.js';
+    import * as camera from '../src/player/camera.js';
+    import * as avatar from '../src/player/avatar.js';
+    import * as inventory from '../src/player/inventory.js';
+    import * as weapons from '../src/combat/weapons.js';
+    import * as ballistics from '../src/combat/ballistics.js';
+    import * as damage from '../src/combat/damage.js';
+    import * as grenades from '../src/combat/grenades.js';
+    import * as vfx from '../src/combat/vfx.js';
+    import * as viewmodel from '../src/combat/viewmodel.js';
+    import * as sync from '../src/net/sync.js';
+    import * as match from '../src/game/match.js';
+    import * as plane from '../src/game/plane.js';
+    import * as zone from '../src/game/zone.js';
+    import * as loot from '../src/game/loot.js';
+    import * as bots from '../src/game/bots.js';
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const H = { ff: 1, view: 'game', follow: null, previewT: null, kills: [], errors: [], ready: false, overviewYaw: 0.6 };
+    window.__zf = { name: 'ZONEFALL', ready: false, fatalError: null, state, gfx, bus, debug, modules: { match, plane, zone, loot, bots, world, camera, controller, inventory, damage, weapons } };
+
+    function fail(err) {
+      console.error('[game harness]', err);
+      window.__zf.fatalError = String(err && err.message || err);
+      $('err').style.display = 'block';
+      $('err').textContent = 'GAME harness stopped\n\n' + String(err && err.stack || err);
+    }
+
+    // ---------------------------------------------------------------- boot
+    async function boot() {
+      settings.load();
+      const canvas = $('game');
+      await renderer.init(canvas, { tier: DEV.quality || settings.get('quality') });
+      input.init(canvas);
+      audio.init();
+      const prog = (p, l) => { $('bootText').textContent = `${l || 'Loading'} ${Math.round(p * 100)}%`; };
+      await assets.loadCore((p, l) => prog(p * 0.6, l || 'Models and textures'));
+      await audio.loadAll((p) => prog(0.6 + p * 0.1, 'Sound'));
+      await world.build({ scene: gfx.scene, quality: renderer.getQuality(), onProgress: (p, l) => prog(0.7 + p * 0.3, l || 'Island') });
+      camera.init(gfx.camera);
+      controller.init();
+      avatar.init(gfx.scene);
+      ballistics.init();
+      damage.init();
+      weapons.init();
+      grenades.init(gfx.scene);
+      vfx.init(gfx.scene);
+      viewmodel.init();
+      sync.init();
+      plane.init(gfx.scene);
+      zone.init(gfx.scene);
+      loot.init(gfx.scene);
+      bots.init();
+      match.init();
+      audio.setListener(gfx.camera);
+      await renderer.compile();
+      wire();
+      setAppState(APP.MENU);
+      $('boot').remove();
+      $('seed').value = String(DEV.seed ?? 1337);
+      if (DEV.bots != null) $('botsN').value = String(DEV.bots);
+      loop.start();
+      H.ready = true;
+      window.__zf.ready = true;
+      if (!new URLSearchParams(location.search).has('nostart')) startMatch();
+    }
+
+    function startMatch() {
+      audio.unlock();
+      const seed = Number($('seed').value) >>> 0;
+      const n = Math.max(0, Math.min(15, Number($('botsN').value) | 0));
+      H.kills.length = 0;
+      match.startPractice({ seed, bots: n });
+    }
+
+    function wire() {
+      bus.on(EV.MATCH_START, () => { setAppState(APP.MATCH); input.setEnabled(true); });
+      bus.on(EV.MATCH_END, (e) => { H.ended = e; });
+      bus.on(EV.MATCH_START, () => { H.ended = null; });
+      bus.on(EV.PLAYER_KILLED, ({ id, by, weapon, headshot }) => {
+        const v = getPlayer(id), k = by ? getPlayer(by) : null;
+        H.kills.unshift({ t: performance.now(), text: `${k ? k.name : (weapon === 'zone' ? 'ZONE' : weapon === 'fall' ? 'FALL' : '')} ${k ? '[' + (WEAPONS[weapon] ? WEAPONS[weapon].name : weapon) + (headshot ? ' HS' : '') + ']' : ''} ${v ? v.name : id}` });
+        H.kills.length = Math.min(H.kills.length, 6);
+      });
+      bus.on(EV.TOAST, ({ text }) => { H.toast = { text, until: performance.now() + 1600 }; });
+      bus.on(EV.ZONE_PHASE, ({ state: s, seconds }) => { H.banner = { text: s === 'shrinking' ? 'ZONE CLOSING' : 'NEW SAFE ZONE MARKED', sub: `${fmtTime(seconds)}`, until: performance.now() + 3500 }; });
+      bus.on(EV.PLANE_DOORS, ({ open }) => { if (open) H.banner = { text: 'DOORS OPEN', sub: 'SPACE TO JUMP', until: performance.now() + 3000 }; });
+      $('start').onclick = () => startMatch();
+      $('leave').onclick = () => { match.leave(); setAppState(APP.MENU); };
+      document.querySelectorAll('[data-ff]').forEach((b) => b.onclick = () => { H.ff = Number(b.dataset.ff); document.querySelectorAll('[data-ff]').forEach((x) => x.classList.toggle('on', x === b)); });
+      document.querySelectorAll('[data-view]').forEach((b) => b.onclick = () => setView(b.dataset.view));
+      $('nextBot').onclick = () => { setView('bot'); cycleBot(); };
+      $('jumpBtn').onclick = () => controller.jumpFromPlane();
+      $('skipZone').onclick = () => {
+        const t = state.match.time;
+        const tl = zone.timeline();
+        const next = tl.flatMap((s) => [s.waitAt, s.shrinkAt, s.endAt]).find((x) => x > t + 0.5);
+        if (next != null) debug.game.skipTo(next - 0.2);
+      };
+      $('killBots').onclick = () => debug.game.killAllBots();
+      $('spawnItem').onclick = () => { const [type, ref] = $('itemType').value.split(':'); debug.game.spawnItem(type, ref || null); };
+      $('toPoi').onclick = () => teleportToCrate();
+      $('tprev').oninput = () => { const v = Number($('tprev').value); H.previewT = v <= 0 ? null : v; $('tprevL').textContent = H.previewT == null ? 'LIVE' : fmtTime(v); };
+      $('mapc').onclick = (ev) => {
+        const r = ev.target.getBoundingClientRect();
+        const [x, z] = mapToWorld((ev.clientX - r.left) / r.width, (ev.clientY - r.top) / r.height);
+        const me = localPlayer();
+        if (me && me.life === LIFE.GROUND) controller.teleport([x, world.getHeight(x, z) + 0.5, z]);
+        else { H.overviewCenter = [x, z]; setView('overview'); }
+      };
+      addEventListener('keydown', (e) => {
+        if (e.code === 'KeyV') setView(H.view === 'game' ? 'overview' : 'game');
+        if (e.code === 'KeyH') fold();
+        if (e.code === 'Tab') { e.preventDefault(); H.scoresHeld = true; }
+        if (e.code === 'BracketRight') camera.cycleSpectate(1);
+        if (e.code === 'BracketLeft') camera.cycleSpectate(-1);
+      });
+      addEventListener('keyup', (e) => { if (e.code === 'Tab') H.scoresHeld = false; });
+      $('scoresBtn').onclick = () => { H.scoresPinned = !H.scoresPinned; $('scoresBtn').classList.toggle('on', H.scoresPinned); };
+      $('specNext').onclick = () => camera.cycleSpectate(1);
+      $('specPrev').onclick = () => camera.cycleSpectate(-1);
+      $('fold').onclick = () => fold();
+      if (innerWidth < 900) fold(true);
+      $('game').addEventListener('pointerdown', () => audio.unlock());
+    }
+
+    function fold(on) {
+      const f = on ?? !document.body.classList.contains('folded');
+      document.body.classList.toggle('folded', f);
+      $('fold').textContent = f ? 'Show' : 'Hide';
+    }
+    function setView(v) {
+      H.view = v;
+      document.querySelectorAll('[data-view]').forEach((x) => x.classList.toggle('on', x.dataset.view === v));
+      if (v === 'bot' && !H.follow) cycleBot();
+    }
+    function cycleBot() {
+      const ids = bots.list().filter((id) => { const e = getPlayer(id); return e && e.alive; });
+      if (!ids.length) { H.follow = null; return; }
+      const i = ids.indexOf(H.follow);
+      H.follow = ids[(i + 1) % ids.length];
+    }
+    function teleportToCrate() {
+      const me = localPlayer();
+      if (!me) return null;
+      let best = null, bd = Infinity;
+      for (const it of loot.all().values()) {
+        if (it.type !== 'crate' || it.opened) continue;
+        const d = Math.hypot(it.pos[0] - me.pos.x, it.pos[2] - me.pos.z);
+        if (d < bd) { bd = d; best = it; }
+      }
+      if (!best) return null;
+      if (me.life !== LIFE.GROUND) controller.spawn('ground', [best.pos[0] + 1.6, best.pos[1], best.pos[2] + 1.6]);
+      else controller.teleport([best.pos[0] + 1.6, best.pos[1] + 0.3, best.pos[2] + 1.6]);
+      return best.uid;
+    }
+
+    // ---------------------------------------------------------------- frame
+    const camTarget = new THREE.Vector3();
+    function simulate(dt) {
+      camera.look(dt);
+      match.update(dt);
+      plane.update(dt);
+      controller.update(dt);
+      weapons.update(dt);
+      grenades.update(dt);
+      bots.update(dt);
+      damage.update(dt);
+      zone.update(dt);
+      loot.update(dt);
+    }
+    function frame(dt, draw = true) {
+      try {
+        input.update();
+        if (state.app === APP.MATCH && H.ff > 0) {
+          simulate(dt);
+          for (let i = 1; i < H.ff; i++) { state.match.t0 -= dt * 1000; simulate(dt); }
+        } else if (state.app === APP.MATCH) {
+          state.match.t0 += dt * 1000;   // paused: hold the shared clock
+        }
+        avatar.update(dt);
+        camera.update(dt);
+        overrideCamera(dt);
+        viewmodel.update(dt);
+        vfx.update(dt);
+        world.update(dt, gfx.camera.position);
+        audio.update(dt);
+        if (draw) { renderer.render(dt); hud(); }
+      } catch (err) { loop.stop(); fail(err); }
+    }
+    const loop = createLoop((dt) => frame(dt, true));
+
+    function overrideCamera(dt) {
+      const cam = gfx.camera;
+      if (H.view === 'game') { viewmodel.setVisible(true); return; }
+      viewmodel.setVisible(false);
+      avatar.setLocalVisible(true);
+      if (H.view === 'overview') {
+        H.overviewYaw += dt * 0.03;
+        const c = H.overviewCenter || [state.zone.r > 0 && state.zone.r < 800 ? state.zone.x : 0, state.zone.r > 0 && state.zone.r < 800 ? state.zone.z : 0];
+        const R = 620;
+        cam.position.set(c[0] + Math.sin(H.overviewYaw) * R, 430, c[1] + Math.cos(H.overviewYaw) * R);
+        cam.lookAt(c[0], 0, c[1]);
+      } else if (H.view === 'plane') {
+        const t = plane.getTransform();
+        camTarget.copy(t.pos);
+        cam.position.set(t.pos.x - t.dir.x * 34 + t.dir.z * 22, t.pos.y + 9, t.pos.z - t.dir.z * 34 - t.dir.x * 22);
+        cam.lookAt(camTarget.x + t.dir.x * 4, camTarget.y, camTarget.z + t.dir.z * 4);
+      } else if (H.view === 'fixed' && H.fixed) {
+        cam.position.set(...H.fixed.pos);
+        cam.lookAt(...H.fixed.look);
+      } else if (H.view === 'planeRel' && H.rel) {
+        // offset in the plane frame: [right, up, forward] metres, looking at the plane centre + lookOff
+        const t = plane.getTransform();
+        const rx = -t.dir.z, rz = t.dir.x;
+        const [a, u, f] = H.rel.off;
+        cam.position.set(t.pos.x + rx * a + t.dir.x * f, t.pos.y + u, t.pos.z + rz * a + t.dir.z * f);
+        const [la, lu, lf] = H.rel.look || [0, 0, 0];
+        cam.lookAt(t.pos.x + rx * la + t.dir.x * lf, t.pos.y + lu, t.pos.z + rz * la + t.dir.z * lf);
+      } else if (H.view === 'bot') {
+        let e = H.follow ? getPlayer(H.follow) : null;
+        if (!e || !e.alive) { cycleBot(); e = H.follow ? getPlayer(H.follow) : null; }
+        if (!e) return;
+        const fx = -Math.sin(e.yaw), fz = -Math.cos(e.yaw);
+        const air = e.life === LIFE.FREEFALL || e.life === LIFE.CHUTE;
+        const back = air ? 9 : 3.6, up = air ? 3.5 : 1.95, side = air ? 0 : 0.55;
+        cam.position.set(e.pos.x - fx * back - fz * side, e.pos.y + up, e.pos.z - fz * back + fx * side);
+        camTarget.set(e.pos.x + fx * 6, e.pos.y + (air ? 0.5 : 1.45), e.pos.z + fz * 6);
+        cam.lookAt(camTarget);
+      }
+      cam.updateMatrixWorld();
+    }
+
+    // ---------------------------------------------------------------- tactical map
+    const mapc = $('mapc'), mctx = mapc.getContext('2d');
+    let mapImg = null, lastMapDraw = 0;
+    const MODE_COL = { loot: '#6fcf6a', roam: '#4fa3ff', engage: '#e5484d', cover: '#ff9f43', zone: '#b27cff', air: '#e9e7e1', plane: '#e8b23a', dead: '#555' };
+    const RAR_COL = { common: '#d8d4c8', uncommon: '#6fcf6a', rare: '#4fa3ff', epic: '#b27cff', legendary: '#f2b636' };
+    function mx(x) { return worldToMap(x, 0)[0] * mapc.width; }
+    function mz(z) { return worldToMap(0, z)[1] * mapc.height; }
+    const ms = (r) => r / 1200 * mapc.width;
+    function drawMap() {
+      const W = mapc.width;
+      if (!mapImg) { try { mapImg = world.getMapImage(); } catch (e) { mapImg = null; } }
+      mctx.fillStyle = '#16211f'; mctx.fillRect(0, 0, W, W);
+      if (mapImg) mctx.drawImage(mapImg, 0, 0, W, W);
+      mctx.fillStyle = 'rgba(8,10,9,.25)'; mctx.fillRect(0, 0, W, W);
+      // site labels
+      mctx.font = '600 15px "Barlow Condensed", sans-serif'; mctx.textAlign = 'center'; mctx.fillStyle = 'rgba(233,231,225,.75)';
+      for (const s of ALL_SITES) if (s.r >= 60) mctx.fillText(s.name, mx(s.x), mz(s.z) - ms(s.r) * 0.55);
+      if (state.match.phase === 'idle') return;
+      // loot
+      for (const it of loot.all().values()) {
+        if (it.type === 'crate' && it.opened) continue;
+        mctx.fillStyle = RAR_COL[loot.rarity(it)];
+        const s = it.type === 'crate' ? 4 : 2;
+        mctx.fillRect(mx(it.pos[0]) - s / 2, mz(it.pos[2]) - s / 2, s, s);
+      }
+      // zone: all circles faint, current solid, next white
+      const t = H.previewT ?? state.match.time;
+      const cs = zone.circles();
+      mctx.setLineDash([4, 5]); mctx.lineWidth = 1; mctx.strokeStyle = 'rgba(255,255,255,.22)';
+      for (let i = 1; i < cs.length; i++) { mctx.beginPath(); mctx.arc(mx(cs[i].x), mz(cs[i].z), Math.max(1, ms(cs[i].r)), 0, Math.PI * 2); mctx.stroke(); }
+      mctx.setLineDash([]);
+      const ph = zone.phaseAt(t);
+      if (ph.state !== 'pre' || H.previewT != null) {
+        mctx.save();
+        mctx.beginPath(); mctx.rect(0, 0, W, W); mctx.arc(mx(ph.current.x), mz(ph.current.z), ms(ph.current.r), 0, Math.PI * 2, true);
+        mctx.fillStyle = 'rgba(255,90,40,.22)'; mctx.fill('evenodd');
+        mctx.restore();
+        mctx.strokeStyle = '#ff6a3d'; mctx.lineWidth = 2.5;
+        mctx.beginPath(); mctx.arc(mx(ph.current.x), mz(ph.current.z), ms(ph.current.r), 0, Math.PI * 2); mctx.stroke();
+      }
+      mctx.strokeStyle = '#ffffff'; mctx.lineWidth = 1.5;
+      mctx.beginPath(); mctx.arc(mx(ph.next.x), mz(ph.next.z), Math.max(1.5, ms(ph.next.r)), 0, Math.PI * 2); mctx.stroke();
+      // plane path
+      const p = match.planePath();
+      mctx.strokeStyle = 'rgba(232,178,58,.85)'; mctx.lineWidth = 1.5; mctx.setLineDash([8, 6]);
+      mctx.beginPath(); mctx.moveTo(mx(p.a[0]), mz(p.a[2])); mctx.lineTo(mx(p.b[0]), mz(p.b[2])); mctx.stroke(); mctx.setLineDash([]);
+      const da = p.speed * p.doorsOpenAt, fj = p.speed * p.forceJumpAt;
+      mctx.strokeStyle = '#e8b23a'; mctx.lineWidth = 4;
+      mctx.beginPath(); mctx.moveTo(mx(p.a[0] + p.dir[0] * da), mz(p.a[2] + p.dir[2] * da)); mctx.lineTo(mx(p.a[0] + p.dir[0] * fj), mz(p.a[2] + p.dir[2] * fj)); mctx.stroke();
+      if (state.match.time < p.exitAt) {
+        const pp = match.planePosAt(state.match.time, new THREE.Vector3());
+        mctx.fillStyle = '#e8b23a'; mctx.beginPath(); mctx.arc(mx(pp.x), mz(pp.z), 6, 0, Math.PI * 2); mctx.fill();
+      }
+      // players and bots
+      for (const e of state.players.values()) {
+        if (e.life === LIFE.PLANE) continue;
+        const x = mx(e.pos.x), y = mz(e.pos.z);
+        if (!e.alive) { mctx.strokeStyle = 'rgba(229,72,77,.8)'; mctx.lineWidth = 2; mctx.beginPath(); mctx.moveTo(x - 4, y - 4); mctx.lineTo(x + 4, y + 4); mctx.moveTo(x + 4, y - 4); mctx.lineTo(x - 4, y + 4); mctx.stroke(); continue; }
+        const isMe = e.id === state.selfId;
+        let col = '#e9e7e1';
+        if (e.kind === 'bot') {
+          const b = debug.game.botBrain ? debug.game.botBrain(e.id) : null;
+          col = MODE_COL[b ? b.mode : 'roam'] || '#ccc';
+          if (b && b.goal && b.mode !== 'engage') { mctx.strokeStyle = col + '66'; mctx.lineWidth = 1; mctx.beginPath(); mctx.moveTo(x, y); mctx.lineTo(mx(b.goal.x), mz(b.goal.z)); mctx.stroke(); }
+          if (b && b.target && b.targetVisible) { const o = getPlayer(b.target); if (o) { mctx.strokeStyle = 'rgba(229,72,77,.7)'; mctx.beginPath(); mctx.moveTo(x, y); mctx.lineTo(mx(o.pos.x), mz(o.pos.z)); mctx.stroke(); } }
+        }
+        const fx = -Math.sin(e.yaw), fz = -Math.cos(e.yaw);
+        mctx.fillStyle = isMe ? '#e8b23a' : col;
+        mctx.beginPath();
+        if (isMe) { mctx.moveTo(x + fx * 11, y + fz * 11); mctx.lineTo(x - fz * 6 - fx * 5, y + fx * 6 - fz * 5); mctx.lineTo(x + fz * 6 - fx * 5, y - fx * 6 - fz * 5); }
+        else mctx.arc(x, y, 4.5, 0, Math.PI * 2);
+        mctx.fill();
+        if (!isMe) { mctx.strokeStyle = col; mctx.lineWidth = 1.5; mctx.beginPath(); mctx.moveTo(x, y); mctx.lineTo(x + fx * 9, y + fz * 9); mctx.stroke(); }
+      }
+    }
+
+    // ---------------------------------------------------------------- HUD + info
+    let lastInfo = 0;
+    function hud() {
+      const nowMs = performance.now();
+      if (nowMs - lastMapDraw > 200) { lastMapDraw = nowMs; drawMap(); }
+      const me = localPlayer();
+      const inv = state.local.inv;
+      if (me && inv) {
+        const act = inventory.active();
+        const W = act ? WEAPONS[act.weapon] : null;
+        $('wpn').firstChild.textContent = W ? W.name : 'UNARMED';
+        $('ammo').textContent = W ? `${act.mag} / ${inventory.ammo(W.ammo)}` : '';
+        const other = inv.slots[inv.active === 0 ? 1 : 0];
+        $('slot2').textContent = other ? WEAPONS[other.weapon].name : '';
+        $('hpT').textContent = Math.ceil(me.hp);
+        $('hpB').style.width = `${Math.max(0, me.hp)}%`;
+        $('hpB').style.background = me.hp < 35 ? 'var(--danger)' : 'var(--ink)';
+        [...$('plates').children].forEach((b, i) => b.classList.toggle('f', me.armor > i * 50 + 1));
+        $('pl').textContent = inv.plates; $('fr').textContent = inv.frags;
+      }
+      const near = state.local.nearby;
+      if (near && me && me.alive) {
+        $('prompt').style.display = 'block';
+        $('promptT').textContent = near.type === 'crate' ? 'OPEN SUPPLY CRATE' : `PICK UP ${near.label}`;
+        $('promptR').style.background = RAR_COL[near.rarity] || '#ccc';
+      } else $('prompt').style.display = 'none';
+      $('gas').style.opacity = state.zone.outside ? '1' : '0';
+      // centre banner
+      let c = '';
+      const m = state.match;
+      if (H.toast && nowMs < H.toast.until) c = esc(H.toast.text);
+      else if (H.banner && nowMs < H.banner.until) c = `${H.banner.text}<small>${H.banner.sub}</small>`;
+      else if (me && me.life === LIFE.PLANE) c = controller.doorsOpen() ? 'PRESS SPACE TO JUMP<small>Forced exit in ' + Math.max(0, Math.ceil(match.planePath().forceJumpAt - m.time)) + ' s</small>' : 'DOORS OPENING SOON<small>Over the island in ' + Math.max(0, Math.ceil(match.planePath().doorsOpenAt - m.time)) + ' s</small>';
+      else if (me && (me.life === LIFE.FREEFALL || me.life === LIFE.CHUTE)) c = `${Math.round(state.local.altitude || 0)} M<small>${me.life === LIFE.FREEFALL ? 'SPACE: DEPLOY PARACHUTE' : 'PARACHUTE OPEN'}</small>`;
+      if (m.phase === 'ended' && H.ended) c = H.ended.winnerId === state.selfId ? 'VICTORY<small>Last one standing</small>' : `MATCH OVER<small>Winner: ${esc(getPlayer(H.ended.winnerId)?.name || '-')} - you placed #${m.placement}</small>`;
+      else if (me && !me.alive && m.phase !== 'idle') c = `ELIMINATED<small>by ${esc(state.local.killer ? state.local.killer.name : '-')} - #${m.placement} - spectating</small>`;
+      $('center').innerHTML = c;
+      const showScores = H.scoresHeld || H.scoresPinned || (m.phase === 'ended' && H.ended);
+      $('scores').classList.toggle('show', !!showScores && m.phase !== 'idle');
+      if (showScores && m.phase !== 'idle' && nowMs - (H.scoresAt || 0) > 250) { H.scoresAt = nowMs; scores(); }
+      const specId = me && !me.alive && m.phase === 'live' ? state.local.spectating : null;
+      $('spec').classList.toggle('show', !!specId);
+      if (specId) { const sp = getPlayer(specId); $('specName').textContent = sp ? `Spectating ${sp.name}${state.local.killer && state.local.killer.id === specId ? ' (your killer)' : ''}` : 'Spectating'; }
+      $('feed').innerHTML = H.kills.filter((k) => nowMs - k.t < 9000).map((k) => `<div>${esc(k.text)}</div>`).join('');
+      if (nowMs - lastInfo > 300) { lastInfo = nowMs; info(); }
+    }
+
+    function scores() {
+      const m = state.match;
+      const rows = match.scoreboard();
+      const how = (r) => r.alive ? (r.place === 1 ? 'winner' : 'alive') : r.weapon === 'left' ? 'left' : r.byName ? `by ${esc(r.byName)}` : r.weapon === 'zone' ? 'zone' : r.weapon === 'fall' ? 'fall' : 'out';
+      $('scores').innerHTML = `<div class="hd"><b>${m.phase === 'ended' ? 'FINAL STANDINGS' : 'SCOREBOARD'}</b><span>${m.alive} ALIVE &middot; ${fmtTime(Math.max(0, m.time))} &middot; SEED ${m.seed}</span></div>
+        <table><tr><th>#</th><th>Operator</th><th>Kills</th><th>Damage</th><th>Status</th></tr>
+        ${rows.map((r) => `<tr class="${r.self ? 'me' : ''} ${r.alive || r.place === 1 ? '' : 'out'}"><td>${r.place || '-'}</td><td>${esc(r.name)}${r.kind === 'bot' ? '<span class="tag">BOT</span>' : ''}</td><td>${r.kills}</td><td>${r.damage}</td><td>${how(r)}</td></tr>`).join('')}</table>`;
+    }
+
+    function info() {
+      const m = state.match, z = state.zone;
+      const st = renderer.stats();
+      const ls = loot.stats();
+      const sites = Object.entries(ls.bySite).sort((a, b) => b[1].total - a[1].total);
+      const botRows = (debug.game.bots ? debug.game.bots() : []).slice(0, 15);
+      const zs = z.state === 'pre' ? `starts in ${fmtTime(z.timeLeft)}` : `${z.state} ${fmtTime(z.timeLeft)}`;
+      $('info').innerHTML = `
+        <div><span class="k">phase</span> <span class="a">${m.phase}</span> <span class="k">t</span> <span class="v">${m.time.toFixed(1)}s</span>
+          <span class="k">alive</span> <span class="v">${m.alive}/${m.roster.length}</span> <span class="k">kills</span> <span class="v">${m.stats.kills}</span>
+          <span class="k">fps</span> <span class="v">${st.fps.toFixed(0)}</span> <span class="k">calls</span> <span class="v">${st.calls}</span> <span class="k">tier</span> <span class="v">${st.tier}</span></div>
+        <div><span class="k">zone</span> <span class="z">phase ${z.phase} ${zs}</span> <span class="k">r</span> <span class="v">${z.r.toFixed(0)}</span>
+          <span class="k">dps</span> <span class="v">${z.dps}</span> <span class="k">outside</span> <span class="v">${z.outside}</span> <span class="k">gas</span> <span class="v">${zone.gasAmount().toFixed(2)}</span></div>
+        <h2 style="margin-top:8px">Loot by site (${ls.total} items, tier ${ls.byTier.join('/')})</h2>
+        <table><tr><th>site</th><th>all</th><th>wpn</th><th>ammo</th><th>plate</th><th>frag</th><th>crate</th></tr>
+        ${sites.map(([s, c]) => `<tr><td>${s}</td><td>${c.total}</td><td>${c.weapon || 0}</td><td>${c.ammo || 0}</td><td>${c.plate || 0}</td><td>${c.frag || 0}</td><td>${c.crate || 0}</td></tr>`).join('')}</table>
+        <div class="k" style="margin-top:4px">${Object.entries(ls.byType).map(([k, v]) => `${k} ${v}`).join(' &middot; ')}</div>
+        <h2 style="margin-top:8px">Bots</h2>
+        <table><tr><th>name</th><th>mode</th><th>hp</th><th>ar</th><th>weapon</th><th>k</th><th>skill</th><th>site</th></tr>
+        ${botRows.map((b) => `<tr style="opacity:${b.alive ? 1 : 0.4}"><td>${esc(b.name)}</td><td style="color:${MODE_COL[b.mode] || '#ccc'}">${b.mode}</td><td>${b.hp}</td><td>${b.armor}</td><td>${b.weapon || '-'}</td><td>${b.kills}</td><td>${b.skill}</td><td>${b.site}</td></tr>`).join('')}</table>`;
+    }
+
+    // ---------------------------------------------------------------- test hooks
+    /** Manual stepping for tests: n frames of dt; the shared match clock advances exactly dt per frame. */
+    function step(n = 1, dt = 1 / 30, drawLast = true) {
+      for (let i = 0; i < n; i++) {
+        const before = performance.now();
+        frame(dt, drawLast && i === n - 1);
+        if (state.match.phase !== 'idle') state.match.t0 -= dt * 1000 * Math.max(1, H.ff) - (performance.now() - before) - (H.ff > 1 ? dt * 1000 * (H.ff - 1) : 0);
+      }
+    }
+    window.__zf.harness = {
+      step, setView, cycleBot, teleportToCrate, startMatch, H,
+      manual: (on) => (on ? loop.stop() : loop.start()),
+      setFF: (k) => { H.ff = k; },
+      follow: (id) => { H.follow = id; setView('bot'); },
+      fixedCam: (pos, look) => { H.fixed = { pos, look }; setView('fixed'); },
+      planeCam: (off, look) => { H.rel = { off, look }; setView('planeRel'); },
+      overview: (x, z) => { H.overviewCenter = x == null ? null : [x, z]; setView('overview'); },
+      preview: (t) => { H.previewT = t; },
+      drawMap,
+    };
+
+    boot().catch(fail);
+  </script>
+</body>
+</html>

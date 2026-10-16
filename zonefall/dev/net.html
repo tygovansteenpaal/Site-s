@@ -1,0 +1,1007 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZONEFALL - Net harness</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/",
+      "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js",
+      "trystero": "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm",
+      "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js",
+      "ez-tree": "https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js",
+      "../src/game/match.js": "./stubs/net/match.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      --ink: #e9e7e1; --ink-2: #b9bbb5; --ink-3: #80847f; --ink-4: #555a56; --bg: #0b0d0c; --bg-2: #111412;
+      --panel: rgba(17, 20, 18, 0.94); --line: rgba(233, 231, 225, 0.10); --line-2: rgba(233, 231, 225, 0.2);
+      --accent: #e8b23a; --accent-dim: rgba(232, 178, 58, 0.14); --danger: #e5484d; --ok: #8fbf6a; --olive: #9aa27a; --blue: #6fa8dc;
+      --ease: cubic-bezier(.2, .7, .2, 1);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); overflow: hidden;
+      font: 400 13px/1.45 Barlow, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    #app { display: grid; height: 100%; grid-template-columns: 268px minmax(0, 1fr) 330px; grid-template-rows: 46px minmax(0, 1fr); }
+    header { grid-column: 1 / -1; display: flex; align-items: center; gap: 18px; padding: 0 14px; border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #131614, #0e100f); min-width: 0; overflow: hidden; }
+    h1 { margin: 0; font: 700 22px/1 'Barlow Condensed', sans-serif; letter-spacing: .08em; white-space: nowrap; }
+    h1 span { color: var(--accent); }
+    h1 small { font: 500 11px/1 'JetBrains Mono', monospace; color: var(--ink-3); letter-spacing: .12em; margin-left: 8px; }
+    .kv { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .kv b { font: 500 9.5px/1 'JetBrains Mono', monospace; letter-spacing: .14em; color: var(--ink-3); text-transform: uppercase; }
+    .kv span { font: 500 12px/1.1 'JetBrains Mono', monospace; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pill { display: inline-flex; align-items: center; gap: 7px; padding: 5px 9px; border: 1px solid var(--line-2);
+      font: 600 11px/1 'JetBrains Mono', monospace; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+    .pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); box-shadow: 0 0 0 3px rgba(255,255,255,.04); }
+    .pill.online i { background: var(--ok); box-shadow: 0 0 10px rgba(143,191,106,.6); }
+    .pill.connecting i { background: var(--accent); animation: blink 1s infinite; }
+    .pill.error { border-color: rgba(229,72,77,.5); color: #ffb3b5; } .pill.error i { background: var(--danger); }
+    @keyframes blink { 50% { opacity: .25; } }
+    .spacer { flex: 1; }
+    #detailsBtn { display: none; }
+    aside { background: var(--panel); overflow-y: auto; min-height: 0; scrollbar-width: thin; scrollbar-color: #2a2f2b transparent; }
+    #left { border-right: 1px solid var(--line); padding: 4px 14px 16px; }
+    #right { border-left: 1px solid var(--line); padding: 4px 14px 16px; }
+    section { border-bottom: 1px solid var(--line); padding: 12px 0 12px; }
+    section:last-child { border-bottom: 0; }
+    h2 { margin: 0 0 9px; display: flex; justify-content: space-between; align-items: baseline;
+      font: 600 12px/1 'Barlow Condensed', sans-serif; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-2); }
+    h2 em { font: 500 10px/1 'JetBrains Mono', monospace; font-style: normal; letter-spacing: .06em; color: var(--ink-3); text-transform: none; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    button { font: 600 12px/1 'Barlow Condensed', sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--ink);
+      background: rgba(233,231,225,.05); border: 1px solid var(--line-2); padding: 9px 6px; cursor: pointer;
+      transition: background .15s var(--ease), border-color .15s var(--ease), color .15s var(--ease); }
+    button:hover:not(:disabled) { background: rgba(233,231,225,.11); border-color: rgba(233,231,225,.35); }
+    button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    button:disabled { color: var(--ink-4); border-color: var(--line); cursor: default; }
+    button.primary { background: var(--accent); color: #17140c; border-color: var(--accent); }
+    button.primary:hover:not(:disabled) { background: #f2c25a; }
+    button.primary:disabled { background: transparent; color: var(--ink-4); border-color: var(--line); }
+    button.on { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+    .row { display: flex; gap: 6px; margin-top: 6px; }
+    input[type=text] { flex: 1; min-width: 0; background: #0a0c0b; border: 1px solid var(--line-2); color: var(--ink); padding: 8px 9px;
+      font: 600 13px/1 'JetBrains Mono', monospace; letter-spacing: .25em; text-transform: uppercase; }
+    input[type=text]::placeholder { color: var(--ink-4); letter-spacing: .1em; }
+    .status { margin-top: 10px; padding: 10px; background: #0d0f0e; border: 1px solid var(--line); }
+    .status .big { font: 700 30px/1 'Barlow Condensed', sans-serif; letter-spacing: .04em; color: var(--accent); font-variant-numeric: tabular-nums; }
+    .status .big.dim { color: var(--ink-3); font-size: 18px; }
+    .status p { margin: 6px 0 0; color: var(--ink-2); font-size: 12.5px; }
+    .code { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+    .code span { font: 700 20px/1 'JetBrains Mono', monospace; letter-spacing: .3em; color: var(--ink); }
+    .code a { color: var(--ink-3); font: 500 10.5px/1 'JetBrains Mono', monospace; text-decoration: none; border-bottom: 1px dotted var(--ink-4); }
+    ul.roster { list-style: none; margin: 8px 0 0; padding: 0; }
+    ul.roster li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; }
+    ul.roster li:first-child { border-top: 0; }
+    ul.roster li .tag { margin-left: auto; font: 600 9.5px/1 'JetBrains Mono', monospace; letter-spacing: .12em; color: var(--ink-3); }
+    ul.roster li.self { color: var(--accent); }
+    ul.roster li .dot { width: 6px; height: 6px; background: var(--ink-3); transform: rotate(45deg); }
+    ul.roster li.self .dot { background: var(--accent); }
+    .slider { display: grid; grid-template-columns: 62px 1fr 52px; align-items: center; gap: 8px; margin: 6px 0; color: var(--ink-2); font-size: 12px; }
+    .slider output { font: 500 11px/1 'JetBrains Mono', monospace; text-align: right; color: var(--ink); }
+    input[type=range] { width: 100%; accent-color: var(--accent); }
+    .note { color: var(--ink-3); font-size: 11.5px; margin: 6px 0 0; }
+    #center { position: relative; min-width: 0; min-height: 0; background: var(--bg); }
+    #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
+    table { width: 100%; border-collapse: collapse; font: 500 11px/1.25 'JetBrains Mono', monospace; }
+    th { text-align: left; font-weight: 500; color: var(--ink-3); letter-spacing: .08em; font-size: 9.5px; padding: 0 4px 6px 0; text-transform: uppercase; white-space: nowrap; }
+    td { padding: 5px 4px 5px 0; border-top: 1px solid var(--line); white-space: nowrap; vertical-align: top; }
+    td.name { font-family: Barlow, sans-serif; font-weight: 600; font-size: 12.5px; max-width: 86px; overflow: hidden; text-overflow: ellipsis; }
+    td .sub { display: block; color: var(--ink-3); font-size: 9.5px; margin-top: 2px; }
+    .good { color: var(--ok); } .warn { color: var(--accent); } .bad { color: var(--danger); } .dim { color: var(--ink-3); }
+    .empty { color: var(--ink-3); font-size: 12px; padding: 6px 0; }
+    ol.tests { list-style: none; margin: 0; padding: 0; font: 500 11px/1.3 'JetBrains Mono', monospace; }
+    ol.tests li { display: grid; grid-template-columns: 38px 1fr; gap: 6px; padding: 4px 0; border-top: 1px solid var(--line); }
+    ol.tests li:first-child { border-top: 0; }
+    ol.tests li b { font-weight: 700; letter-spacing: .06em; }
+    ol.tests li b.pass { color: var(--ok); } ol.tests li b.fail { color: var(--danger); } ol.tests li b.wait { color: var(--ink-3); }
+    ol.tests li span small { display: block; color: var(--ink-3); font-size: 10px; margin-top: 1px; }
+    #log { font: 500 10.5px/1.45 'JetBrains Mono', monospace; max-height: 260px; overflow-y: auto; }
+    #log div { padding: 2px 0; border-top: 1px solid rgba(233,231,225,.05); color: var(--ink-2); word-break: break-word; }
+    #log div time { color: var(--ink-4); margin-right: 6px; }
+    #log div.host { color: var(--accent); } #log div.hit { color: #ff9b9e; } #log div.loot { color: #c6cf98; } #log div.err { color: var(--danger); }
+    #log div.shot { color: var(--ink-3); } #log div.net { color: var(--ink); }
+    .summary { display: flex; gap: 10px; margin-bottom: 8px; font: 600 11px/1 'JetBrains Mono', monospace; }
+    @media (max-width: 1180px) {
+      #app { grid-template-columns: 240px minmax(0, 1fr); }
+      #right { position: absolute; right: 0; top: 46px; bottom: 0; width: 330px; z-index: 5; display: none; box-shadow: -20px 0 40px rgba(0,0,0,.5); }
+      #right.open { display: block; }
+      #detailsBtn { display: inline-block; padding: 7px 10px; }
+      .hide-narrow { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>ZONE<span>FALL</span><small>NET</small></h1>
+    <div id="pill" class="pill"><i></i><span>Offline</span></div>
+    <div class="kv"><b>Room</b><span id="hRoom">-</span></div>
+    <div class="kv hide-narrow"><b>Self</b><span id="hSelf">-</span></div>
+    <div class="kv"><b>Host</b><span id="hHost">-</span></div>
+    <div class="kv"><b>Epoch</b><span id="hEpoch">0</span></div>
+    <div class="kv hide-narrow"><b>App</b><span id="hApp">menu</span></div>
+    <div class="kv hide-narrow"><b>Match</b><span id="hMatch">-</span></div>
+    <div class="spacer"></div>
+    <button id="detailsBtn">Details</button>
+  </header>
+
+  <aside id="left">
+    <section>
+      <h2>Lobby <em id="transportLabel">nostr</em></h2>
+      <div class="grid">
+        <button id="bQuick">Quick play</button>
+        <button id="bCreate">Create private</button>
+      </div>
+      <div class="row">
+        <input id="codeInput" type="text" maxlength="7" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Lobby code">
+        <button id="bJoin">Join</button>
+      </div>
+      <div class="status" id="lobbyStatus">
+        <div class="big dim" id="lsBig">Not connected</div>
+        <p id="lsText">Quick play, create a private lobby, or join one with a code.</p>
+        <div class="code" id="lsCode" hidden><span id="lsCodeText"></span><a id="lsLink" href="#" target="_blank" rel="noopener">share link</a></div>
+      </div>
+      <ul class="roster" id="roster"></ul>
+      <div class="grid" style="margin-top:8px">
+        <button id="bStart" class="primary" disabled>Start now</button>
+        <button id="bLeave" disabled>Leave</button>
+      </div>
+    </section>
+    <section>
+      <h2>Round trips <em id="rtHint">needs a match</em></h2>
+      <div class="grid3">
+        <button id="bFire" title="SHOT on the unreliable channel">Fire</button>
+        <button id="bHit" title="hit claim, victim validates, HP returns in snapshots">Hit</button>
+        <button id="bNade" title="nade: deterministic on every peer">Frag</button>
+        <button id="bPick" title="pick claim with conflict resolution">Pick</button>
+        <button id="bDrop" title="drop: items appear for everyone">Drop</button>
+        <button id="bDie" title="death: zone elimination broadcast">Zone</button>
+      </div>
+      <div class="grid" style="margin-top:6px">
+        <button id="bManual">Drive: auto</button>
+        <button id="bRound">Back to lobby</button>
+      </div>
+    </section>
+    <section>
+      <h2>Link simulation <em id="simNote">local transport</em></h2>
+      <div class="slider"><span>Latency</span><input id="sLat" type="range" min="0" max="300" step="5" value="0"><output id="oLat">0 ms</output></div>
+      <div class="slider"><span>Jitter</span><input id="sJit" type="range" min="0" max="120" step="5" value="0"><output id="oJit">0 ms</output></div>
+      <div class="slider"><span>Loss</span><input id="sLoss" type="range" min="0" max="40" step="1" value="0"><output id="oLoss">0 %</output></div>
+      <div class="grid3" style="margin-top:6px">
+        <button data-preset="0,0,0">LAN</button>
+        <button data-preset="45,15,2">Wi-Fi</button>
+        <button data-preset="120,60,10">Bad</button>
+      </div>
+      <p class="note" id="simText">Applies to this page's outgoing traffic. Reliable actions keep their order; snapshots also get jitter and loss.</p>
+    </section>
+  </aside>
+
+  <main id="center"><canvas id="view" tabindex="0" aria-label="Top-down view of networked entities"></canvas></main>
+
+  <aside id="right">
+    <section>
+      <h2>Peers <em id="peerCount">0 connected</em></h2>
+      <table><thead><tr><th>Peer</th><th>RTT</th><th>Chan</th><th>Rx/s</th><th>Delay</th><th>Clock</th></tr></thead><tbody id="peers"></tbody></table>
+      <div class="empty" id="peersEmpty">No peers yet. Open this page in a second tab or browser with the same room.</div>
+    </section>
+    <section>
+      <h2>Self-tests <em id="testSummary">running</em></h2>
+      <ol class="tests" id="tests"></ol>
+    </section>
+    <section>
+      <h2>Events <em id="logCount">0</em></h2>
+      <div id="log"></div>
+    </section>
+  </aside>
+</div>
+
+<script type="module">
+import { NET, MATCH, WEAPON_ORDER } from '../src/config.js';
+import * as bus from '../src/core/bus.js';
+import { on, emit, EV } from '../src/core/bus.js';
+import { state, debug, APP, LIFE, FLAG, setAppState, getPlayer, isBotId, botId } from '../src/core/state.js';
+import { clamp, damp, wrapAngle } from '../src/core/util.js';
+import * as protocol from '../src/net/protocol.js';
+import * as session from '../src/net/session.js';
+import * as sync from '../src/net/sync.js';
+import * as lobby from '../src/net/lobby.js';
+import * as match from '../src/game/match.js';
+import { HARNESS } from './stubs/net/match.js';
+import { setLinkConditions, linkConditions } from '../src/net/localroom.js';
+
+const Q = new URLSearchParams(location.search);
+const $ = (id) => document.getElementById(id);
+if (Q.get('name')) state.name = Q.get('name').replace(/[^\w .\-]/g, '').slice(0, 16) || 'Operator';
+else state.name = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot'][Math.floor(Math.random() * 6)];
+if (Q.has('bots')) HARNESS.bots = clamp(Number(Q.get('bots')) || 0, 0, 15);
+setAppState(APP.MENU);
+
+// ------------------------------------------------------------------------------------------------ event log
+const logLines = [];
+let logN = 0;
+function log(text, kind = '') {
+  logN++;
+  const t = (performance.now() / 1000).toFixed(2);
+  logLines.unshift({ t, text, kind });
+  if (logLines.length > 120) logLines.pop();
+  logDirty = true;
+}
+let logDirty = true;
+function renderLog() {
+  if (!logDirty) return;
+  logDirty = false;
+  $('log').innerHTML = logLines.slice(0, 80).map((l) => `<div class="${l.kind}"><time>${l.t}</time>${escapeHtml(l.text)}</div>`).join('');
+  $('logCount').textContent = `${logN}`;
+}
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const short = (id) => (id ? (isBotId(id) ? id : id.slice(0, 6)) : '-');
+const nameOf = (id) => {
+  if (!id) return 'nobody';
+  const e = getPlayer(id);
+  if (e) return e.name;
+  if (id === state.selfId) return state.name;
+  const r = lobby.get().roster.find((x) => x.id === id);
+  return r && r.name !== 'Joining' ? r.name : short(id);
+};
+
+// ------------------------------------------------------------------------------------------------ init modules
+sync.init();
+lobby.init();
+match.init();
+$('transportLabel').textContent = session.TUNE.transport === 'local' ? 'local transport' : `nostr · ${NET.relays.length} relays`;
+const localTransport = session.TUNE.transport === 'local';
+if (!localTransport) {
+  for (const el of document.querySelectorAll('#left section:nth-of-type(3) input, #left section:nth-of-type(3) button')) el.disabled = true;
+  $('simNote').textContent = 'local transport only';
+  $('simText').textContent = 'Open with ?net=local to simulate latency, jitter and loss between two tabs.';
+}
+
+// ------------------------------------------------------------------------------------------------ bus wiring
+on(EV.NET_STATUS, ({ status, text }) => log(`net ${status}: ${text}`, status === 'error' ? 'err' : 'net'));
+on(EV.PEER_JOIN, ({ id }) => log(`peer joined ${short(id)}`, 'net'));
+on(EV.PEER_LEAVE, ({ id, reason }) => log(`peer left ${nameOf(id)} (${reason || 'left'})`, 'net'));
+on(EV.HOST_CHANGED, ({ hostId, epoch, self }) => log(`host is ${self ? 'this page' : nameOf(hostId)} (epoch ${epoch})`, 'host'));
+on(EV.TOAST, ({ text }) => log(`toast: ${text}`, 'err'));
+on(EV.NET_HELLO, ({ from, data }) => { if (!helloSeen.has(from)) { helloSeen.add(from); log(`hello from ${data.name} (${data.st})`, 'net'); } });
+const helloSeen = new Set();
+on(EV.NET_START, ({ from, data }) => log(`start from ${nameOf(from)}: seed ${data.seed}, ${data.ro.length} slots, lead ${Math.round(data.t0h - data.th)} ms`, 'host'));
+on(EV.MATCH_START, ({ id, seed, roster }) => {
+  setAppState(APP.MATCH);
+  initLoot(seed);
+  const s = HARNESS.lastStart;
+  log(`match ${id} started (${roster.filter((r) => r.kind === 'human').length} humans, ${roster.filter((r) => r.kind === 'bot').length} bots)` +
+    (s ? `, t0 via ${s.usedFallback ? 'rtt fallback' : `clock offset ${s.offset.toFixed(1)} ms`}` : ', local host'), 'host');
+});
+on(EV.MATCH_PHASE, ({ phase }) => log(`phase ${phase}`, 'host'));
+on(EV.PLAYER_KILLED, ({ id, by, weapon, headshot }) => {
+  log(`ELIMINATED ${nameOf(id)}${by ? ` by ${nameOf(by)}` : ''} [${weapon}${headshot ? ', headshot' : ''}]`, 'hit');
+  const e = getPlayer(id);
+  if (e && e.kind === 'local') { e.alive = false; e.life = LIFE.DEAD; e.hp = 0; }
+  if (e && e.kind === 'bot' && session.isHost()) { e.alive = false; e.life = LIFE.DEAD; e.hp = 0; }
+  fx.push({ kind: 'kill', x: e ? e.pos.x : 0, z: e ? e.pos.z : 0, t: performance.now() });
+});
+
+// ------------------------------------------------------------------------------------------------ lobby controls
+function act(p) { p.catch((err) => log(`error: ${err.message || err}`, 'err')); }
+$('bQuick').onclick = () => { setAppState(APP.LOBBY); act(lobby.quickPlay()); };
+$('bCreate').onclick = () => { setAppState(APP.LOBBY); act(lobby.createPrivate().then((c) => log(`private lobby ${c}`, 'net'))); };
+$('bJoin').onclick = () => { const c = $('codeInput').value; setAppState(APP.LOBBY); act(lobby.joinPrivate(c).catch((e) => { setAppState(APP.MENU); throw e; })); };
+$('codeInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('bJoin').click(); });
+$('bStart').onclick = () => { if (lobby.requestStart()) log('START NOW requested', 'host'); };
+$('bLeave').onclick = () => { if (state.app === APP.MATCH) match.leave(); lobby.leave(); setAppState(APP.MENU); log('left the room', 'net'); };
+$('bRound').onclick = () => { if (state.app === APP.MATCH) { match.leave(); setAppState(state.online ? APP.LOBBY : APP.MENU); log('back to lobby', 'net'); } };
+$('detailsBtn').onclick = () => $('right').classList.toggle('open');
+
+// link simulation
+function applySim() {
+  const c = setLinkConditions({ latency: +$('sLat').value, jitter: +$('sJit').value, loss: +$('sLoss').value / 100 });
+  $('oLat').textContent = `${c.latency} ms`; $('oJit').textContent = `${c.jitter} ms`; $('oLoss').textContent = `${Math.round(c.loss * 100)} %`;
+}
+for (const id of ['sLat', 'sJit', 'sLoss']) $(id).addEventListener('input', applySim);
+for (const b of document.querySelectorAll('[data-preset]')) b.onclick = () => {
+  const [l, j, s] = b.dataset.preset.split(',').map(Number);
+  $('sLat').value = l; $('sJit').value = j; $('sLoss').value = s; applySim();
+  log(`link: ${l} ms latency, ${j} ms jitter, ${s} % loss`, 'net');
+};
+
+// ------------------------------------------------------------------------------------------------ dummy simulation
+const keys = new Set();
+let manual = false;
+addEventListener('keydown', (e) => { if (document.activeElement && document.activeElement.tagName === 'INPUT') return; keys.add(e.code); });
+addEventListener('keyup', (e) => keys.delete(e.code));
+$('bManual').onclick = () => { manual = !manual; $('bManual').textContent = manual ? 'Drive: WASD' : 'Drive: auto'; $('bManual').classList.toggle('on', manual); $('view').focus(); };
+
+function hashStr(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+const dummy = { x: 0, z: 0, vx: 0, vz: 0, yaw: 0, t: 0 };
+function updateLocal(dt) {
+  const me = getPlayer(state.selfId);
+  if (!me) return;
+  if (!me.alive) { me.vel.set(0, 0, 0); me.speed = 0; return; }
+  const h = hashStr(state.selfId);
+  if (manual) {
+    let mx = 0, mz = 0;
+    if (keys.has('KeyW') || keys.has('ArrowUp')) mz -= 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) mz += 1;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) mx -= 1;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) mx += 1;
+    const l = Math.hypot(mx, mz) || 1, sp = keys.has('ShiftLeft') ? 6.9 : 4.4;
+    dummy.vx = damp(dummy.vx, (mx / l) * sp * (mx || mz ? 1 : 0), 12, dt);
+    dummy.vz = damp(dummy.vz, (mz / l) * sp * (mx || mz ? 1 : 0), 12, dt);
+    dummy.x = clamp(dummy.x + dummy.vx * dt, -55, 55); dummy.z = clamp(dummy.z + dummy.vz * dt, -55, 55);
+  } else {
+    dummy.t += dt;
+    const ph = (h % 628) / 100, R = 15 + (h % 7), w = 0.32 + ((h >> 4) % 10) / 100;
+    const cx = Math.cos(ph) * 12, cz = Math.sin(ph) * 12;
+    const nx = cx + R * Math.sin(w * dummy.t + ph), nz = cz + (R * 0.6) * Math.sin(2 * (w * dummy.t + ph));
+    if (dt > 0) { dummy.vx = (nx - dummy.x) / dt; dummy.vz = (nz - dummy.z) / dt; }
+    if (Math.hypot(dummy.vx, dummy.vz) > 30) { dummy.vx = 0; dummy.vz = 0; }
+    dummy.x = nx; dummy.z = nz;
+  }
+  const sp = Math.hypot(dummy.vx, dummy.vz);
+  if (sp > 0.3) dummy.yaw = Math.atan2(-dummy.vx, -dummy.vz);
+  me.pos.set(dummy.x, 0, dummy.z); me.vel.set(dummy.vx, 0, dummy.vz); me.yaw = dummy.yaw; me.pitch = 0; me.speed = sp;
+  me.life = LIFE.GROUND;
+  me.flags = (sp > 5.8 ? FLAG.SPRINT : 0) | (performance.now() - lastFireAt < 120 ? FLAG.FIRING : 0);
+  me.weapon = 'm4a1';
+}
+
+// host: bots follow closed paths that are a pure function of match time and slot, so a migrated host continues them
+function botPos(slot, t, out) {
+  const ph = slot * 1.7, R = 22 + (slot % 4) * 7, w = 0.12 + (slot % 3) * 0.035;
+  out.x = Math.cos(w * t + ph) * R; out.z = Math.sin(w * t * 1.3 + ph) * R * 0.8;
+  return out;
+}
+const bp = { x: 0, z: 0 }, bp2 = { x: 0, z: 0 };
+let nextBotShot = 0;
+function updateBots() {
+  if (!session.isHost() || state.app !== APP.MATCH) return;
+  const t = Math.max(0, state.match.time);
+  for (const e of state.players.values()) {
+    if (e.kind !== 'bot') continue;
+    if (!e.alive) { e.life = LIFE.DEAD; e.vel.set(0, 0, 0); e.speed = 0; continue; }
+    botPos(e.slot, t, bp); botPos(e.slot, t + 0.05, bp2);
+    const vx = (bp2.x - bp.x) / 0.05, vz = (bp2.z - bp.z) / 0.05;
+    e.pos.set(bp.x, 0, bp.z); e.vel.set(vx, 0, vz); e.speed = Math.hypot(vx, vz); e.yaw = Math.atan2(-vx, -vz);
+    e.life = LIFE.GROUND; e.weapon = WEAPON_ORDER[e.slot % 5]; e.flags = (e.slot + Math.floor(t / 3)) % 4 === 0 ? FLAG.CROUCH : 0;
+    if (e.armor === 0 && e.hp === 100) e.armor = 100;
+  }
+  const now = performance.now();
+  if (now > nextBotShot && state.online) {
+    nextBotShot = now + 1800 + Math.random() * 1600;
+    const bots = [...state.players.values()].filter((e) => e.kind === 'bot' && e.alive);
+    const humans = [...state.players.values()].filter((e) => e.kind !== 'bot' && e.alive);
+    if (bots.length && humans.length) {
+      const b = bots[Math.floor(Math.random() * bots.length)], h = humans[Math.floor(Math.random() * humans.length)];
+      const dx = h.pos.x - b.pos.x, dz = h.pos.z - b.pos.z, d = Math.hypot(dx, dz) || 1, miss = (Math.random() - 0.5) * 0.12;
+      const dir = [dx / d * Math.cos(miss) - dz / d * Math.sin(miss), 0, dz / d * Math.cos(miss) + dx / d * Math.sin(miss)];
+      const origin = [b.pos.x, 1.5, b.pos.z];
+      sync.sendShot({ weapon: b.weapon, origin, dir, dist: d + 6, surface: 0, hitFlags: 0, botSlot: b.slot });
+      addTracer(origin, dir, d + 6, 'bot');
+    }
+  }
+}
+
+// ------------------------------------------------------------------------------------------------ round trips
+let lastFireAt = 0, sid = 1, nadeN = 0, dropN = 0;
+const pendingHits = new Map();   // sid -> {target, hpBefore, sentAt}
+function inMatch() { return state.app === APP.MATCH && state.match.phase !== 'idle' && !!getPlayer(state.selfId); }
+const matchMs = () => performance.now() - state.match.t0;
+function nearestTarget() {
+  const me = getPlayer(state.selfId);
+  let best = null, bd = Infinity;
+  for (const e of state.players.values()) {
+    if (e === me || !e.alive) continue;
+    const d = Math.hypot(e.pos.x - me.pos.x, e.pos.z - me.pos.z);
+    if (d < bd) { bd = d; best = e; }
+  }
+  return best;
+}
+
+function fire(target) {
+  if (!inMatch()) return;
+  const me = getPlayer(state.selfId), tgt = target && target.pos ? target : nearestTarget();
+  const yaw = tgt ? Math.atan2(-(tgt.pos.x - me.pos.x), -(tgt.pos.z - me.pos.z)) : me.yaw;
+  const dir = [-Math.sin(yaw), 0, -Math.cos(yaw)], origin = [me.pos.x, 1.5, me.pos.z];
+  const dist = tgt ? Math.hypot(tgt.pos.x - me.pos.x, tgt.pos.z - me.pos.z) : 60;
+  sync.sendShot({ weapon: 'm4a1', origin, dir, dist, surface: tgt ? null : 0, hitFlags: 0 });
+  addTracer(origin, dir, dist, 'local');
+  lastFireAt = performance.now();
+  log(`SHOT sent (m4a1, ${dist.toFixed(1)} m) to ${session.peers().length} peers`, 'shot');
+}
+on(EV.NET_SHOT, ({ shooterId, shot }) => {
+  addTracer(shot.origin, shot.dir, shot.dist, isBotId(shooterId) ? 'bot' : 'remote');
+  const ageMs = performance.now() - sync.toLocalTime(isBotId(shooterId) ? session.hostId() : shooterId, shot.t);
+  log(`SHOT from ${nameOf(shooterId)} (${shot.weapon}, ${shot.dist.toFixed(1)} m, ~${Math.max(0, ageMs).toFixed(0)} ms old)`, 'shot');
+});
+
+function hit(targetId) {
+  if (!inMatch()) return;
+  const me = getPlayer(state.selfId), tgt = typeof targetId === 'string' ? getPlayer(targetId) : nearestTarget();
+  if (!tgt) { log('no target in range', 'err'); return; }
+  const head = sid % 3 === 0, d = Math.hypot(tgt.pos.x - me.pos.x, tgt.pos.z - me.pos.z);
+  const msg = { sid: sid++, by: state.selfId, tgt: tgt.id, w: 'm4a1', z: head ? 1 : 0, dmg: head ? 40 : 26, d,
+    sp: [me.pos.x, me.pos.y, me.pos.z], tp: [tgt.pos.x, tgt.pos.y, tgt.pos.z], t: matchMs() };
+  pendingHits.set(msg.sid, { target: tgt.id, hpBefore: tgt.hp, sentAt: performance.now() });
+  session.send('hit', msg);
+  fire(tgt);
+  log(`HIT claim #${msg.sid} on ${tgt.name} (${head ? 'head' : 'body'} ${msg.dmg}, ${d.toFixed(1)} m)`, 'hit');
+}
+
+// victim side (or host for a bot victim): the checks of ARCHITECTURE.md 8.5 validateHit, simplified to positions
+on(EV.NET_HIT, ({ from, data }) => {
+  const mine = data.tgt === state.selfId, botVictim = isBotId(data.tgt) && session.isHost();
+  if (!mine && !botVictim) return;
+  const victim = getPlayer(data.tgt), shooter = getPlayer(data.by);
+  if (!victim || !victim.alive || !shooter || !inMatch()) return;
+  if (isBotId(data.by) ? from !== session.hostId() : from !== data.by) { log(`hit #${data.sid} rejected: sender mismatch`, 'err'); return; }
+  const tLocal = state.match.t0 + data.t;
+  const spErr = Math.hypot(data.sp[0] - shooter.pos.x, data.sp[2] - shooter.pos.z);
+  const spTol = 2.5 + shooter.speed * (session.rtt(from) || 100) / 1000;
+  let tpErr = Infinity;
+  for (let k = 0; k <= 12; k++) {
+    const p = mine ? sync.selfPoseAt(tLocal - k * 50) : sync.botPoseAt(data.tgt, tLocal - k * 50);
+    if (p) tpErr = Math.min(tpErr, Math.hypot(p.x - data.tp[0], p.z - data.tp[2]));
+  }
+  const tpTol = 1.5 + victim.speed * 0.35;
+  const ok = spErr <= spTol && tpErr <= tpTol;
+  log(`hit #${data.sid} from ${nameOf(data.by)}: ${ok ? 'VALID' : 'REJECTED'} (shooter err ${spErr.toFixed(2)}/${spTol.toFixed(1)} m, target err ${Number.isFinite(tpErr) ? tpErr.toFixed(2) : 'n/a'}/${tpTol.toFixed(1)} m)`, ok ? 'hit' : 'err');
+  if (!ok) return;
+  let dmg = data.dmg;
+  if (victim.armor > 0) { const a = Math.min(victim.armor, dmg); victim.armor -= a; dmg -= a; }
+  victim.hp = Math.max(0, victim.hp - dmg);
+  if (victim.hp <= 0) {
+    victim.alive = false; victim.life = LIFE.DEAD;
+    const death = { id: victim.id, by: data.by, w: data.w, hs: data.z === 1, sid: data.sid, pos: [victim.pos.x, victim.pos.y, victim.pos.z] };
+    session.send('death', death);
+    emit(EV.PLAYER_KILLED, { id: victim.id, by: data.by, weapon: data.w, headshot: death.hs, pos: death.pos });
+  }
+});
+on(EV.NET_DEATH, ({ from, data }) => {
+  const legit = isBotId(data.id) ? from === session.hostId() : from === data.id;
+  if (!legit) { log(`death for ${data.id} rejected: wrong sender`, 'err'); return; }
+  emit(EV.PLAYER_KILLED, { id: data.id, by: data.by, weapon: data.w, headshot: data.hs, pos: data.pos });
+});
+function dieInZone() {
+  if (!inMatch()) return;
+  const me = getPlayer(state.selfId);
+  if (!me.alive) return;
+  me.hp = 0; me.alive = false; me.life = LIFE.DEAD;
+  const pos = [me.pos.x, me.pos.y, me.pos.z];
+  session.send('death', { id: me.id, by: null, w: 'zone', hs: false, sid: null, pos });
+  emit(EV.PLAYER_KILLED, { id: me.id, by: null, weapon: 'zone', headshot: false, pos });
+}
+
+// loot: deterministic spawn list from the match seed; pick conflicts resolve by earliest t, then lowest id (8.5)
+const loot = new Map();
+function initLoot(seed) {
+  loot.clear();
+  let s = seed >>> 0 || 1;
+  const rnd = () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296);
+  for (let i = 0; i < 10; i++) {
+    const a = rnd() * Math.PI * 2, r = 8 + rnd() * 40;
+    loot.set(`l${i}`, { uid: `l${i}`, x: Math.cos(a) * r, z: Math.sin(a) * r, type: ['weapon', 'ammo', 'plate', 'frag'][i % 4], by: null, t: 0 });
+  }
+}
+function claim(uid) {
+  if (!inMatch()) return false;
+  const it = loot.get(uid);
+  if (!it || it.by) return false;
+  it.by = state.selfId; it.t = matchMs();
+  session.send('pick', { uid, t: it.t, by: null });
+  log(`PICK claim ${uid} (${it.type}) at ${it.t.toFixed(0)} ms`, 'loot');
+  return true;
+}
+function claimNearest() {
+  const me = getPlayer(state.selfId);
+  if (!me) return;
+  let best = null, bd = Infinity;
+  for (const it of loot.values()) { if (it.by) continue; const d = Math.hypot(it.x - me.pos.x, it.z - me.pos.z); if (d < bd) { bd = d; best = it; } }
+  if (best) claim(best.uid); else log('nothing left to pick', 'loot');
+}
+on(EV.NET_PICK, ({ from, data }) => {
+  const it = loot.get(data.uid);
+  const by = data.by || from;
+  if (!it) return;
+  if (!it.by) { it.by = by; it.t = data.t; log(`${nameOf(by)} picked ${data.uid}`, 'loot'); return; }
+  if (it.by === by) return;
+  const theirsWins = data.t < it.t || (data.t === it.t && by < it.by);
+  if (theirsWins) {
+    const lost = it.by === state.selfId;
+    it.by = by; it.t = data.t;
+    log(lost ? `pick conflict on ${data.uid}: ${nameOf(by)} was first, our claim reverted` : `pick conflict on ${data.uid}: ${nameOf(by)} wins`, 'loot');
+  } else log(`pick conflict on ${data.uid}: kept ${nameOf(it.by)} (earlier claim)`, 'loot');
+});
+function dropItems() {
+  if (!inMatch()) return;
+  const me = getPlayer(state.selfId);
+  const items = [];
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2;
+    items.push({ uid: `d${state.selfId.slice(0, 6)}${dropN++}`, type: ['weapon', 'ammo', 'plate'][i], ref: ['ak47', 'ar', null][i], qty: [30, 60, 1][i],
+      pos: [me.pos.x + Math.cos(a) * 1.2, 0, me.pos.z + Math.sin(a) * 1.2] });
+  }
+  for (const it of items) loot.set(it.uid, { uid: it.uid, x: it.pos[0], z: it.pos[2], type: it.type, by: null, t: 0, dropped: true });
+  session.send('drop', { items });
+  log(`DROP ${items.length} items`, 'loot');
+}
+on(EV.NET_DROP, ({ from, data }) => {
+  for (const it of data.items) loot.set(it.uid, { uid: it.uid, x: it.pos[0], z: it.pos[2], type: it.type, by: null, t: 0, dropped: true });
+  log(`${nameOf(from)} dropped ${data.items.length} items`, 'loot');
+});
+
+// grenades: identical fixed-step simulation on every peer from {o, v, fuse, t}
+const nades = [];
+function simulateNade(o, v, fuse) {
+  const p = [...o], vel = [...v], dt = 1 / 120, path = [];
+  for (let i = 0, n = Math.round(fuse / dt); i < n; i++) {
+    vel[1] -= 9.81 * dt;
+    p[0] += vel[0] * dt; p[1] += vel[1] * dt; p[2] += vel[2] * dt;
+    if (p[1] < 0) { p[1] = 0; vel[1] = -vel[1] * 0.35; vel[0] *= 0.7; vel[2] *= 0.7; }
+    if (i % 6 === 0) path.push([p[0], p[2]]);
+  }
+  path.push([p[0], p[2]]);
+  return { end: p, path };
+}
+function throwNade() {
+  if (!inMatch()) return;
+  const me = getPlayer(state.selfId);
+  const d = [-Math.sin(me.yaw), 0, -Math.cos(me.yaw)];
+  const msg = { gid: `${state.selfId.slice(0, 8)}:${nadeN++}`, by: state.selfId, o: [me.pos.x, 1.6, me.pos.z], v: [d[0] * 13, 5.5, d[2] * 13], fuse: 3.2, t: matchMs() };
+  session.send('nade', msg);
+  addNade(msg, state.selfId);
+}
+function addNade(m, from) {
+  const sim = simulateNade(m.o, m.v, m.fuse);
+  const at = state.match.t0 + m.t;
+  nades.push({ ...sim, gid: m.gid, by: m.by, at, boomAt: at + m.fuse * 1000, done: false });
+  log(`FRAG ${m.gid} by ${nameOf(m.by)}: lands at (${sim.end[0].toFixed(3)}, ${sim.end[2].toFixed(3)})`, 'hit');
+}
+on(EV.NET_NADE, ({ from, data }) => { if (data.by === from || (isBotId(data.by) && from === session.hostId())) addNade(data, from); });
+
+$('bFire').onclick = () => fire(); $('bHit').onclick = () => hit(); $('bNade').onclick = throwNade;
+$('bPick').onclick = claimNearest; $('bDrop').onclick = dropItems; $('bDie').onclick = dieInZone;
+$('view').addEventListener('keydown', (e) => { if (e.code === 'KeyF') fire(); if (e.code === 'KeyH') hit(); if (e.code === 'KeyG') throwNade(); });
+
+// ------------------------------------------------------------------------------------------------ self-tests
+const tests = [];
+function test(name, fn) {
+  try { const r = fn(); tests.push({ name, pass: r === true || (r && r.pass), detail: r && r.detail ? r.detail : '' }); }
+  catch (err) { tests.push({ name, pass: false, detail: String(err.message || err) }); }
+}
+const near = (a, b, eps) => Math.abs(a - b) <= eps;
+function runSelfTests() {
+  const P = protocol, T = sync.testing;
+  test('PSNAP 40 B round trip', () => {
+    const s = { weapon: 'm700', seq: 65535, t: 123456.789, x: 12.5, y: -3.25, z: 400.125, yaw: -2.9, pitch: 0.4, flags: FLAG.ADS | FLAG.CROUCH, hp: 73, armor: 150, life: LIFE.CHUTE };
+    const b = P.encodePlayerSnap(s), d = P.decodePlayerSnap(b);
+    const ok = b.byteLength === 40 && d.weapon === 'm700' && d.seq === 65535 && d.t === s.t && near(d.x, 12.5, 1e-5) && near(d.z, 400.125, 1e-4) && d.flags === s.flags && d.hp === 73 && d.armor === 150 && d.life === LIFE.CHUTE;
+    return { pass: ok, detail: `${b.byteLength} B, seq ${d.seq}, life ${d.life}` };
+  });
+  test('BOTS batch 15 bots round trip', () => {
+    const bots = []; for (let i = 0; i < 15; i++) bots.push({ slot: i + 1, weapon: WEAPON_ORDER[i % 5], flags: i, x: i * 10.5, y: 2, z: -i * 3, yaw: Math.PI - 0.0001 * i, pitch: -0.3, hp: 100 - i, armor: i * 10, life: i % 6 });
+    const b = P.encodeBotBatch(1000.5, 7, bots), d = P.decodeBotBatch(b);
+    const ok = b.byteLength === 12 + 24 * 15 && d.bots.length === 15 && d.bots.every((e, i) => e.slot === i + 1 && near(e.yaw, wrapAngle(bots[i].yaw), 2e-4) && e.hp === bots[i].hp);
+    return { pass: ok, detail: `${b.byteLength} B, yaw quantised to 1e-4 rad` };
+  });
+  test('SHOT 44 B round trip (bot slot, flags)', () => {
+    const s = { weapon: 'ak47', seq: 9, t: 55.5, origin: [1, 2, 3], dir: [0, 0, -1], dist: 87.25, surface: 4, hitFlags: 3, botSlot: 12 };
+    const d = P.decodeShot(P.encodeShot(s));
+    return d && d.botSlot === 12 && d.hitFlags === 3 && d.surface === 4 && near(d.dist, 87.25, 1e-4) && d.dir[2] === -1;
+  });
+  test('Malformed binary is dropped', () => {
+    const bad = new ArrayBuffer(39); new DataView(bad).setUint8(0, 1);   // one byte short of a PSNAP
+    const nan = P.encodePlayerSnap({ weapon: null, seq: 1, t: 1, x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, flags: 0, hp: 1, armor: 0, life: 0 });
+    return P.decodePlayerSnap(bad) === null && P.decodePlayerSnap(nan) === null && P.decodeBotBatch(new ArrayBuffer(13)) === null;
+  });
+  test('seqNewer wraps at 16 bits', () => P.seqNewer(0, 65535) && P.seqNewer(5, 65530) && !P.seqNewer(65535, 0) && !P.seqNewer(7, 7) && P.seqNewer(100, 40000) && !P.seqNewer(40000, 100));
+  test('Validators sanitise and reject', () => {
+    const v = P.validate;
+    const okHit = v.hit({ sid: 1, by: 'a', tgt: 'b', w: 'ak47', z: 1, dmg: 40, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
+    const badHit = v.hit({ sid: 1, by: 'a', tgt: 'b', w: 'railgun', z: 1, dmg: 40, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
+    const bigDmg = v.hit({ sid: 1, by: 'a', tgt: 'b', w: 'ak47', z: 1, dmg: 9999, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
+    const hello = v.hello({ v: 1, name: '<b>x</b>', st: 'live', hum: 3 });
+    const dupSlots = v.start({ mid: 'm', seed: 1, t0h: 1, th: 0, ep: 0, ro: [{ id: 'a', slot: 0 }, { id: 'b', slot: 0 }] });
+    const drop = v.drop({ items: Array.from({ length: 17 }, (_, i) => ({ uid: 'u' + i, type: 'ammo', qty: 1, pos: [0, 0, 0] })) });
+    const pass = !!okHit && !badHit && !bigDmg && hello && hello.name === 'bxb' && !dupSlots && !drop && v.death({ id: 'a', by: null, w: 'zone', pos: [0, 0, 0] });
+    return { pass, detail: 'hit, hello, start, drop, death' };
+  });
+  test('Private codes: 400 generated, alphabet only', () => {
+    const set = new Set();
+    for (let i = 0; i < 400; i++) { const c = lobby.generateCode(); if (c.length !== NET.codeLength || [...c].some((ch) => !NET.codeAlphabet.includes(ch))) return false; set.add(c); }
+    return { pass: set.size > 390, detail: `${set.size} unique` };
+  });
+  test('Code input normalised, ambiguous letters refused', () => lobby.normalizeCode(' k7q-2m ') === 'K7Q2M' && lobby.normalizeCode('K7Q2O') === null && lobby.normalizeCode('K7Q2') === null && lobby.normalizeCode('k7q2m1') === null);
+  test('Region from time zone', () => {
+    const r = lobby.regionFromTimeZone;
+    const ok = r('Europe/Amsterdam') === 'eu' && r('America/New_York') === 'na' && r('America/Sao_Paulo') === 'sa' && r('America/Argentina/Buenos_Aires') === 'sa' &&
+      r('Asia/Tokyo') === 'as' && r('Australia/Sydney') === 'oc' && r('Africa/Lagos') === 'af' && r('Pacific/Auckland') === 'oc' && r('Etc/UTC', 0) === 'eu' && r('', 300) === 'na';
+    return { pass: ok, detail: `this browser: ${r(Intl.DateTimeFormat().resolvedOptions().timeZone, new Date().getTimezoneOffset())}` };
+  });
+  test('Interpolation: 20 Hz, 30 ms jitter, 10 % loss', () => {
+    let seed = 7; const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const tr = T.createTrack('x'), posAt = (t) => [Math.cos(t / 1000) * 10, Math.sin(t / 1000) * 10];
+    let maxErr = 0, n = 0;
+    const arrivals = [];
+    for (let i = 0; i < 200; i++) { if (rnd() < 0.1) continue; const ts = i * 50; arrivals.push({ ts, at: ts + 40 + rnd() * 30, seq: i }); }
+    arrivals.sort((a, b) => a.at - b.at);
+    const out = {};
+    let k = 0;
+    for (let now = 0; now < 200 * 50; now += 16) {
+      while (k < arrivals.length && arrivals[k].at <= now) {
+        const a = arrivals[k++], [x, z] = posAt(a.ts);
+        T.pushSample(tr, { seq: a.seq, t: a.ts, lt: a.ts + 40, x, y: 0, z, yaw: 0, pitch: 0, flags: 0, life: 3, hp: 100, armor: 0 }, a.at);
+      }
+      tr.delay = T.targetDelay(tr);
+      if (now > 1000 && T.sampleTrack(tr, now - tr.delay, out)) {
+        const [x, z] = posAt(now - tr.delay - 40); maxErr = Math.max(maxErr, Math.hypot(out.x - x, out.z - z)); n++;
+      }
+    }
+    return { pass: maxErr < 0.15 && n > 400, detail: `max error ${maxErr.toFixed(3)} m over ${n} frames, delay ${tr.delay.toFixed(0)} ms` };
+  });
+  test('Yaw takes the shortest arc across PI', () => {
+    const tr = T.createTrack('y'), out = {};
+    T.pushSample(tr, { seq: 1, t: 0, lt: 0, x: 0, y: 0, z: 0, yaw: 3.0, pitch: 0 }, 0);
+    T.pushSample(tr, { seq: 2, t: 50, lt: 50, x: 0, y: 0, z: 0, yaw: -3.0, pitch: 0 }, 50);
+    T.sampleTrack(tr, 25, out);
+    return { pass: Math.abs(Math.abs(out.yaw) - Math.PI) < 0.01, detail: `mid yaw ${out.yaw.toFixed(3)}` };
+  });
+  test('Extrapolation stops after 100 ms, then holds', () => {
+    const tr = T.createTrack('e'), out = {};
+    T.pushSample(tr, { seq: 1, t: 0, lt: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 }, 0);
+    T.pushSample(tr, { seq: 2, t: 50, lt: 50, x: 1, y: 0, z: 0, yaw: 0, pitch: 0 }, 50);
+    T.sampleTrack(tr, 100, out); const a = out.x;
+    T.sampleTrack(tr, 400, out); const b = out.x, starved = tr.starved;
+    return { pass: near(a, 2, 1e-6) && near(b, 3, 1e-6) && starved, detail: `+50 ms: ${a.toFixed(2)} m, +350 ms: ${b.toFixed(2)} m (held)` };
+  });
+  test('Out-of-order and duplicate samples dropped', () => {
+    const tr = T.createTrack('o');
+    const s = (seq) => ({ seq, t: seq, lt: seq, x: 0, y: 0, z: 0, yaw: 0, pitch: 0 });
+    T.pushSample(tr, s(10), 0); T.pushSample(tr, s(12), 1); const r1 = T.pushSample(tr, s(11), 2), r2 = T.pushSample(tr, s(12), 3);
+    return !r1 && !r2 && tr.ooo === 2 && tr.lost === 1 && tr.buf.length === 2;
+  });
+  test('Adaptive delay = clamp(2 interval + 2 jitter)', () => {
+    const mk = (interval, jitter) => { const tr = T.createTrack('d'); tr.recv = 10; tr.interval = interval; tr.jitter = jitter; return T.targetDelay(tr); };
+    const a = mk(50, 3), b = mk(50, 40), c = mk(200, 10), d = mk(20, 2);
+    return { pass: a === 106 && b === 180 && c === NET.interpMax && d === NET.interpMin, detail: `${a} / ${b} / ${c} / ${d} ms` };
+  });
+  test('Clock offset converges to skew + min latency', () => {
+    let off = null, seed = 3; const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const skew = 81234.5, minLat = 12;
+    for (let i = 0; i < 100; i++) { const ts = i * 50, lat = minLat + rnd() * rnd() * 60; off = T.updateOffset(off, ts + skew + lat, ts); }
+    return { pass: Math.abs(off - (skew + minLat)) < 3, detail: `estimate ${(off - skew).toFixed(2)} ms above skew (true min ${minLat})` };
+  });
+  test('Pose history: 1 s ring, interpolated lookup', () => {
+    const r = T.createRing(1, 60);
+    for (let i = 0; i <= 120; i++) T.ringPush(r, i * (1000 / 60), i * 0.1, 0, 0);
+    const p = T.ringAt(r, 1500 + 1000 / 120), old = T.ringAt(r, 500);
+    return { pass: p && near(p.x, 9.05, 1e-3) && old === null, detail: `x at 1508 ms ${p && p.x.toFixed(3)}, 1.5 s ago: ${old}` };
+  });
+  test('Host election: lowest live id, roster during a match', () => {
+    const e = session.electHost;
+    const a = e('m', [{ id: 'k' }, { id: 'z' }]), b = e('m', [{ id: 'a', stale: true }, { id: 'z' }]), c = e('m', [{ id: 'a' }, { id: 'c' }], ['m', 'c']);
+    const d = e('q', [{ id: 'b', dropped: true }]);
+    return { pass: a === 'k' && b === 'm' && c === 'c' && d === 'q', detail: `${a}, ${b}, ${c}, ${d}` };
+  });
+  const pass = tests.filter((t) => t.pass).length;
+  $('testSummary').innerHTML = `<span class="${pass === tests.length ? 'good' : 'bad'}">${pass}/${tests.length} pass</span>`;
+  $('tests').innerHTML = tests.map((t) => `<li><b class="${t.pass ? 'pass' : 'fail'}">${t.pass ? 'PASS' : 'FAIL'}</b><span>${escapeHtml(t.name)}${t.detail ? `<small>${escapeHtml(t.detail)}</small>` : ''}</span></li>`).join('');
+}
+runSelfTests();
+
+// ------------------------------------------------------------------------------------------------ drawing
+const cv = $('view'), g = cv.getContext('2d');
+const fx = [];
+const tracers = [];
+const trails = new Map();
+function addTracer(o, d, dist, kind) { tracers.push({ x0: o[0], z0: o[2], x1: o[0] + d[0] * dist, z1: o[2] + d[2] * dist, kind, t: performance.now() }); }
+const view = { cx: 0, cz: 0, scale: 6 };
+const placed = [];
+const COL = { local: '#e8b23a', remote: '#e9e7e1', bot: '#9aa27a', dead: '#e5484d', grid: 'rgba(233,231,225,0.045)', grid2: 'rgba(233,231,225,0.09)' };
+
+function resize() {
+  const r = cv.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+  const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  return dpr;
+}
+function toScreen(x, z) { return [cv.width / 2 + (x - view.cx) * view.scale, cv.height / 2 + (z - view.cz) * view.scale]; }
+
+function chevron(x, z, yaw, size, fill, stroke) {
+  const [sx, sy] = toScreen(x, z);
+  g.save(); g.translate(sx, sy); g.rotate(-yaw);
+  g.beginPath(); g.moveTo(0, -size * 1.25); g.lineTo(size * 0.85, size * 0.85); g.lineTo(0, size * 0.35); g.lineTo(-size * 0.85, size * 0.85); g.closePath();
+  if (fill) { g.fillStyle = fill; g.fill(); }
+  if (stroke) { g.strokeStyle = stroke; g.lineWidth = 1.5; g.stroke(); }
+  g.restore();
+}
+
+function draw(dpr) {
+  const W = cv.width, H = cv.height, now = performance.now();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.fillStyle = '#0b0d0c'; g.fillRect(0, 0, W, H);
+  // fit: show +-60 m, or every entity with margin
+  let ext = 60;
+  for (const e of state.players.values()) ext = Math.max(ext, Math.abs(e.pos.x) + 10, Math.abs(e.pos.z) + 10);
+  view.scale = damp(view.scale, Math.min(W, H) / (ext * 2.1), 3, 1 / 60);
+  // grid
+  g.lineWidth = 1;
+  for (const major of [false, true]) {
+    g.strokeStyle = major ? COL.grid2 : COL.grid;
+    g.beginPath();
+    for (let m = -150; m <= 150; m += 5) {
+      if ((m % 25 === 0) !== major) continue;
+      const [x] = toScreen(m, 0), [, y] = toScreen(0, m);
+      if (x >= 0 && x <= W) { g.moveTo(x + 0.5, 0); g.lineTo(x + 0.5, H); }
+      if (y >= 0 && y <= H) { g.moveTo(0, y + 0.5); g.lineTo(W, y + 0.5); }
+    }
+    g.stroke();
+  }
+  // range rings + compass
+  const [ox, oy] = toScreen(0, 0);
+  g.strokeStyle = 'rgba(232,178,58,0.10)'; g.setLineDash([4 * dpr, 6 * dpr]);
+  for (const r of [25, 50]) { g.beginPath(); g.arc(ox, oy, r * view.scale, 0, Math.PI * 2); g.stroke(); }
+  g.setLineDash([]);
+  g.font = `500 ${10 * dpr}px "JetBrains Mono", monospace`; g.fillStyle = 'rgba(233,231,225,0.32)'; g.textAlign = 'center';
+  g.fillText('N', ox, 16 * dpr);
+  if (state.players.size) { g.fillText('25 m', ox + 25 * view.scale, oy - 6 * dpr); g.fillText('50 m', ox + 50 * view.scale, oy - 6 * dpr); }
+
+  // loot
+  for (const it of loot.values()) {
+    const [x, y] = toScreen(it.x, it.z), s = 3.2 * dpr;
+    g.globalAlpha = it.by ? 0.28 : 1;
+    g.fillStyle = it.dropped ? '#c6cf98' : 'rgba(198,207,152,0.85)';
+    g.fillRect(x - s, y - s, s * 2, s * 2);
+    g.strokeStyle = 'rgba(11,13,12,0.9)'; g.lineWidth = 1; g.strokeRect(x - s, y - s, s * 2, s * 2);
+    g.font = `500 ${9 * dpr}px "JetBrains Mono", monospace`; g.textAlign = 'left'; g.fillStyle = 'rgba(198,207,152,0.75)';
+    const label = it.dropped ? it.type[0].toUpperCase() : it.uid;
+    g.fillText(it.by ? `${label} ${nameOf(it.by).toUpperCase()}` : label, x + s + 3 * dpr, y + 3 * dpr);
+    g.globalAlpha = 1;
+  }
+
+  // nades
+  for (const n of nades) {
+    const age = now - n.at;
+    if (age < 0) continue;
+    const k = clamp(age / (n.boomAt - n.at), 0, 1);
+    g.strokeStyle = 'rgba(229,72,77,0.55)'; g.lineWidth = 1.5 * dpr; g.setLineDash([3 * dpr, 4 * dpr]);
+    g.beginPath(); n.path.forEach(([x, z], i) => { const [sx, sy] = toScreen(x, z); i ? g.lineTo(sx, sy) : g.moveTo(sx, sy); }); g.stroke(); g.setLineDash([]);
+    const idx = Math.min(n.path.length - 1, Math.floor(k * (n.path.length - 1)));
+    const [px, py] = toScreen(n.path[idx][0], n.path[idx][1]);
+    if (k < 1) { g.fillStyle = '#e5484d'; g.beginPath(); g.arc(px, py, 3.5 * dpr, 0, Math.PI * 2); g.fill(); }
+    else {
+      const b = (now - n.boomAt) / 900;
+      if (b < 1) { const [ex, ey] = toScreen(n.end[0], n.end[2]); g.strokeStyle = `rgba(232,178,58,${1 - b})`; g.lineWidth = 3 * dpr; g.beginPath(); g.arc(ex, ey, (2 + b * 7) * view.scale, 0, Math.PI * 2); g.stroke(); }
+    }
+  }
+
+  // tracers
+  for (let i = tracers.length - 1; i >= 0; i--) {
+    const tr = tracers[i], a = 1 - (now - tr.t) / 700;
+    if (a <= 0) { tracers.splice(i, 1); continue; }
+    const [x0, y0] = toScreen(tr.x0, tr.z0), [x1, y1] = toScreen(tr.x1, tr.z1);
+    const grad = g.createLinearGradient(x0, y0, x1, y1);
+    const c = tr.kind === 'local' ? '232,178,58' : tr.kind === 'bot' ? '154,162,122' : '233,231,225';
+    grad.addColorStop(0, `rgba(${c},${0.05 * a})`); grad.addColorStop(1, `rgba(${c},${0.95 * a})`);
+    g.strokeStyle = grad; g.lineWidth = 1.6 * dpr; g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  }
+
+  // remote raw samples + rendered trails
+  for (const e of state.players.values()) {
+    if (e.kind === 'local' || (e.kind === 'bot' && session.isHost())) continue;
+    const buf = sync.samples(e.id);
+    if (e.kind !== 'bot' && buf.length > 1) {
+      g.strokeStyle = 'rgba(111,168,220,0.35)'; g.lineWidth = 1 * dpr; g.beginPath();
+      buf.forEach((s, i) => { const [x, y] = toScreen(s.x, s.z); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+    }
+    g.fillStyle = e.kind === 'bot' ? 'rgba(154,162,122,0.5)' : 'rgba(111,168,220,0.9)';
+    for (let i = 0; i < buf.length; i++) {
+      const s = buf[i], [x, y] = toScreen(s.x, s.z), age = now - s.lt;
+      g.globalAlpha = clamp(1 - age / 1500, 0.1, 1);
+      g.beginPath(); g.arc(x, y, (e.kind === 'bot' ? 1.4 : 2.6) * dpr, 0, Math.PI * 2); g.fill();
+    }
+    g.globalAlpha = 1;
+  }
+  for (const e of state.players.values()) {
+    let t = trails.get(e.id);
+    if (!t) { t = []; trails.set(e.id, t); }
+    t.push(e.pos.x, e.pos.z); if (t.length > 180) t.splice(0, 2);
+    if (t.length < 4) continue;
+    g.strokeStyle = e.kind === 'local' ? 'rgba(232,178,58,0.35)' : e.kind === 'bot' ? 'rgba(154,162,122,0.25)' : 'rgba(233,231,225,0.32)';
+    g.lineWidth = 1.5 * dpr; g.beginPath();
+    for (let i = 0; i < t.length; i += 2) { const [x, y] = toScreen(t[i], t[i + 1]); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+    g.stroke();
+  }
+
+  // entities (labels are placed above, below or beside the marker, whichever is free, local player first)
+  placed.length = 0;
+  const ents = [...state.players.values()].sort((a, b) => (a.kind === 'local' ? -1 : b.kind === 'local' ? 1 : (a.kind === 'bot') - (b.kind === 'bot')));
+  for (const e of ents) {
+    const kind = e.kind === 'local' ? 'local' : e.kind === 'bot' ? 'bot' : 'remote';
+    const [x, y] = toScreen(e.pos.x, e.pos.z), s = (kind === 'bot' ? 5.5 : 7) * dpr;
+    g.globalAlpha = e.stale ? 0.35 : 1;
+    if (!e.alive) {
+      g.strokeStyle = COL.dead; g.lineWidth = 2 * dpr; g.beginPath();
+      g.moveTo(x - s, y - s); g.lineTo(x + s, y + s); g.moveTo(x + s, y - s); g.lineTo(x - s, y + s); g.stroke();
+    } else if (kind === 'bot') {
+      g.save(); g.translate(x, y); g.rotate(-e.yaw);
+      g.fillStyle = COL.bot; g.beginPath(); g.moveTo(0, -s * 1.3); g.lineTo(s, 0); g.lineTo(0, s); g.lineTo(-s, 0); g.closePath(); g.fill();
+      g.restore();
+    } else {
+      if (e.stale) g.setLineDash([3 * dpr, 3 * dpr]);
+      chevron(e.pos.x, e.pos.z, e.yaw, s, e.stale ? null : COL[kind], e.stale ? COL[kind] : 'rgba(11,13,12,0.9)');
+      g.setLineDash([]);
+      if (kind === 'local') { g.strokeStyle = 'rgba(232,178,58,0.35)'; g.lineWidth = 1 * dpr; g.beginPath(); g.arc(x, y, s * 2.2, 0, Math.PI * 2); g.stroke(); }
+    }
+    // label + health
+    g.font = `600 ${11 * dpr}px "Barlow Condensed", sans-serif`; g.textAlign = 'center';
+    g.fillStyle = kind === 'local' ? COL.local : kind === 'bot' ? 'rgba(154,162,122,0.9)' : COL.remote;
+    const tag = (kind === 'bot' ? 'BOT ' : '') + e.name.toUpperCase() + (e.stale ? '  STALE' : '');
+    const tw = g.measureText(tag).width, th = 11 * dpr;
+    for (const [dx, dy] of [[0, -s * 1.9], [0, s * 3.4], [tw / 2 + s * 1.6, s * 0.4], [-tw / 2 - s * 1.6, s * 0.4]]) {
+      const r = [x + dx - tw / 2, y + dy - th, tw, th + 2];
+      if (placed.some((q) => r[0] < q[0] + q[2] && r[0] + r[2] > q[0] && r[1] < q[1] + q[3] && r[1] + r[3] > q[1])) continue;
+      placed.push(r);
+      g.fillText(tag, x + dx, y + dy);
+      break;
+    }
+    if (e.alive) {
+      const bw = 26 * dpr, bh = 2.5 * dpr, by = y + s * 1.6;
+      g.fillStyle = 'rgba(233,231,225,0.12)'; g.fillRect(x - bw / 2, by, bw, bh);
+      g.fillStyle = e.hp > 40 ? 'rgba(233,231,225,0.85)' : COL.dead; g.fillRect(x - bw / 2, by, bw * clamp(e.hp / 100, 0, 1), bh);
+      if (e.armor > 0) { g.fillStyle = '#6fa8dc'; g.fillRect(x - bw / 2, by + bh + 1.5 * dpr, bw * clamp(e.armor / 150, 0, 1), bh * 0.8); }
+    }
+    g.globalAlpha = 1;
+  }
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const f = fx[i], a = 1 - (now - f.t) / 1200;
+    if (a <= 0) { fx.splice(i, 1); continue; }
+    const [x, y] = toScreen(f.x, f.z);
+    g.strokeStyle = `rgba(229,72,77,${a})`; g.lineWidth = 2 * dpr; g.beginPath(); g.arc(x, y, (10 + (1 - a) * 26) * dpr, 0, Math.PI * 2); g.stroke();
+  }
+
+  // empty state
+  if (state.players.size === 0) {
+    g.textAlign = 'center';
+    g.font = `700 ${22 * dpr}px "Barlow Condensed", sans-serif`; g.fillStyle = 'rgba(233,231,225,0.55)';
+    const busyRoom = state.online && lobby.get().matchInProgress;
+    const head = !state.online ? 'NOT CONNECTED' : busyRoom ? 'ROUND IN PROGRESS' : session.peers().length ? 'PEERS CONNECTED, NO MATCH YET' : 'WAITING FOR A SECOND PEER';
+    g.fillText(head, W / 2, H / 2 - 6 * dpr);
+    g.font = `500 ${11 * dpr}px "JetBrains Mono", monospace`; g.fillStyle = 'rgba(233,231,225,0.35)';
+    const sub = !state.online ? 'Quick play, create a private lobby, or join with a code' : busyRoom
+      ? 'Their shots still arrive as tracers; you deploy when they return to the lobby' : session.peers().length
+      ? (lobby.get().isHost ? 'Start now to deploy both dummies and the host bots' : 'The host starts the match; the countdown is mirrored here')
+      : `Open this page in another tab or browser with ?room=${lobby.get().code || 'CODE'}`;
+    g.fillText(sub.toUpperCase(), W / 2, H / 2 + 16 * dpr);
+  }
+
+  // overlay text
+  const st = sync.stats();
+  g.textAlign = 'left'; g.font = `500 ${10.5 * dpr}px "JetBrains Mono", monospace`;
+  const lines = [];
+  if (state.app === APP.MATCH) {
+    lines.push(`MATCH ${state.match.id}  T${state.match.time >= 0 ? '+' : ''}${state.match.time.toFixed(1)} s  ALIVE ${state.match.alive}`);
+    lines.push(`RENDER NOW-${st.interpDelay} MS   SNAP ${NET.snapRate} HZ   BOTS ${NET.botRate} HZ${session.isHost() ? '  (SIMULATING)' : ''}`);
+  } else if (state.online) {
+    lines.push('LOBBY  SNAPSHOTS 5 HZ FOR LIVENESS AND CLOCK OFFSET');
+    lines.push(lobby.get().matchInProgress ? 'ROOM IS MID-ROUND: WAITING FOR THE NEXT ONE'
+      : lobby.get().isHost ? 'YOU ARE HOST: START NOW DEPLOYS EVERYONE WITH BOTS' : 'WAITING FOR THE HOST TO START');
+  } else lines.push('OFFLINE: JOIN A ROOM TO BEGIN');
+  lines.push(`OUT ${st.psnapOut} PSNAP  ${st.botsOut} BOTS  ${st.shotsOut} SHOT    IN ${st.psnapIn} / ${st.botsIn} / ${st.shotsIn}`);
+  g.fillStyle = 'rgba(11,13,12,0.7)'; g.fillRect(10 * dpr, 10 * dpr, 440 * dpr, (lines.length * 15 + 10) * dpr);
+  g.fillStyle = 'rgba(233,231,225,0.8)';
+  lines.forEach((l, i) => g.fillText(l, 18 * dpr, (25 + i * 15) * dpr));
+  // legend
+  const leg = [['#e8b23a', 'YOU'], ['#e9e7e1', 'REMOTE (INTERPOLATED)'], ['#6fa8dc', 'RAW SNAPSHOTS'], ['#9aa27a', 'HOST BOTS'], ['#c6cf98', 'LOOT']];
+  let lx = 14 * dpr; const ly = H - 14 * dpr;
+  g.font = `500 ${9.5 * dpr}px "JetBrains Mono", monospace`;
+  for (const [c, t] of leg) { g.fillStyle = c; g.fillRect(lx, ly - 7 * dpr, 7 * dpr, 7 * dpr); g.fillStyle = 'rgba(233,231,225,0.55)'; g.fillText(t, lx + 11 * dpr, ly); lx += g.measureText(t).width + 26 * dpr; }
+}
+
+// ------------------------------------------------------------------------------------------------ panels
+function fmtMs(v) { return v == null ? '-' : `${Math.round(v)}`; }
+let lastRx = new Map(), lastRxAt = performance.now(), rxRates = new Map();
+function renderPanels() {
+  const d = session.diagnostics(), L = lobby.get(), now = performance.now();
+  const pill = $('pill');
+  pill.className = `pill ${d.status === 'online' ? 'online' : d.status === 'connecting' ? 'connecting' : d.status === 'error' ? 'error' : ''}`;
+  pill.querySelector('span').textContent = d.status === 'online' ? (d.transport === 'local' ? 'Online · local' : `Online · ${d.relaysOpen} relays`) : d.status;
+  $('hRoom').textContent = L.roomId || '-';
+  $('hSelf').textContent = `${state.name} · ${short(state.selfId)}`;
+  $('hHost').textContent = state.online ? (d.isHost ? 'you' : `${nameOf(d.hostId)} · ${short(d.hostId)}`) : '-';
+  $('hEpoch').textContent = String(d.epoch);
+  $('hApp').textContent = state.app;
+  $('hMatch').textContent = state.app === APP.MATCH ? `${state.match.id} · seed ${state.match.seed}` : '-';
+
+  // lobby
+  const big = $('lsBig');
+  if (state.app !== APP.MATCH && L.status === 'countdown' && L.countdownEndsAt != null) {
+    big.className = 'big'; big.textContent = `0:${String(Math.max(0, Math.ceil((L.countdownEndsAt - now) / 1000))).padStart(2, '0')}`;
+  } else {
+    big.className = 'big dim';
+    big.textContent = state.app === APP.MATCH ? 'In match' : { connecting: 'Connecting', waiting: state.online ? 'Waiting' : 'Not connected', starting: 'Deploying', error: 'Error', countdown: 'Starting' }[L.status] || L.status;
+  }
+  $('lsText').textContent = state.app === APP.MATCH ? 'Drive with the round-trip buttons; every event is mirrored on the other peers.' : L.text;
+  $('lsCode').hidden = !L.code;
+  if (L.code) { $('lsCodeText').textContent = L.code; $('lsLink').href = L.link || '#'; }
+  $('roster').innerHTML = L.roster.map((r) => `<li class="${r.self ? 'self' : ''}"><span class="dot"></span>${escapeHtml(r.name)}<span class="tag">${r.host ? 'HOST' : ''}${r.self ? (r.host ? ' · YOU' : 'YOU') : ''}</span></li>`).join('');
+  $('bStart').disabled = !(state.online && L.isHost && state.app === APP.LOBBY && L.status !== 'starting');
+  $('bLeave').disabled = !state.online;
+  const m = state.app === APP.MATCH;
+  for (const id of ['bFire', 'bHit', 'bNade', 'bPick', 'bDrop', 'bDie', 'bRound']) $(id).disabled = !m;
+  $('rtHint').textContent = m ? 'keys F H G' : 'needs a match';
+
+  // peers
+  if (now - lastRxAt > 1000) {
+    for (const p of d.peers) { const tot = p.rx.unrel + p.rx.fallback; rxRates.set(p.id, (tot - (lastRx.get(p.id) || 0)) * 1000 / (now - lastRxAt)); lastRx.set(p.id, tot); }
+    lastRxAt = now;
+  }
+  const st = sync.stats(), byId = new Map(st.tracks.map((t) => [t.id, t]));
+  $('peerCount').textContent = `${d.peers.length} connected`;
+  $('peersEmpty').hidden = d.peers.length > 0;
+  $('peers').innerHTML = d.peers.map((p) => {
+    const t = byId.get(p.id) || {};
+    const ch = p.channel === 'unreliable' ? '<span class="good">UNREL</span>' : '<span class="warn">FALLBK</span>';
+    const loss = t.recv ? (t.lost / (t.recv + t.lost)) * 100 : 0;
+    const stateTxt = p.dropped ? '<span class="bad">dropped</span>' : p.stale ? '<span class="bad">stale</span>' : d.hostId === p.id ? '<span class="warn">host</span>' : 'ok';
+    return `<tr><td class="name">${escapeHtml(nameOf(p.id))}<span class="sub">${short(p.id)} · ${stateTxt}</span></td>` +
+      `<td>${p.rtt || '-'}<span class="sub">min ${p.rttMin || '-'}</span></td>` +
+      `<td>${ch}<span class="sub">${p.pair}</span></td>` +
+      `<td>${(rxRates.get(p.id) || 0).toFixed(0)}<span class="sub">loss ${loss.toFixed(1)}%</span></td>` +
+      `<td>${fmtMs(t.delay)}<span class="sub">j ${t.jitter ?? '-'} ms</span></td>` +
+      `<td>${t.offset == null ? '-' : t.offset.toFixed(0)}<span class="sub">ooo ${t.ooo ?? 0}</span></td></tr>`;
+  }).join('');
+}
+
+// ------------------------------------------------------------------------------------------------ loop
+// The simulation and network tick runs on its own 60 Hz timer so the snapshot cadence does not depend on how fast this
+// page can draw (the game itself ticks the network once per rendered frame from main.js).
+let last = performance.now(), panelAt = 0;
+const perf = { tick: 0, draw: 0, frameDt: 16 };
+function tick() {
+  const now = performance.now();
+  const dt = clamp((now - last) / 1000, 0.0001, 0.05);
+  last = now;
+  updateLocal(dt);
+  updateBots();
+  if (state.app === APP.MATCH) match.update(dt);
+  if (state.online) sync.update(dt);
+  if (state.app === APP.LOBBY) lobby.update(dt);
+  perf.tick += (performance.now() - now - perf.tick) * 0.1;
+}
+setInterval(tick, 1000 / 60);
+let lastDraw = performance.now();
+function rafLoop() {
+  const now = performance.now();
+  perf.frameDt += (now - lastDraw - perf.frameDt) * 0.1;
+  lastDraw = now;
+  if (state.online) sync.update(0);   // re-sample interpolation at the exact draw time (sends are rate-limited inside)
+  draw(resize());
+  perf.draw += (performance.now() - now - perf.draw) * 0.1;
+  if (now - panelAt > 250) { panelAt = now; renderPanels(); renderLog(); }
+  requestAnimationFrame(rafLoop);
+}
+requestAnimationFrame(rafLoop);
+addEventListener('pagehide', () => session.leave());
+
+// ------------------------------------------------------------------------------------------------ autostart + hooks
+const code = Q.get('room');
+if (code) { $('codeInput').value = code; setAppState(APP.LOBBY); act(lobby.joinPrivate(code)); }
+else if (Q.has('quick')) { setAppState(APP.LOBBY); act(lobby.quickPlay()); }
+
+debug.netHarness = { perf, fire, hit, throwNade, claim, claimNearest, dropItems, dieInZone, loot, nades, tests, logLines, linkConditions, setLinkConditions, HARNESS, matchMs };
+window.__zf = { state, bus, debug, protocol, modules: { session, sync, lobby, match }, ready: true };
+log(`harness ready: ${state.name}, ${session.TUNE.transport} transport`, 'net');
+</script>
+</body>
+</html>
