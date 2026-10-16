@@ -49,8 +49,8 @@ All keys can be rebound in Settings > Controls.
 | Scoreboard | Tab |
 | Menu (releases the mouse) | Esc or P |
 
-The camera is third person over the shoulder by default; aiming down sights looks through the weapon's own sights.
-V switches to first person, and the choice is remembered.
+The camera is third person over the shoulder by default; aiming down sights switches to a first-person view through
+the weapon's sights. V switches between third and first person, and the choice is remembered.
 
 ## Settings and performance
 

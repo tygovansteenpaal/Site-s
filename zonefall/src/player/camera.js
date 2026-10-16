@@ -12,8 +12,10 @@
 //   'plane'     orbit around the transport (mouse), 'freefall' / 'chute' third-person chase with speed FOV and buffeting
 //   'tp'        over-the-shoulder third person on the ground (default view): damped pivot, shoulder swap (Q),
 //               collision-aware boom (5-ray probe, snaps in, eases out), FOV kick on sprint and slide
-//   'ads'       the camera travels from the shoulder into the avatar's weapon sight (WEAPONS[w].model.eye in the
-//               weapon's frame, IRONSIGHT-aligned) as state.local.ads rises; head, helmet and gear become shadow-only
+//   (ADS)       aiming from third person: the camera travels from the shoulder to the first-person eye as
+//               state.local.ads rises (head, helmet and gear shadow-only on the way); past TUNE.adsFpAt the mode is
+//               'fp' and combat/viewmodel's detailed weapon and sights take over (INTEGRATION: the avatar's own
+//               low-detail hands filled the screen when the camera sat in its sight)
 //   'fp'        first person at controller.getEye with head bob (V toggles tp/fp, remembered); the avatar is
 //               shadow-only and combat/viewmodel draws the weapon
 //   'dead'      2.5 s: rise out of the body, orbit it, turn toward the killer, then automatic spectate
@@ -59,7 +61,8 @@ const TUNE = {
   freelookReturn: 7,
   adsTravelExp: 2.6,            // ease exponent of the shoulder -> sight camera travel
   adsTravelLambda: 40,
-  adsHideDist: 0.6,             // closer than this to the sight: the body is drawn as arms only (shadow kept)
+  adsHideDist: 0.6,             // closer than this to the eye: the body is drawn as arms only (shadow kept)
+  adsFpAt: 0.55,                // ADS travel beyond which the first-person view model draws the sights
 };
 
 // ------------------------------------------------------------------------------------------ module state
@@ -93,7 +96,7 @@ let adsTravel = 0, lastRawAds = 0, adsDir = 1;
 
 const tmp = new THREE.Vector3(), tmp2 = new THREE.Vector3(), tmp3 = new THREE.Vector3();
 const fwd = new THREE.Vector3(), right = new THREE.Vector3();
-const eye = new THREE.Vector3(), adsEye = new THREE.Vector3(), camPos = new THREE.Vector3(), lookAt = new THREE.Vector3();
+const eye = new THREE.Vector3(), camPos = new THREE.Vector3(), lookAt = new THREE.Vector3();
 const rayO = new THREE.Vector3(), rayD = new THREE.Vector3();
 const euler = new THREE.Euler(0, 0, 0, 'YXZ');
 const UP = new THREE.Vector3(0, 1, 0);
@@ -340,8 +343,8 @@ export function getAimRay(outOrigin, outDir) {
   dirFrom(me.yaw, me.pitch, outDir);
   controller.getEye(eye);
   if (me.life !== LIFE.GROUND || view === 'fp') { outOrigin.copy(eye); return outDir; }
-  // Looking through the sights: the shot leaves along the sight line from the sight's eye point.
-  if (adsTravel > 0.5 && avatar.getAdsEye(adsEye)) { outOrigin.copy(adsEye); return outDir; }
+  // Looking through the sights (first-person view model): the shot leaves from the eye along the sight line.
+  if (adsTravel > TUNE.adsFpAt) { outOrigin.copy(eye); return outDir; }
   // Third person: start the ray where the crosshair line passes the shoulder plane, so the shot lands exactly under the
   // crosshair without hitting anything between the camera and the player; never start inside a wall beside the head.
   tpCameraPosition(me, tmp2);
@@ -509,8 +512,8 @@ function groundCam(me, dt) {
   camPos.addScaledVector(right, bobX * T.bob);
   // swimming: the boom never dips under the water surface (sea level)
   if (controller.stanceInfo().stance === 'swim') camPos.y = Math.max(camPos.y, 0.3);
-  // ---- ADS: travel into the weapon sight (the avatar's IRONSIGHT-aligned eye point). Entering eases out (the camera
-  // is in the sight well before the weapon finishes raising), leaving eases in; the travel value itself is damped so
+  // ---- ADS: travel to the first-person eye, where the view model's sights take over. Entering eases out (the camera
+  // is at the eye well before the weapon finishes raising), leaving eases in; the travel value itself is damped so
   // a reversal mid-way never jumps.
   const rawAds = clamp(state.local.ads || 0, 0, 1);
   if (rawAds > lastRawAds + 1e-5) adsDir = 1;
@@ -521,15 +524,12 @@ function groundCam(me, dt) {
   let mode = 'tp';
   let near = boom < 0.55;
   if (adsTravel > 0.001) {
-    const ok = avatar.getAdsEye(adsEye);
-    if (!ok) adsEye.copy(eye);
-    camPos.lerp(adsEye, adsTravel);
-    const gap = camPos.distanceTo(adsEye);
-    if (gap < TUNE.adsHideDist) near = true;
-    if (adsTravel > 0.6 || gap < 0.2) mode = 'ads';
+    camPos.lerp(eye, adsTravel);
+    if (camPos.distanceTo(eye) < TUNE.adsHideDist) near = true;
+    if (adsTravel > TUNE.adsFpAt) mode = 'fp';
   }
   setMode(mode);
-  avatar.setLocalViewMode(state.local.scoped ? 'hidden' : near ? 'ads' : 'full');
+  avatar.setLocalViewMode(mode === 'fp' || state.local.scoped ? 'hidden' : near ? 'ads' : 'full');
   placeCamera(camPos, yaw, pitch);
   writeLocal(me);
   return fov;

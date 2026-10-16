@@ -432,10 +432,12 @@ function exposeTestHooks() {
       need(typeof target !== 'string' || e, 'unknown target');
       const tx = e ? e.pos.x : target[0], tz = e ? e.pos.z : target[target.length - 1];
       const ty = e ? e.pos.y + 1.2 : target.length === 3 ? target[1] : me.pos.y + 1.4;
-      // the aim ray starts on the camera line (third person), which moves with the yaw: converge in a few passes
+      // the aim ray starts on the camera line (third person), which moves with the yaw: converge in a few passes.
+      // Right after a teleport the camera has not caught up yet, so the first pass aims from the player's eye.
       const o = new THREE.Vector3(), d = new THREE.Vector3();
       for (let k = 0; k < 3; k++) {
         camera.getAimRay(o, d);
+        if (o.distanceTo(me.pos) > 6) o.set(me.pos.x, me.pos.y + 1.6, me.pos.z);
         const dx = tx - o.x, dy = ty - o.y, dz = tz - o.z;
         me.yaw = Math.atan2(-dx, -dz);
         me.pitch = Math.atan2(dy, Math.hypot(dx, dz));

@@ -190,8 +190,9 @@ the host damages bots. `?fastzone` multiplies all zone times by 0.1 for tests.
 `PLANE -> FREEFALL -> CHUTE -> GROUND -> DEAD -> (SPECTATE)`. `SPECTATE` is also the state of a peer that is in the
 room but not in the match. The camera is third-person for PLANE, FREEFALL, CHUTE and the 2.5 s death cam. On GROUND it is
 third-person over the shoulder by default (Q swaps the shoulder) and V toggles first person (remembered per browser). ADS in
-third person moves the camera into the weapon's own sight (`state.local.mode = 'ads'`, arms only); the COMBAT viewmodel draws
-only when `state.local.mode === 'fp'`.
+third person moves the camera from the shoulder to the first-person eye; past `camera TUNE.adsFpAt` of the travel the mode
+becomes `'fp'`, the avatar is shadow-only and the COMBAT viewmodel draws the weapon and its sights (the avatar's own hands
+are too coarse to fill the screen). The COMBAT viewmodel draws only when `state.local.mode === 'fp'`.
 
 ---
 

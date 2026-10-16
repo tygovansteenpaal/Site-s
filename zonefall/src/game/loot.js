@@ -40,7 +40,7 @@ const TUNE = {
   cullNear: 4,                 // m: items this close are never culled (their shadows reach into view)
   rebuildTurnDeg: 10,          // camera turn that rebuilds the visible set
   ringDistance: 125,           // m: glow rings
-  rebuildMove: 3,              // m of camera travel before the visible set is rebuilt
+  rebuildMove: 1.5,            // m of camera travel before the visible set is rebuilt
   capacity: 160,               // instances per part
   ammoOffset: 0.42,            // m beside its weapon
   crateScatter: [0.95, 1.35],  // m from the crate centre
@@ -67,6 +67,7 @@ const dropCounters = new Map();   // owner id -> next drop number
 let dirty = true;
 const lastRebuildAt = new THREE.Vector3(1e9, 0, 0);
 const lastRebuildDir = new THREE.Vector3(0, 0, 0);
+let lastRebuildFov = 0;
 const SMALL_KINDS = new Set(['ammo', 'frag', 'plate']);
 let nearbyUid = null;
 let ringTime = 0;
@@ -693,10 +694,13 @@ function writeVisible(force) {
   const moved = Math.hypot(cx - lastRebuildAt.x, cy - lastRebuildAt.y, cz - lastRebuildAt.z);
   if (cam) cam.getWorldDirection(_fwd); else _fwd.set(0, 0, -1);
   const turned = _fwd.dot(lastRebuildDir) < Math.cos(TUNE.rebuildTurnDeg * Math.PI / 180);
-  if (!force && !dirty && moved < TUNE.rebuildMove && !turned) return;
+  const fov = cam && cam.isPerspectiveCamera ? cam.fov : 0;
+  const widened = fov > lastRebuildFov + 2;           // leaving a scope: the cone grows without a turn
+  if (!force && !dirty && moved < TUNE.rebuildMove && !turned && !widened) return;
   dirty = false;
   lastRebuildAt.set(cx, cy, cz);
   lastRebuildDir.copy(_fwd);
+  lastRebuildFov = fov;
   // Item meshes outside the view cone (camera half-diagonal FOV + margin) are skipped; rings stay (2 triangles each).
   let cosCull = -2;
   if (cam && cam.isPerspectiveCamera) {
