@@ -205,10 +205,12 @@ export function kill(victimId, killerId, weapon, headshot, sid = null) {
       weapon, headshot: !!headshot, distance: k ? Math.round(k.pos.distanceTo(e.pos)) : 0,
     };
   }
-  emit(EV.PLAYER_KILLED, { id: victimId, by: killerId || null, weapon, headshot: !!headshot, pos });
+  // The authority's match time of the death (ms): every client ranks placements by it (game/match), not by arrival.
+  const t = Math.round(state.match.time * 1000);
+  emit(EV.PLAYER_KILLED, { id: victimId, by: killerId || null, weapon, headshot: !!headshot, pos, at: t / 1000 });
   const forfeit = weapon === 'left' && victimId === state.selfId;
   if (state.online && (weapon !== 'left' || forfeit)) {
-    session.send('death', { mid: state.match.id, id: victimId, by: killerId || null, w: weapon, hs: !!headshot, sid: sid == null ? null : sid, pos: round3(pos) });
+    session.send('death', { mid: state.match.id, id: victimId, by: killerId || null, w: weapon, hs: !!headshot, sid: sid == null ? null : sid, pos: round3(pos), t });
   }
   if (weapon === 'left' && !forfeit) return;
   // Death drop: the authority spawns the items (loot broadcasts 'drop' when online).
@@ -394,7 +396,7 @@ function onNetDeath({ from, data: d }) {
   e.alive = false;
   e.life = LIFE.DEAD;
   e.hp = 0;
-  emit(EV.PLAYER_KILLED, { id: d.id, by: d.by, weapon: d.w, headshot: !!d.hs, pos: d.pos });
+  emit(EV.PLAYER_KILLED, { id: d.id, by: d.by, weapon: d.w, headshot: !!d.hs, pos: d.pos, at: d.t == null ? undefined : d.t / 1000 });
 }
 
 /** Subscribe to NET_HIT and NET_DEATH. */

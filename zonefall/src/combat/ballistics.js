@@ -2,6 +2,8 @@
 // Every bullet is hitscan up to WEAPONS[w].range. Hitboxes are procedural capsules from entity pos/yaw/flags/life
 // (never bones), so every peer computes identical boxes (ARCHITECTURE.md 6.5):
 //   standing: head sphere y 1.62 r 0.13 | body capsule y 0.95..1.45 r 0.24 | limb capsule y 0.10..0.95 r 0.17
+//   The body capsule's rounded top (to 1.69 m) wraps the lower head sphere, so a level shot at the face would meet it
+//   first: a ray that passes through an entity's head sphere always counts as a head hit (rayPlayers).
 //   crouch: heights x 0.68 | slide: body lying 0.9 m along the facing from y 0.35, head at 0.6 |
 //   freefall: horizontal body along the facing at the entity position | chute: hanging upright.
 // Remote entities are tested at their interpolated (rendered) pose, which favours the shooter.
@@ -24,6 +26,8 @@ import * as camera from '../player/camera.js';
 const TUNE = {
   nearMiss: 3.0,                // m from the local eye: BULLET_NEAR
   broadRadius: 1.45,            // m around pos + 0.8 for the per-entity broad phase
+  headDepth: 0.3,               // m: a head sphere hit at most this far behind the entity's first contact still wins
+                                // (a level face shot is <= 0.24 m behind the body cap; a steep shot up through the chest is not)
   penetration: true,
   remoteNormalProbe: true,      // re-cast remote world hits locally for an exact decal normal
 };
@@ -103,11 +107,17 @@ export function rayPlayers(origin, dir, range, ignoreId) {
     const perp2 = cx * cx + cy * cy + cz * cz - along * along;
     if (perp2 > R * R) continue;
     const bx = hitboxes(e);
+    let entry = Infinity, zone = null, headT = -1;
     for (let i = 0; i < bx.length; i++) {
       const h = bx[i];
       const t = rayCapsuleExact(origin, dir, h.a, h.b, h.r);
-      if (t >= 0 && t < best) { best = t; bestId = e.id; bestZone = h.zone; }
+      if (t < 0) continue;
+      if (h.zone === 'head') headT = t;
+      if (t < entry) { entry = t; zone = h.zone; }
     }
+    // head priority: the ray goes through the head sphere of this entity (within its body depth) -> a head hit there
+    if (headT >= 0 && headT - entry < TUNE.headDepth) { entry = headT; zone = 'head'; }
+    if (zone && entry < best) { best = entry; bestId = e.id; bestZone = zone; }
   }
   if (!bestId) return null;
   rpOut.id = bestId; rpOut.zone = bestZone; rpOut.distance = best;

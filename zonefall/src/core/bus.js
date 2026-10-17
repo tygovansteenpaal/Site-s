@@ -36,6 +36,7 @@ export const EV = Object.freeze({
   MATCH_START: 'match:start',           // {id, seed, t0, roster, mode}
   MATCH_PHASE: 'match:phase',           // {phase, prev}
   MATCH_END: 'match:end',               // {winnerId, placement, stats}
+  MATCH_RESULT: 'match:result',         // {winnerId, placement, stats, revised}  a death that arrived after the end re-ranked it
   ZONE_UPDATE: 'zone:update',           // {zone}  (copy of state.zone, ~2 Hz and on every state change)
   ZONE_PHASE: 'zone:phase',             // {phase, state: 'waiting'|'shrinking', next: {x, z, r}, seconds}
   PLANE_DOORS: 'plane:doors',           // {open}

@@ -1,5 +1,5 @@
 // ZONEFALL - matchmaking and pre-match lobby. OWNER: NET. Contract: ARCHITECTURE.md 5.5 and 8.7.
-// Quick play: rooms `${NET.quickPrefix}-${region}-${n}` (region from the time zone), n = 1..NET.buckets. Each try waits
+// Quick play: rooms `${NET.quickPrefix}-v${protocol}-${region}-${n}` (region from the time zone), n = 1..NET.buckets. Each try waits
 // NET.bucketProbeMs for 'hello' replies and hops to n + 1 if a peer reports st:'live' or the room already holds
 // MATCH.maxHumans humans. Private: a NET.codeLength code from NET.codeAlphabet, room `${NET.privatePrefix}-${code}`,
 // password = code. Every peer says 'hello' on join and every 2 s (in a match too, with st:'live'). The lobby host
@@ -8,6 +8,12 @@
 // second and calls game/match.hostBegin(humans) at zero. Non-hosts mirror the countdown from 'lobby'.
 // The roster only holds peers in the lobby context (session.contextPeers): players still in a match are never pulled
 // into the next one. While some are, a private lobby waits for them (START NOW overrides); quick play carries on.
+// Quick-play room names carry the protocol version, so old and new clients never share (and empty) a bucket; private
+// rooms do not, so a version mismatch is detected there and explained in the lobby.
+// Connection failures: the lobby shows the error with a Retry button and retries by itself (5, 10, 20, then every
+// 30 s); losing every relay while alone holds the alone countdown instead of starting a bot match.
+// Private lobbies: the address bar carries ?room=CODE while in one (a refresh comes back to it, never to an old
+// one); a code nobody is in says so; the creator (remembered per tab, so also after a refresh) hosts the lobby.
 import { NET, MATCH } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, debug, APP } from '../core/state.js';
@@ -25,6 +31,8 @@ export const TUNE = {
   minLeadMs: 10000,          // a human who joins during a countdown always gets at least this long before the drop
   settleMs: 1200,            // after connecting, listen this long before acting as host (avoids a double countdown)
   maxHumans: MATCH.maxHumans, // humans per room; overridable in tests through debug.net.lobby.TUNE
+  retryMs: [5000, 10000, 20000, 30000],   // automatic reconnect attempts after a connection failure (last one repeats)
+  unseatedHopMs: 4000,       // quick play: a full room that only showed it after we settled -> search the next bucket
 };
 
 const SA_ZONES = /^America\/(Sao_Paulo|Argentina|Buenos_Aires|Cordoba|Mendoza|Bogota|Lima|Santiago|Caracas|La_Paz|Montevideo|Asuncion|Guayaquil|Cayenne|Paramaribo|Guyana|Recife|Fortaleza|Belem|Manaus|Cuiaba|Porto_Velho|Rio_Branco|Boa_Vista|Maceio|Bahia|Araguaina|Santarem|Campo_Grande|Noronha|Punta_Arenas|Eirunepe)/;
@@ -75,6 +83,7 @@ export function normalizeCode(input) {
 const L = {
   mode: 'quick', code: null, roomId: null, status: 'waiting', text: 'Not connected', hostId: null, isHost: false,
   roster: [], countdownEndsAt: null, link: null, region: null, bucket: 0, humans: 0, matchInProgress: false,
+  created: false, retryAt: null, seated: true,
 };
 const infos = new Map();       // peer id -> {name, st, mid, hum, at}
 let token = 0;                 // bumps on leave / new search, cancels pending async flows
@@ -87,11 +96,15 @@ let nextHelloAt = 0, nextLobbyAt = 0, nextEmitAt = 0;
 let lastHostLobby = null;      // {cd, at, ro, mode, from}
 let lastEmitKey = '';
 let inited = false;
+let lastFlow = null;           // {kind: 'quick'|'create'|'join', code}: what Retry runs again
+let retryTimer = 0, retries = 0;
+let unseatedSince = 0;
 
 function now() { return performance.now(); }
 
 function helloPayload() {
-  const live = (state.app === APP.MATCH || state.app === APP.RESULTS) && state.match.phase !== 'idle' && state.match.phase !== 'ended';
+  // a player removed from his match (Disconnected screen) is not playing it any more: nobody should wait for him
+  const live = (state.app === APP.MATCH || state.app === APP.RESULTS) && state.match.phase !== 'idle' && state.match.phase !== 'ended' && !state.match.netLost;
   return { v: PROTOCOL_VERSION, name: state.name || 'Operator', st: live ? 'live' : 'lobby', mid: state.match.id || null, hum: session.contextPeers().length + 1, js: session.joinedAt(), hr: sync.heardPeers(), rs: state.app === APP.RESULTS };
 }
 
@@ -168,7 +181,27 @@ export function init() {
       refresh(true);
     }
   });
-  debug.net = Object.assign(debug.net || {}, { lobby: { get, TUNE, regionFromTimeZone, generateCode, normalizeCode } });
+  debug.net = Object.assign(debug.net || {}, { lobby: { get, TUNE, regionFromTimeZone, generateCode, normalizeCode, retry } });
+}
+
+// ------------------------------------------------------------------------------------------------ address bar, creator
+/** Keep ?room=CODE in the address bar while in a private lobby (a refresh rejoins it), and only then. */
+function setRoomParam(code) {
+  try {
+    const u = new URL(location.href);
+    if ((u.searchParams.get('room') || null) === (code || null)) return;
+    if (code) u.searchParams.set('room', code); else u.searchParams.delete('room');
+    history.replaceState(history.state, '', u.toString());
+  } catch { /* no history API (sandboxed frame) */ }
+}
+
+const CREATED_KEY = 'zonefall.created';
+/** Codes this tab created (sessionStorage: survives a refresh, not shared with other tabs). */
+function createdCodes() {
+  try { const v = JSON.parse(sessionStorage.getItem(CREATED_KEY) || '[]'); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function rememberCreated(code) {
+  try { sessionStorage.setItem(CREATED_KEY, JSON.stringify([code, ...createdCodes().filter((c) => c !== code)].slice(0, 5))); } catch { /* storage blocked */ }
 }
 
 // ------------------------------------------------------------------------------------------------ status
@@ -239,7 +272,7 @@ function refresh(force) {
   L.roster = state.online ? buildRoster() : [];
   L.humans = L.roster.length;
   L.matchInProgress = state.online && liveElsewhere();
-  const key = `${L.status}|${L.text}|${L.hostId}|${L.countdownEndsAt}|${L.roster.map((r) => r.id + r.name).join(',')}|${L.matchInProgress}`;
+  const key = `${L.status}|${L.text}|${L.hostId}|${L.countdownEndsAt}|${L.roster.map((r) => r.id + r.name).join(',')}|${L.matchInProgress}|${L.retryAt}|${L.seated}`;
   const t = now();
   if (key !== lastEmitKey || (force && t >= nextEmitAt) || (L.countdownEndsAt != null && t >= nextEmitAt)) {
     lastEmitKey = key;
@@ -282,6 +315,7 @@ function busy() { return liveElsewhere() || (hostSaysFull() ?? full()); }
 
 function settle() {
   phase = 'settled';
+  retries = 0;
   settledAt = now();
   aloneSince = now();
   started = false; forced = false;
@@ -291,36 +325,68 @@ function settle() {
   setStatus('waiting', waitingText());
 }
 
-async function connectOrFail(roomId, password, myToken) {
+async function connectOrFail(roomId, password, myToken, opts = {}) {
   try {
-    await session.connect({ roomId, password });
+    await session.connect({ roomId, password, joiner: !!opts.joiner });
     return myToken === token;
   } catch (err) {
     if (myToken !== token) return false;
     phase = 'idle';
     setStatus('error', `${String(err && err.message || err).replace(/\s*\(.*\)$/, '')}. Check your connection or play a practice match.`);
+    scheduleRetry(myToken);
     return false;
   }
 }
 
+/** After a connection failure: try the same flow again by itself, later and later (Retry in the lobby does it now). */
+function scheduleRetry(myToken) {
+  clearTimeout(retryTimer);
+  if (!lastFlow) return;
+  const delay = TUNE.retryMs[Math.min(retries, TUNE.retryMs.length - 1)];
+  retries++;
+  L.retryAt = now() + delay;
+  refresh(true);
+  retryTimer = setTimeout(() => { if (myToken === token && L.status === 'error') retry(); }, delay);
+}
+
+/** Run the last flow again (quick play, the same private code). Returns false when there is nothing to retry. */
+export function retry() {
+  const f = lastFlow;
+  if (!f) return false;
+  clearTimeout(retryTimer);
+  L.retryAt = null;
+  const run = f.kind === 'quick' ? quickPlay(f.startBucket) : f.kind === 'create' ? createPrivate(f.code) : joinPrivate(f.code);
+  run.catch((err) => {
+    emit(EV.TOAST, { text: String(err && err.message || err), kind: 'danger', ms: 5000 });
+    setStatus('error', String(err && err.message || err));
+  });
+  return true;
+}
+
 function resetFor(mode, code) {
   const myToken = ++token;
+  clearTimeout(retryTimer);
+  L.retryAt = null;
   if (state.online) session.leave();
   infos.clear();
   lastHostLobby = null;
   started = false; forced = false;
-  L.mode = mode; L.code = code; L.link = code ? shareLink(code) : null; L.countdownEndsAt = null;
+  unseatedSince = 0;
+  L.mode = mode; L.code = code; L.link = code ? shareLink(code) : null; L.countdownEndsAt = null; L.created = false; L.seated = true;
+  setRoomParam(code);
   phase = 'connecting';
   return myToken;
 }
 
 /** Find or open a public lobby. Resolves when joined (state.app should already be 'lobby'). */
-export async function quickPlay() {
+export async function quickPlay(startBucket = 1) {
   const myToken = resetFor('quick', null);
+  const first = Math.max(1, Math.min(NET.buckets, startBucket | 0 || 1));
+  lastFlow = { kind: 'quick', startBucket: 1 };
   L.region = localRegion();
-  for (let n = 1; n <= NET.buckets; n++) {
+  for (let n = first; n <= NET.buckets; n++) {
     L.bucket = n;
-    L.roomId = `${NET.quickPrefix}-${L.region}-${n}`;
+    L.roomId = `${NET.quickPrefix}-v${PROTOCOL_VERSION}-${L.region}-${n}`;
     phase = 'connecting';
     setStatus('connecting', n === 1 ? 'Connecting to matchmaking' : `Lobby ${n - 1} is in a match. Trying lobby ${n}`);
     if (!(await connectOrFail(L.roomId, null, myToken))) return;
@@ -335,10 +401,13 @@ export async function quickPlay() {
   setStatus('error', 'Every public lobby is busy right now. Create a private lobby or try again in a minute.');
 }
 
-/** Open a private lobby; resolves to its code. */
-export async function createPrivate() {
-  const code = generateCode();
+/** Open a private lobby (a new code, or `code` again when retrying); resolves to its code. */
+export async function createPrivate(code = null) {
+  code = normalizeCode(code) || generateCode();
   const myToken = resetFor('private', code);
+  L.created = true;
+  rememberCreated(code);
+  lastFlow = { kind: 'create', code };
   L.roomId = `${NET.privatePrefix}-${code}`;
   setStatus('connecting', 'Opening a private lobby');
   if (!(await connectOrFail(L.roomId, code, myToken))) return code;
@@ -351,9 +420,13 @@ export async function joinPrivate(input) {
   const code = normalizeCode(input);
   if (!code) throw new Error(`"${String(input ?? '').slice(0, 12)}" is not a lobby code. Codes have ${NET.codeLength} letters and digits, like K7Q2M.`);
   const myToken = resetFor('private', code);
+  // this tab created the code (and came back, e.g. after a refresh): it keeps the lobby host role
+  const creator = createdCodes().includes(code);
+  L.created = creator;
+  lastFlow = { kind: 'join', code };
   L.roomId = `${NET.privatePrefix}-${code}`;
   setStatus('connecting', `Joining lobby ${code}`);
-  if (!(await connectOrFail(L.roomId, code, myToken))) return;
+  if (!(await connectOrFail(L.roomId, code, myToken, { joiner: !creator }))) return;
   phase = 'probing';
   const heardEveryone = () => session.peers().length > 0 && infos.size >= session.peers().length
     && (session.isHost() || hostSaysFull() !== null || liveElsewhere());
@@ -362,7 +435,11 @@ export async function joinPrivate(input) {
     leave();
     throw new Error(`Lobby ${code} is full (${TUNE.maxHumans} players).`);
   }
+  const nobody = session.allPeers().length === 0 && infos.size === 0;
   settle();
+  if (nobody && !creator && !session.versionMismatch()) {
+    emit(EV.TOAST, { text: `Nobody is in lobby ${code} right now. Check the code with your squad. You can wait here for them.`, kind: 'warn', ms: 7000 });
+  }
 }
 
 /** Leave the lobby and the room. */
@@ -370,10 +447,14 @@ export function leave() {
   token++;
   phase = 'idle';
   started = false; forced = false;
+  clearTimeout(retryTimer);
+  retries = 0;
+  lastFlow = null;
   if (state.online) session.leave();
   infos.clear();
   lastHostLobby = null;
-  L.code = null; L.link = null; L.roomId = null; L.countdownEndsAt = null; L.bucket = 0;
+  L.code = null; L.link = null; L.roomId = null; L.countdownEndsAt = null; L.bucket = 0; L.created = false; L.retryAt = null; L.seated = true;
+  setRoomParam(null);
   setStatus('waiting', 'Not connected');
 }
 
@@ -388,8 +469,23 @@ export function requestStart() {
 
 function waitingText() {
   if (L.matchInProgress && L.mode === 'private') return 'A match is in progress. You deploy in the next round.';
-  if (L.humans <= 1) return L.mode === 'private' ? 'Share the code to invite your squad' : 'Waiting for players';
+  if (L.humans <= 1) {
+    const mm = mismatchText();
+    if (mm) return mm;
+    if (L.mode !== 'private') return 'Waiting for players';
+    return L.created ? 'Share the code to invite your squad'
+      : `Nobody else is in lobby ${L.code} right now. Check the code with your squad, or wait here for them.`;
+  }
   return 'Waiting for players';
+}
+
+/** A player with another game version tried to connect (net/session handshake): say who has to reload. */
+function mismatchText() {
+  const m = session.versionMismatch();
+  if (!m) return null;
+  return m.theirs > m.ours
+    ? 'A player with a newer version of ZONEFALL tried to join. Reload this page to update, then you can play together.'
+    : 'A player with an older version of ZONEFALL tried to join. They need to reload their page before you can play together.';
 }
 
 /** Countdown, heartbeats, LOBBY_UPDATE emission. Called every frame while online (outside the lobby: heartbeat only). */
@@ -404,6 +500,31 @@ export function update(dt) {
   const humans = buildRoster();
   const live = liveElsewhere();
   if (started) { refresh(false); return; }
+
+  // A full room that only showed it after we settled (the 11th player's connections form after the join probe):
+  // never show him a countdown he will not deploy in. Quick play searches on; a private lobby waits for the next round.
+  L.seated = isHost || humans.some((h) => h.self);
+  if (!L.seated) {
+    if (!unseatedSince) unseatedSince = t;
+    L.countdownEndsAt = null;
+    L.status = 'waiting';
+    L.text = `This lobby is full (${TUNE.maxHumans} players). You deploy in the next round.`;
+    refresh(false);
+    if (L.mode === 'quick' && t - unseatedSince > TUNE.unseatedHopMs) quickPlay(L.bucket + 1);
+    return;
+  }
+  unseatedSince = 0;
+
+  // Every relay lost while nobody else is here: hold the alone countdown (quick play would start a bot match that
+  // nobody can join) and say so; Trystero's relay sockets reconnect by themselves (net/session relay keeper).
+  if (humans.length <= 1 && !forced && session.linkHealth().relaysOpen === 0) {
+    L.countdownEndsAt = null;
+    aloneSince = t;
+    L.status = 'connecting';
+    L.text = 'Lost the matchmaking servers. Reconnecting';
+    refresh(false);
+    return;
+  }
 
   if (isHost && t - settledAt >= TUNE.settleMs) {
     hostTick(t, humans, live);

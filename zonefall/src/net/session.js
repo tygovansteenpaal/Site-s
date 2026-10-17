@@ -16,10 +16,10 @@
 // a clean close (sleep, frozen tab) would be reused forever and every later handshake would time out, so a peer we drop,
 // a peer still silent when we leave a room, and a peer whose handshake times out get their connection closed; Trystero
 // then sees it as stale and negotiates a fresh one.
-import { NET } from '../config.js';
+import { NET, DEV } from '../config.js';
 import { emit, on, EV } from '../core/bus.js';
 import { state, debug, APP } from '../core/state.js';
-import { PROTOCOL_VERSION, ACTIONS, validate, toArrayBuffer, matchTag } from './protocol.js';
+import { PROTOCOL_VERSION, ACTIONS, validate, toArrayBuffer, matchTag, AWAY_TAG } from './protocol.js';
 
 const Q = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 
@@ -41,6 +41,10 @@ export const TUNE = {
   ctxGraceMs: 2500,        // a peer that just switched context still counts in its old one (its 'start'/'leave' is in flight)
   startGraceMs: 8000,      // after our match starts, roster humans still showing the lobby tag count as on their way in
   repairToastAfter: 2,     // handshake failures with one peer before the player is told a connection is being repaired
+  joinerBiasMs: 1e12,      // added to the join time a private-lobby joiner announces, so the creator (even one coming
+                           // back after a refresh) hosts the lobby before anyone who joined by code
+  mismatchShowMs: 300000,  // a version mismatch stays explained in the lobby while we stay in that room (up to this)
+  mismatchToastMs: 20000,
   probeEveryMs: 3000,      // own-link probe (a HEAD request to the page's own origin) at most this often
   probeTimeoutMs: 4000,
 };
@@ -71,6 +75,7 @@ let relaysOpen = 0;
 let lastRelayMsgAt = 0;            // performance.now() of the last message from any relay socket (own link probe)
 let probeOkAt = 0, probeFailAt = 0, probeAt = 0, probeBusy = false;   // own-link probe: start times of the last good/bad one
 const probedSockets = new WeakSet();
+const socketHeardAt = new WeakMap();  // relay socket -> performance.now() of its last message
 let timers = [];
 let connectToken = 0;
 let myCtx = 0, myCtxAt = 0, myMid = null;
@@ -84,6 +89,7 @@ const chByPc = new WeakMap();      // RTCPeerConnection -> our negotiated channe
 const repairs = new Map();         // peer id -> handshake failures since its connection was last reset
 let joinSeq = 0;
 const counters = { joinErrors: 0, lastJoinError: null, lastJoinErrorAt: 0, lastToastAt: 0, invalid: 0, muted: 0, hostConflicts: 0, resets: 0, wrongMatch: 0 };
+let mismatch = null;               // {theirs, ours, at}: the last peer that failed the handshake on the game version
 
 function makePeer(id) {
   return {
@@ -119,7 +125,7 @@ function countRelays() {
     // hears from some relay every few seconds. Trystero sets onmessage; an extra listener does not disturb it.
     if (typeof s.addEventListener === 'function' && !probedSockets.has(s)) {
       probedSockets.add(s);
-      s.addEventListener('message', () => { lastRelayMsgAt = performance.now(); });
+      s.addEventListener('message', () => { lastRelayMsgAt = performance.now(); socketHeardAt.set(s, lastRelayMsgAt); });
     }
   }
   return n;
@@ -127,8 +133,9 @@ function countRelays() {
 
 // ------------------------------------------------------------------------------------------------ connect / leave
 /**
- * Join a room. Resolves once at least one relay socket is open; rejects after NET.relayTimeoutMs otherwise.
- * @param {{roomId:string, password?:string|null, transport?:'nostr'|'local'}} opts
+ * Join a room. Resolves once a relay works (open and answering); rejects after NET.relayTimeoutMs otherwise.
+ * opts.joiner: a private-lobby joiner (not its creator); its announced join time is biased so the creator hosts.
+ * @param {{roomId:string, password?:string|null, transport?:'nostr'|'local', joiner?:boolean}} opts
  */
 export async function connect(opts) {
   if (!opts || typeof opts.roomId !== 'string' || !opts.roomId) throw new Error('[NET/session] connect needs a roomId');
@@ -145,10 +152,12 @@ export async function connect(opts) {
     if (kind === 'local') {
       const mod = await import('./localroom.js');
       self = state.selfId;
+      // ?netsim on the test transport: localroom delays this page's outgoing messages only, so the whole ping goes there
+      if (SIM && typeof mod.setLinkConditions === 'function') mod.setLinkConditions({ latency: SIM.ping, jitter: SIM.jitter, loss: SIM.loss });
       r = mod.joinLocalRoom(config, opts.roomId, callbacks, self);
       sockets = () => ({ local: { readyState: 1 } });
     } else {
-      const mod = await import('trystero');
+      const mod = await loadTrystero();
       self = mod.selfId;
       config.relayConfig = { urls: NET.relays };
       if (NET.turn && NET.turn.length) config.turnConfig = NET.turn;
@@ -164,7 +173,7 @@ export async function connect(opts) {
   if (token !== connectToken) { try { r.leave(); } catch { /* superseded */ } throw new Error('Connection cancelled'); }
 
   room = r; roomId = opts.roomId; transport = kind; mySelf = self; relaySockets = sockets;
-  mySince = Date.now();
+  mySince = Date.now() + (opts.joiner ? TUNE.joinerBiasMs : 0);
   acts = {};
   for (const name of ACTION_NAMES) {
     const a = room.makeAction(name);
@@ -174,14 +183,28 @@ export async function connect(opts) {
   room.onPeerJoin = (id) => addPeer(id);
   room.onPeerLeave = (id) => removePeer(id, 'left');
 
-  // Wait for a relay socket (Trystero opens them lazily on join).
+  // Wait for a relay that works: an open socket that has also spoken since we joined (Nostr relays answer the room
+  // subscription with EOSE and the announce with OK within a round trip). A socket that opens and drops at once, or
+  // accepts and never answers, is not matchmaking: that used to pass, and quick play then started a bot match alone.
+  // countRelays() hooks every socket as soon as Trystero creates it, before it can open, so no answer is missed.
   const t0 = performance.now();
+  if (kind !== 'local') keeperKick();          // relays that are down reconnect now, not at the keeper's next backoff step
+  // An open relay socket that never answered is a dead path (a middlebox holding the connection, a relay that stopped
+  // serving). Halfway through the wait the silent ones are replaced once (a network that came back meanwhile is picked
+  // up in this attempt; the new sockets resubscribe the room when they open), and again on failure for the next one.
+  const retireSilent = () => {
+    if (kind === 'local') return;
+    for (const ws of socketList()) if (ws && ws.readyState === 1 && !((socketHeardAt.get(ws) || 0) > t0)) dropSocket(ws);
+    keeperKick();
+  };
+  let refreshed = false;
   await new Promise((resolve, reject) => {
     const tick = () => {
       if (token !== connectToken) { reject(new Error('Connection cancelled')); return; }
       relaysOpen = countRelays();
-      if (relaysOpen > 0) { resolve(); return; }
-      if (performance.now() - t0 > NET.relayTimeoutMs) { reject(new Error("Can't reach matchmaking servers")); return; }
+      if (relaysOpen > 0 && (kind === 'local' || lastRelayMsgAt > t0)) { resolve(); return; }
+      if (!refreshed && performance.now() - t0 > NET.relayTimeoutMs / 2) { refreshed = true; retireSilent(); }
+      if (performance.now() - t0 > NET.relayTimeoutMs) { retireSilent(); reject(new Error("Can't reach matchmaking servers")); return; }
       setTimeout(tick, TUNE.relayPollMs);
     };
     tick();
@@ -205,6 +228,10 @@ export async function connect(opts) {
   timers.push(setInterval(refreshDiagnostics, TUNE.diagEveryMs));
   timers.push(setInterval(elect, TUNE.electEveryMs));
   setStatus('online', relayText());
+  if (SIM && !simAnnounced) {
+    simAnnounced = true;
+    emit(EV.TOAST, { text: `Network simulation on: +${SIM.ping} ms ping, ${Math.round(SIM.loss * 100)}% loss, ${SIM.jitter} ms jitter.`, kind: 'warn', ms: 6000 });
+  }
   return { roomId, selfId: mySelf };
 }
 
@@ -252,7 +279,18 @@ async function onPeerHandshake(peerId, send, receive) {
   await send({ v: TUNE.protocol, app: NET.appId });
   const got = await receive();
   const d = got && typeof got === 'object' && 'data' in got ? got.data : got;
-  if (!d || d.v !== TUNE.protocol) throw new Error(`protocol mismatch ${TUNE.protocol}/${d && d.v}`);
+  if (!d || d.v !== TUNE.protocol) {
+    if (d && Number.isFinite(d.v)) mismatch = { theirs: d.v, ours: TUNE.protocol, at: performance.now(), room: roomId, peer: peerId };
+    throw new Error(`protocol mismatch ${TUNE.protocol}/${d && d.v}`);
+  }
+}
+
+/**
+ * A game-version mismatch seen in the current room (Trystero stops re-trying the handshake after a few attempts, so it
+ * stays valid while we stay in the room, up to TUNE.mismatchShowMs): {theirs, ours} (net/lobby explains it), else null.
+ */
+export function versionMismatch() {
+  return mismatch && mismatch.room === roomId && roomId && performance.now() - mismatch.at < TUNE.mismatchShowMs ? { theirs: mismatch.theirs, ours: mismatch.ours } : null;
 }
 
 function onJoinError(e) {
@@ -268,17 +306,25 @@ function onJoinError(e) {
     const n = (repairs.get(peerId) || 0) + 1;
     repairs.set(peerId, n);
     resetConnection(peerId, 'handshake-failed');
-    if (n >= TUNE.repairToastAfter && now - counters.lastToastAt >= TUNE.joinErrorToastMs) {
+    // the peer that failed the version check keeps timing out afterwards: that is not a connection to repair
+    const versionPeer = mismatch && mismatch.peer === peerId && mismatch.room === roomId;
+    if (!versionPeer && n >= TUNE.repairToastAfter && now - counters.lastToastAt >= TUNE.joinErrorToastMs) {
       counters.lastToastAt = now;
       emit(EV.TOAST, { text: 'Reconnecting to a player. This can take a few seconds.', kind: 'warn', ms: 4000 });
     }
     return;
   }
-  if (now - counters.lastToastAt < TUNE.joinErrorToastMs) return;   // a bad room streams these about once a second
   if (/mismatch/i.test(text)) {
+    // Trystero retries the handshake every few seconds: one toast now and then, the lobby text explains it meanwhile
+    if (now - (counters.lastMismatchToastAt || -1e9) < TUNE.mismatchToastMs) return;
+    counters.lastMismatchToastAt = now;
     counters.lastToastAt = now;
-    emit(EV.TOAST, { text: 'A player in this lobby runs a different game version. Reload the page to update.', kind: 'warn', ms: 5000 });
-  } else if (/password/i.test(text)) {
+    const newer = mismatch && mismatch.theirs > mismatch.ours;
+    emit(EV.TOAST, { text: newer ? 'A newer version of ZONEFALL is out. Reload the page to update.' : 'A player with an older version of ZONEFALL cannot join until they reload their page.', kind: 'warn', ms: 6000 });
+    return;
+  }
+  if (now - counters.lastToastAt < TUNE.joinErrorToastMs) return;   // a bad room streams these about once a second
+  if (/password/i.test(text)) {
     counters.lastToastAt = now;
     emit(EV.TOAST, { text: 'Lobby code rejected by another player.', kind: 'warn', ms: 4000 });
   }
@@ -300,9 +346,14 @@ let PCClass = null;
 function peerConnectionClass() {
   if (PCClass || typeof RTCPeerConnection !== 'function') return PCClass;
   PCClass = class ZonefallPeerConnection extends RTCPeerConnection {
+    constructor(...args) {
+      super(...args);
+      // ?netsim: wrap channels the remote side opens before Trystero's ondatachannel handler sees them
+      if (SIM) this.addEventListener('datachannel', (e) => simChannel(e.channel));
+    }
     createDataChannel(label, opts) {
       if (label === 'data' && !(opts && opts.negotiated)) this.zfOfferer = true;
-      return super.createDataChannel(label, opts);
+      return simChannel(super.createDataChannel(label, opts));
     }
     setLocalDescription(desc) {
       if (this.zfOfferer && desc && desc.type === 'rollback' && this.signalingState === 'have-local-offer' && !this.remoteDescription) {
@@ -313,6 +364,140 @@ function peerConnectionClass() {
     restartIce() { /* see peerConnectionClass */ }
   };
   return PCClass;
+}
+
+// ------------------------------------------------------------------------------------------------ relay keeper
+// Trystero 0.25.4 retries a closed relay socket with a doubling backoff (3.3 s up to 60 s) and then gives up on that
+// relay for good (client.isClosed). Its relay registry hands the same dead client to every later joinRoom, so a relay
+// outage of a minute or two without a browser 'offline' event (blocked relays, flaky or captive Wi-Fi, a relay-side
+// outage) left matchmaking dead until a reload, with the lobby blaming a connection that was fine again. The keeper
+// takes reconnection over with Trystero's own pause/resume switch (exported for exactly this): reconnection stays
+// paused, so a closed socket waits instead of counting toward the give-up, and while any relay is down the keeper
+// resumes once every 2 s (doubling to 15 s while the attempts keep failing), which reopens every waiting socket, then
+// pauses again. A relay client that died anyway (its socket object did not change across two resumes) makes the next
+// connect() import a fresh instance of Trystero's relay layer, which builds new relay clients.
+const keeper = { mod: null, timer: 0, nextAt: 0, fails: 0, tried: new Map(), stuck: new Map(), dead: false, gen: 0, resumes: 0 };
+
+async function loadTrystero() {
+  if (keeper.mod && !keeper.dead) return keeper.mod;
+  let mod;
+  if (keeper.mod && keeper.dead && typeof import.meta.resolve === 'function') {
+    // a new module instance (the fragment makes a new module map entry; the file comes from the HTTP cache)
+    keeper.gen++;
+    mod = await import(`${import.meta.resolve('trystero')}#relays-${keeper.gen}`);
+  } else mod = await import('trystero');
+  keeper.mod = mod;
+  keeper.dead = false;
+  keeper.tried.clear();
+  keeper.stuck.clear();
+  keeper.fails = 0;
+  keeper.nextAt = 0;
+  try { mod.pauseRelayReconnection(); } catch { /* older build without the switch: Trystero's own backoff applies */ }
+  if (!keeper.timer) keeper.timer = setInterval(keeperTick, 1000);
+  return mod;
+}
+
+/**
+ * Retire a relay socket that is open but dead. close() alone can leave it CLOSING for a long time when the far end
+ * never answers, and Trystero only reconnects on the close event; so its close handler is detached first (a late real
+ * close must not replace the next socket) and called at once: the relay client then waits for the keeper's resume.
+ */
+function dropSocket(ws) {
+  const onclose = typeof ws.onclose === 'function' ? ws.onclose : null;
+  ws.onclose = null;
+  try { ws.close(); } catch { /* already closing */ }
+  if (onclose) { try { onclose.call(ws, new Event('close')); } catch { /* client gone */ } }
+}
+
+/** connect(): reconnect relays that are down right away (a Retry, or the lobby's automatic retry, must not wait). */
+function keeperKick() {
+  keeper.nextAt = 0;
+  keeper.fails = Math.min(keeper.fails, 1);
+  keeperTick();
+}
+
+function keeperTick() {
+  const mod = keeper.mod;
+  if (!mod || typeof mod.resumeRelayReconnection !== 'function') return;
+  let socks;
+  try { socks = Object.entries(mod.getRelaySockets() || {}); } catch { return; }
+  try { mod.pauseRelayReconnection(); } catch { return; }       // idempotent; Trystero itself resumes on 'online'
+  const down = socks.filter(([, ws]) => ws && ws.readyState >= 2);
+  if (!down.length) { keeper.fails = 0; keeper.nextAt = 0; return; }
+  const now = performance.now();
+  if (now < keeper.nextAt) return;
+  let allStuck = down.length === socks.length;
+  for (const [url, ws] of down) {
+    const n = keeper.tried.get(url) === ws ? (keeper.stuck.get(url) || 0) + 1 : 0;
+    keeper.stuck.set(url, n);
+    keeper.tried.set(url, ws);
+    if (n < 2) allStuck = false;
+  }
+  if (allStuck) keeper.dead = true;
+  keeper.resumes++;
+  mod.resumeRelayReconnection();
+  setTimeout(() => { try { mod.pauseRelayReconnection(); } catch { /* gone */ } }, 0);
+  keeper.fails++;
+  keeper.nextAt = now + Math.min(15000, 2000 * 2 ** Math.min(4, keeper.fails - 1));
+}
+
+// ------------------------------------------------------------------------------------------------ network simulation
+// ?netsim=ping,loss,jitter (config DEV.netsim, inert without it). Every data channel of this page's peer connections
+// (Trystero's reliable 'data' channel, its pings included, and our unreliable snapshot channel) gets ping/2 extra delay
+// on the way out and ping/2 on the way in, plus 0..jitter ms per message. Unreliable messages are lost with
+// probability `loss` in each direction; reliable ones keep their order and pay a retransmission delay instead. RTTs,
+// interpolation, hit validation and liveness all see it exactly like a slow connection on the production code path.
+const SIM = DEV.netsim;
+let simAnnounced = false;
+const simStats = { out: 0, in: 0, lost: 0, late: 0 };
+const ON_MESSAGE = typeof RTCDataChannel === 'function' ? Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onmessage') : null;
+
+/** Delivery time for one simulated message, or -1 if it is lost. `q` keeps reliable messages in order per direction. */
+function simAt(q, key, unreliable) {
+  const now = performance.now();
+  let at = now + SIM.ping / 2 + Math.random() * SIM.jitter;
+  if (unreliable) {
+    if (Math.random() < SIM.loss) { simStats.lost++; return -1; }
+    return at;
+  }
+  if (Math.random() < SIM.loss) { at += Math.max(200, SIM.ping * 1.5); simStats.late++; }
+  if (at < q[key]) at = q[key];
+  q[key] = at;
+  return at;
+}
+
+function simChannel(ch) {
+  if (!SIM || !ch || ch.zfSim) return ch;
+  ch.zfSim = true;
+  const unreliable = ch.ordered === false || ch.maxRetransmits === 0;
+  const q = { out: 0, in: 0 };
+  const rawSend = ch.send;
+  ch.send = function simSend(data) {
+    let d = data;   // the caller may reuse its buffer before the delayed send runs
+    if (d instanceof ArrayBuffer) d = d.slice(0);
+    else if (ArrayBuffer.isView(d)) d = d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength);
+    const at = simAt(q, 'out', unreliable);
+    if (at < 0) return;
+    simStats.out++;
+    setTimeout(() => { if (ch.readyState === 'open') { try { rawSend.call(ch, d); } catch { /* closing */ } } }, at - performance.now());
+  };
+  if (ON_MESSAGE && ON_MESSAGE.set) {
+    let user = null;
+    Object.defineProperty(ch, 'onmessage', {
+      configurable: true,
+      get: () => user,
+      set: (fn) => {
+        user = typeof fn === 'function' ? fn : null;
+        ON_MESSAGE.set.call(ch, user ? (e) => {
+          const at = simAt(q, 'in', unreliable);
+          if (at < 0) return;
+          simStats.in++;
+          setTimeout(() => { if (user) user.call(ch, e); }, at - performance.now());
+        } : null);
+      },
+    });
+  }
+  return ch;
 }
 
 /** Close the RTCPeerConnection to a peer so Trystero renegotiates it (see the header). Returns true if one was open. */
@@ -384,10 +569,10 @@ export function contextPeers() {
   return out.sort(bySince);
 }
 
-/** Non-stale peers currently playing a match other than ours (their snapshots carry a match tag). */
+/** Non-stale peers currently playing a match other than ours (their snapshots carry a match tag; away is none). */
 export function peersInMatch() {
   const out = [];
-  for (const p of peerMap.values()) if (!p.stale && !p.dropped && p.ctx && p.ctx !== myCtx) out.push(p.id);
+  for (const p of peerMap.values()) if (!p.stale && !p.dropped && p.ctx && p.ctx !== AWAY_TAG && p.ctx !== myCtx) out.push(p.id);
   return out;
 }
 
@@ -400,8 +585,16 @@ export function roomName() { return roomId; }
 export function transportKind() { return transport; }
 /** Wall-clock ms this client joined the room (sent in 'hello'; the earliest peer hosts the lobby). */
 export function joinedAt() { return mySince; }
-/** The context tag this client sends: matchTag(match id) inside a match, 0 in the menu, lobby and results. */
+/** This client's context: matchTag(match id) inside a match, 0 in the menu, lobby and results. */
 export function contextTag() { refreshMyCtx(); return myCtx; }
+
+/**
+ * The tag this client's snapshots carry: its context, or protocol.AWAY_TAG once it lost its place in the match
+ * (Disconnected screen), so players back in the lobby neither wait for it nor count it in their roster.
+ */
+export function advertisedTag() { refreshMyCtx(); return selfOut && myCtx ? AWAY_TAG : myCtx; }
+/** True while this client is out of its match but still on its screen (see advertisedTag). */
+export function isAway() { refreshMyCtx(); return selfOut && !!myCtx; }
 
 /** Join order index of a peer (lower joined earlier, from this client's point of view). */
 export function joinIndex(id) { return id === selfId() ? 0 : (peerMap.get(id)?.seq ?? Infinity); }
@@ -888,6 +1081,8 @@ export function diagnostics() {
     joinErrors: counters.joinErrors, lastJoinError: counters.lastJoinError, invalid: counters.invalid, muted: counters.muted,
     hostConflicts: counters.hostConflicts, resets: counters.resets, lastReset: counters.lastReset || null, wrongMatch: counters.wrongMatch,
     context: myCtx, selfOut, out: [...outIds], relaySilentMs: Math.round(now - lastRelayMsgAt),
+    netsim: SIM ? { ...SIM, ...simStats } : null,
+    relayKeeper: { resumes: keeper.resumes, fails: keeper.fails, dead: keeper.dead, gen: keeper.gen },
     peers: [...peerMap.values()].map((p) => ({
       id: p.id, rtt: Math.round(p.rtt), rttMin: Number.isFinite(p.rttMin) ? Math.round(p.rttMin) : 0,
       channel: p.channel && p.channel.readyState === 'open' ? 'unreliable' : 'fallback', pair: p.pair,

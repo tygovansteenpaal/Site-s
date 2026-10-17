@@ -3,6 +3,8 @@
 .zf-hud { --low: 0; z-index: 10; pointer-events: none; text-shadow: var(--zf-ts); }
 .zf-hud.is-dead .zf-hud__bl, .zf-hud.is-dead .zf-hud__br, .zf-hud.is-air .zf-hud__br { display: none; }
 .zf-hud.is-dead .zf-center > :not(.zf-arcs), .zf-hud.is-dead .zf-scope { display: none !important; }
+/* the death / disconnected screen owns the view until the player spectates: no compass, zone timer or minimap behind it */
+.zf-hud.is-dead:not(.is-spectating) .zf-hud__top, .zf-hud.is-dead:not(.is-spectating) .zf-hud__tr { visibility: hidden; }
 .zf-hud.is-scoped .zf-hud__tr, .zf-hud.is-scoped .zf-hud__top { opacity: 0.55; }
 
 /* overlays: low health vignette, hurt flash, gas tint */

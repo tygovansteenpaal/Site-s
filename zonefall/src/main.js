@@ -197,6 +197,7 @@ const intents = {
   async create_private() { audio.unlock(); setAppState(APP.LOBBY); await lobby.createPrivate(); },
   async join_private({ code }) { audio.unlock(); setAppState(APP.LOBBY); await lobby.joinPrivate(code); },
   start_now() { lobby.requestStart(); },
+  lobby_retry() { audio.unlock(); lobby.retry(); },
   leave_lobby() { lobby.leave(); setAppState(APP.MENU); },
   pause() { setPaused(true); },
   resume() { input.lock(); setPaused(false); },
@@ -256,13 +257,23 @@ function wireFlow() {
   });
   bus.on(EV.PLAYER_KILLED, ({ id }) => { if (id === state.selfId) setPaused(false); });
   bus.on(EV.APP_STATE, ({ to }) => input.setEnabled(to === APP.MATCH));
-  addEventListener('pagehide', () => {
-    if (!state.online) return;
-    // closing the tab mid-match: forfeit and announce it (death drop, 'leave') before the graceful room leave
-    if (state.app === APP.MATCH || state.app === APP.RESULTS) { try { match.leave(); } catch (err) { console.warn('[ZONEFALL] match.leave on pagehide failed', err); } }
-    session.leave();
-  });
 }
+
+/**
+ * Closing, reloading or navigating away mid-match: forfeit and announce it (death, inventory drop, 'leave') while the
+ * room is still open, then leave it gracefully. Trystero adds its own 'beforeunload' listener (leave every room) when
+ * it is first imported, and 'beforeunload' fires before 'pagehide', so a pagehide-only handler found the room already
+ * closed and the forfeit never left the page. This listener is registered when main.js loads (long before the lazy
+ * Trystero import) and in the capture phase, so it runs first; Trystero's sends complete in microtasks, which run
+ * before the next listener. 'pagehide' stays as the fallback for browsers that skip beforeunload (mobile Safari).
+ */
+function onPageExit() {
+  if (!state.online) return;
+  if (state.app === APP.MATCH || state.app === APP.RESULTS) { try { match.leave(); } catch (err) { console.warn('[ZONEFALL] match.leave on page exit failed', err); } }
+  try { session.leave(); } catch (err) { console.warn('[ZONEFALL] session.leave on page exit failed', err); }
+}
+addEventListener('beforeunload', onPageExit, { capture: true });
+addEventListener('pagehide', onPageExit, { capture: true });
 
 // ------------------------------------------------------------------------------------------ frame
 function frame(dt, now, hidden = false) {

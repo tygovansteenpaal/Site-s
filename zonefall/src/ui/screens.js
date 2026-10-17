@@ -220,7 +220,7 @@ export function showResults(info = {}) {
       won
         ? h('h1', { class: 'zf-results__title zf-results__title--win' }, h('span', { text: 'Victory' }))
         : h('h1', { class: 'zf-results__title' }, h('small', { text: '#' }), h('span', { text: String(placement) })),
-      h('p', { class: 'zf-results__sub', text: won ? 'Last one standing' : `Placed ${ordinal(placement)} of ${total}${winnerName ? `. ${winnerName} took the win.` : ''}` }),
+      h('p', { class: 'zf-results__sub', text: won ? (getPlayer(state.selfId)?.alive === false ? 'Last one to fall' : 'Last one standing') : `Placed ${ordinal(placement)} of ${total}${winnerName ? `. ${winnerName} took the win.` : ''}` }),
       h('dl', { class: 'zf-stats' },
         stat('Kills', String(s.kills || 0)),
         stat('Damage', String(Math.round(s.damage || 0))),

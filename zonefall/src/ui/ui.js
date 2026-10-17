@@ -90,8 +90,12 @@ function wireEvents() {
   on(EV.LOAD_PROGRESS, ({ p, label }) => setLoading(p, label));
   on(EV.TOAST, ({ text, kind, ms }) => toast(text, kind, ms));
   on(EV.LOBBY_UPDATE, ({ lobby: l }) => lobby.render(l));
+  let netErrorToastAt = -1e9;
   on(EV.NET_STATUS, ({ status, text }) => {
-    if (status === 'error' && state.app === APP.LOBBY) toast(text || 'Connection problem', 'danger', 5000);
+    // the lobby screen keeps showing the error and retries by itself: one toast per minute, not one per attempt
+    if (status !== 'error' || state.app !== APP.LOBBY || performance.now() - netErrorToastAt < 60000) return;
+    netErrorToastAt = performance.now();
+    toast(text || 'Connection problem', 'danger', 5000);
   });
   on(EV.MATCH_START, () => {
     deathAt = 0; deathShown = false; lastSpecId = undefined; lockedThisMatch = false;
@@ -114,11 +118,16 @@ function wireEvents() {
       screens.showDeath({ killer: state.local.killer });
     });
   });
-  on(EV.MATCH_END, ({ winnerId }) => {
-    if (state.app !== APP.MATCH) return;
+  const announceEnd = (winnerId) => {
     const name = winnerId ? (getPlayer(winnerId)?.name || '') : '';
-    if (winnerId && winnerId === state.selfId) hud.announce('Match over', 'Victory', 'Last one standing');
+    if (winnerId && winnerId === state.selfId) hud.announce('Match over', 'Victory', getPlayer(state.selfId)?.alive ? 'Last one standing' : 'Last one to fall');
     else hud.announce('Match over', name ? `${name} wins` : 'Match over', `Results in ${MATCH.endDelay} seconds`);
+  };
+  on(EV.MATCH_END, ({ winnerId }) => { if (state.app === APP.MATCH) announceEnd(winnerId); });
+  // a death that reached us after the end re-ranked the match (game/match): show the corrected result
+  on(EV.MATCH_RESULT, ({ winnerId }) => {
+    if (state.app === APP.RESULTS) screens.showResults(resultsInfo());
+    else if (state.app === APP.MATCH) announceEnd(winnerId);
   });
   on('input:bindings', () => refreshKeycaps(root));
 }

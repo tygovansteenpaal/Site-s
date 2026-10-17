@@ -24,7 +24,13 @@ export const SHOT_SIZE = 48;
 export const NONE = 255;
 
 /**
- * 32-bit tag of a match id (FNV-1a), never 0: 0 on the wire means "not in a match" (menu, lobby, results).
+ * Tag of a player who was removed from his match (connection lost, kicked) and still sits on its Disconnected screen:
+ * in no match anyone should wait for, and not in the lobby either (he cannot be deployed from there).
+ */
+export const AWAY_TAG = 0xffffffff;
+
+/**
+ * 32-bit tag of a match id (FNV-1a), never 0 or AWAY_TAG: 0 on the wire means "not in a match" (menu, lobby, results).
  * @param {string|null} mid
  */
 export function matchTag(mid) {
@@ -33,7 +39,7 @@ export function matchTag(mid) {
   const s = String(mid);
   for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   h >>>= 0;
-  return h === 0 ? 1 : h;
+  return h === 0 ? 1 : h === AWAY_TAG ? AWAY_TAG - 1 : h;
 }
 
 const weaponIndex = (id) => { const i = WEAPON_ORDER.indexOf(id); return i < 0 ? NONE : i; };
@@ -222,12 +228,13 @@ export const validate = Object.freeze({
     for (const k in out) if (out[k] === null) return null;
     return out;
   },
-  // {mid, id, by|null, w: weapon|'zone'|'fall'|'left', hs, sid|null, pos}
+  // {mid, id, by|null, w: weapon|'zone'|'fall'|'left', hs, sid|null, pos, t: match ms of the death on its authority}
   death(d) {
     if (!d || typeof d !== 'object') return null;
     const mid = str(d.mid, 24), id = str(d.id, 40), pos = vec3(d.pos), w = DEATH_CAUSES.has(d.w) ? d.w : null;
-    if (!mid || !id || !pos || !w) return null;
-    return { mid, id, by: d.by == null ? null : str(d.by, 40), w, hs: !!d.hs, sid: d.sid == null ? null : intIn(d.sid, 0, 0x7fffffff), pos };
+    const t = numIn(d.t, -1e9, 1e9);
+    if (!mid || !id || !pos || !w || t === null) return null;
+    return { mid, id, by: d.by == null ? null : str(d.by, 40), w, hs: !!d.hs, sid: d.sid == null ? null : intIn(d.sid, 0, 0x7fffffff), pos, t: Math.round(t) };
   },
   // {mid, uid, t: match ms, by: bot id | null}
   pick(d) {

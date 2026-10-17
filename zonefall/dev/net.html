@@ -614,9 +614,9 @@ function runSelfTests() {
     const hello = v.hello({ v: 1, name: '<b>x</b>', st: 'live', hum: 3 });
     const dupSlots = v.start({ mid: 'm', seed: 1, t0h: 1, th: 0, ep: 0, ro: [{ id: 'a', slot: 0 }, { id: 'b', slot: 0 }] });
     const drop = v.drop({ items: Array.from({ length: 17 }, (_, i) => ({ uid: 'u' + i, type: 'ammo', qty: 1, pos: [0, 0, 0] })) });
-    const pass = !!okHit && !badHit && !bigDmg && !noMid && hello && hello.name === 'bxb' && !dupSlots && !drop && v.death({ mid: 'm1', id: 'a', by: null, w: 'left', pos: [0, 0, 0] })
-      && !v.death({ id: 'a', by: null, w: 'zone', pos: [0, 0, 0] }) && v.leave({ mid: 'm1', alive: 1 }).alive === true && !v.kick({});
-    return { pass, detail: 'hit (needs mid), hello, start, drop, death (needs mid), leave, kick' };
+    const pass = !!okHit && !badHit && !bigDmg && !noMid && hello && hello.name === 'bxb' && !dupSlots && !drop && v.death({ mid: 'm1', id: 'a', by: null, w: 'left', pos: [0, 0, 0], t: 61234 })
+      && !v.death({ id: 'a', by: null, w: 'zone', pos: [0, 0, 0], t: 1 }) && !v.death({ mid: 'm1', id: 'a', by: null, w: 'zone', pos: [0, 0, 0] }) && v.leave({ mid: 'm1', alive: 1 }).alive === true && !v.kick({});
+    return { pass, detail: 'hit (needs mid), hello, start, drop, death (needs mid and time), leave, kick' };
   });
   test('Private codes: 400 generated, alphabet only', () => {
     const set = new Set();
@@ -682,6 +682,20 @@ function runSelfTests() {
     const skew = 81234.5, minLat = 12;
     for (let i = 0; i < 100; i++) { const ts = i * 50, lat = minLat + rnd() * rnd() * 60; off = T.updateOffset(off, ts + skew + lat, ts); }
     return { pass: Math.abs(off - (skew + minLat)) < 3, detail: `estimate ${(off - skew).toFixed(2)} ms above skew (true min ${minLat})` };
+  });
+  test('Clock offset learns a lasting latency rise within seconds', () => {
+    let seed = 5; const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const o = T.createOffsetEst(), skew = 5000;
+    let at10 = 0, at20 = 0, low = Infinity;
+    for (let i = 0; i < 600; i++) {                       // 30 s at 20 Hz: 20 ms min latency, +150 ms from t = 10 s
+      const ts = i * 50, lat = (ts < 10000 ? 20 : 170) + rnd() * rnd() * 60;
+      const est = T.offsetSample(o, ts + skew + lat, ts) - skew;
+      if (ts < 10000) low = Math.min(low, est);
+      if (ts === 10000 - 50) at10 = est;
+      if (ts === 19950) at20 = est;
+    }
+    const final = o.est - skew;
+    return { pass: Math.abs(at10 - 20) < 3 && Math.abs(at20 - 170) < 5 && Math.abs(final - 170) < 5, detail: `before ${at10.toFixed(1)} ms, 10 s after the rise ${at20.toFixed(1)} ms, end ${final.toFixed(1)} ms (true 20 then 170)` };
   });
   test('Pose history: 1 s ring, interpolated lookup', () => {
     const r = T.createRing(1, 60);
