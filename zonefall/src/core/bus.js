@@ -27,12 +27,16 @@ export const EV = Object.freeze({
   NET_DROP: 'net:drop',                 // {from, data}
   NET_NADE: 'net:nade',                 // {from, data}
   NET_SHOT: 'net:shot',                 // {from, shooterId, shot}  (decoded SHOT binary)
+  NET_LEAVE: 'net:leave',               // {from, data: {mid, alive}}  a peer left our match (LEAVE MATCH, menu, tab closed)
+  NET_KICK: 'net:kick',                 // {from, data: {mid}}  a peer dropped us from our match after a long silence
+  NET_LINK: 'net:link',                 // {state: 'ok'|'interrupted'|'lost', reason}  our own connection during a match
   LOBBY_UPDATE: 'lobby:update',         // {lobby}  (net/lobby.getLobby() snapshot)
 
   // match
   MATCH_START: 'match:start',           // {id, seed, t0, roster, mode}
   MATCH_PHASE: 'match:phase',           // {phase, prev}
   MATCH_END: 'match:end',               // {winnerId, placement, stats}
+  MATCH_RESULT: 'match:result',         // {winnerId, placement, stats, revised}  a death that arrived after the end re-ranked it
   ZONE_UPDATE: 'zone:update',           // {zone}  (copy of state.zone, ~2 Hz and on every state change)
   ZONE_PHASE: 'zone:phase',             // {phase, state: 'waiting'|'shrinking', next: {x, z, r}, seconds}
   PLANE_DOORS: 'plane:doors',           // {open}

@@ -190,8 +190,9 @@ the host damages bots. `?fastzone` multiplies all zone times by 0.1 for tests.
 `PLANE -> FREEFALL -> CHUTE -> GROUND -> DEAD -> (SPECTATE)`. `SPECTATE` is also the state of a peer that is in the
 room but not in the match. The camera is third-person for PLANE, FREEFALL, CHUTE and the 2.5 s death cam. On GROUND it is
 third-person over the shoulder by default (Q swaps the shoulder) and V toggles first person (remembered per browser). ADS in
-third person moves the camera into the weapon's own sight (`state.local.mode = 'ads'`, arms only); the COMBAT viewmodel draws
-only when `state.local.mode === 'fp'`.
+third person moves the camera from the shoulder to the first-person eye; past `camera TUNE.adsFpAt` of the travel the mode
+becomes `'fp'`, the avatar is shadow-only and the COMBAT viewmodel draws the weapon and its sights (the avatar's own hands
+are too coarse to fill the screen). The COMBAT viewmodel draws only when `state.local.mode === 'fp'`.
 
 ---
 
@@ -482,17 +483,23 @@ WorldHit  = { distance, point: Vector3, normal: Vector3, surface, kind: 'terrain
 Ammo types: AK-47 and M4A1 use `ar`; MP5 and 1911 use `light`; M700 uses `sniper`.
 
 ### 5.5 NET: `net/*`
-**net/protocol.js** (complete): `PROTOCOL_VERSION`, `MSG`, `ACTIONS`, `encode/decodePlayerSnap`, `encode/decodeBotBatch`,
-`encode/decodeShot`, `msgType`, `toArrayBuffer`, `seqNewer`, `validate.{hello, lobby, start, hit, death, pick, drop, nade, host}`,
-`ZONE_CODE`, `ZONE_NAME`, `SHOT_HIT`.
+**net/protocol.js** (complete): `PROTOCOL_VERSION`, `MSG`, `ACTIONS`, `matchTag(mid)`, `encode/decodePlayerSnap`,
+`encode/decodeBotBatch`, `encode/decodeShot`, `msgType`, `toArrayBuffer`, `seqNewer`,
+`validate.{hello, lobby, start, hit, death, pick, drop, nade, host, leave, kick}`, `ZONE_CODE`, `ZONE_NAME`, `SHOT_HIT`.
 
-**net/session.js:** `async connect({roomId, password})`, `leave()`, `online()`, `selfId()`, `peers()`, `hostId()`,
-`isHost()`, `epoch()`, `send(action, data, target?)`, `sendBinary(buf, target?)`, `setBinaryHandler(fn)`,
-`setStale(peerId, stale)`, `async ping(peerId)`, `rtt(peerId)`, `diagnostics()`. Emits NET_STATUS, PEER_JOIN/LEAVE,
-HOST_CHANGED and NET_* per action.
+**net/session.js:** `async connect({roomId, password})`, `leave()`, `online()`, `selfId()`, `peers()`, `contextPeers()`,
+`peersInMatch()`, `hostId()`, `isHost()`, `epoch()`, `joinedAt()`, `contextTag()`, `send(action, data, target?)`,
+`sendBinary(buf, target?, {contextOnly}?)`, `setBinaryHandler(fn)`, `setStale(peerId, stale)`, `setUnresponsive(peerId, on)`,
+`notePeerContext(peerId, tag)`, `markDropped(peerId)`, `isOut(peerId)`, `inMatchPeer(peerId)`, `setSelfOut(on)`,
+`heardByOthers(peerId)`, `repairConnection(peerId)`, `linkHealth()`, `probeLink()`, `noteLocalStall(ms)`,
+`async ping(peerId)`, `rtt(peerId)`, `diagnostics()`. Emits NET_STATUS, PEER_JOIN/LEAVE, HOST_CHANGED {hostId, epoch, self,
+migrated} and NET_* per action (NET_LEAVE, NET_KICK included). Hands Trystero `rtcPolyfill` = a RTCPeerConnection subclass
+that works around Trystero 0.25.4's broken refresh of pooled offers (see 8.8).
 
 **net/sync.js:** `init()`, `update(dt)`, `sendShot(shot)`, `clockOffset(peerId)`, `toLocalTime(peerId, t)`,
-`selfPoseAt(tMs)`, `botPoseAt(botId, tMs)`, `interpDelay()`. Emits NET_SHOT.
+`selfPoseAt(tMs)`, `botPoseAt(botId, tMs)`, `interpDelay()`, `heardPeers()`, `link()`. Emits NET_SHOT, NET_LINK
+{state: 'ok'|'interrupted'|'lost', reason}, and WEAPON_RELOAD/WEAPON_SWITCH/PLATE_START for remote entities (from their
+flags), so their reloads, switches and plates are heard.
 
 **net/lobby.js:** `init()`, `async quickPlay()`, `async createPrivate() -> code`, `async joinPrivate(code)`, `leave()`,
 `requestStart()`, `update(dt)`, `get() -> Lobby`. Emits LOBBY_UPDATE, TOAST. Calls match.hostBegin at countdown zero.
@@ -500,11 +507,15 @@ HOST_CHANGED and NET_* per action.
 Every module checks `state.online` before sending; offline (practice) means no network calls at all.
 
 ### 5.6 GAME: `game/*`
-**game/match.js:** `init()` (subscribes to NET_START, PLAYER_KILLED, PLAYER_DAMAGED, PEER_LEAVE, HOST_CHANGED),
+**game/match.js:** `init()` (subscribes to NET_START, PLAYER_KILLED, PLAYER_DAMAGED, PEER_LEAVE, NET_LEAVE, NET_LINK, HOST_CHANGED),
 `startPractice({bots, seed})`, `hostBegin(humans)`, `beginFromNetwork(start, from)`, `update(dt)`, `leave()`,
 `planePath()`, `planePosAt(t, out)`. Emits MATCH_START, MATCH_PHASE, MATCH_END, PLANE_DOORS. Uses controller.spawn,
 inventory.reset, zone.setup, loot.setup/clear, bots.setup/takeOver, session.send('start'), sync.clockOffset, camera.setSpectate.
-A peer that leaves mid-match counts as dead: emit PLAYER_KILLED `{id, by: null, weapon: 'left'}` locally, with no drop and no credit.
+A peer that leaves mid-match counts as dead (PLAYER_KILLED `{id, by: null, weapon: 'left'}`, no credit): its own `death`
+{w:'left'} + inventory drop when it leaves alive, its `leave` {mid}, or net/sync's drop (PEER_LEAVE {reason:'timeout'}); a
+raw transport disconnect alone is never a death. `leave()` announces leaving (death + drop when alive, then `leave`); on
+NET_LINK 'lost' the match is forfeited: `state.match.netLost` = reason, the local player dies with 'left', the session
+stops hosting, and the UI shows "Disconnected" with Return to lobby.
 
 **game/plane.js:** `init(scene)`, `update(dt)`, `getTransform() -> {pos, dir}`, `setVisible(on)`.
 
@@ -634,24 +645,37 @@ equipment materials by `TEAM_TINTS[slot % 6]`; the head is untinted. Avatars bey
 
 ### 8.1 Topology
 This is a full WebRTC mesh through Trystero (Nostr strategy), with the 8 relays in `NET.relays`. Each human is authoritative
-for their own movement, aim, HP, inventory and death. The **host** is the lexicographically lowest peer id among self and
-the non-stale peers. Every peer computes it, so no election messages are needed. The host runs the lobby countdown, sends
-`start`, simulates bots and owns bot HP. Host migration: when the host leaves or goes stale, the next lowest takes over
-with `epoch + 1`, sends `host`, and calls `bots.takeOver()`. Peers ignore host messages that carry an older epoch.
+for their own movement, aim, HP, inventory and death. Every peer is in one **context**: the lobby (menu, lobby, results:
+match tag 0) or one match (tag = `matchTag(match id)`, carried on every snapshot). Hosts are elected per context, by every
+peer locally, among the peers of its own context that are not unresponsive, dropped or out:
+- **lobby host** = the peer that joined the room first (hello `js`, then the lowest id), so a private lobby's creator keeps
+  START NOW. It runs the countdown and sends `start`.
+- **match host** = the lowest id among the roster's humans still in that match. It simulates bots and owns bot HP.
+
+So a player who goes back to the lobby is never the host of the match he left, and players still in a match never host or
+join the lobby's next round. Host migration: when the host leaves, goes out of the match, or is silent for
+`NET.hostStaleMs` (6 s), the next one takes over with `epoch + 1`, sends `host` {ep, id, mid} and calls `bots.takeOver()`
+(only on a real migration: HOST_CHANGED.migrated). An epoch announced for a peer we have not elected yet is kept and adopted
+when we elect it. A client that hears nobody at all does not take the bots until net/sync has decided (8.6).
 
 ### 8.2 Channels
 - **Unreliable** (one per peer, `negotiated:true, id:42, ordered:false, maxRetransmits:0`): PSNAP, BOTS, SHOT.
   Sends are dropped while `bufferedAmount > 16384`. Until the channel is open, binary goes through the reliable `bin` action.
-- **Reliable** (Trystero actions, JSON): `hello`, `lobby`, `start`, `hit`, `death`, `pick`, `drop`, `nade`, `host`, `bin`.
+- **Reliable** (Trystero actions, JSON): `hello`, `lobby`, `start`, `hit`, `death`, `pick`, `drop`, `nade`, `host`, `leave`,
+  `kick`, `bin`. In-match payloads carry `mid`; one for another match (or from a peer that left or was dropped from ours)
+  is dropped. BOTS and SHOT are only sent to peers in our match; PSNAP goes to everyone (liveness and context).
   Every incoming payload goes through `protocol.validate[action]`. Handshake: `onPeerHandshake` exchanges `{v: PROTOCOL_VERSION}`,
   and a mismatch rejects the peer. Peers that send more than `NET.maxMsgsPerSec` are ignored for 1 s.
 
 ### 8.3 Binary layouts (little-endian; `src/net/protocol.js` is the reference)
+Protocol 2 (`NET.protocol`; bump it on every wire change, the handshake rejects other versions):
 ```
-PSNAP 40 B: u8 type=1 | u8 weapon | u16 seq | f64 t | f32 x y z | f32 yaw | f32 pitch | u16 flags | u8 hp | u8 armor | u8 life | 3 B reserved
-BOTS 12+24n: u8 type=2 | u8 count | u16 seq | f64 t || per bot: u8 slot | u8 weapon | u16 flags | f32 x y z | i16 yaw*1e4 | i16 pitch*1e4 | u8 hp | u8 armor | u8 life | 1 B reserved
-SHOT 44 B: u8 type=3 | u8 weapon | u16 seq | f64 t | f32 origin xyz | f32 dir xyz | f32 dist | u8 surface (255 none) | u8 hitFlags (1 player, 2 head, 4 kill) | u8 botSlot (255 = sender) | 1 B reserved
+PSNAP 44 B: u8 type=1 | u8 weapon | u16 seq | f64 t | f32 x y z | f32 yaw | f32 pitch | u16 flags | u8 hp | u8 armor | u8 life | 3 B reserved | u32 match tag
+BOTS 16+24n: u8 type=2 | u8 count | u16 seq | f64 t | u32 match tag || per bot: u8 slot | u8 weapon | u16 flags | f32 x y z | i16 yaw*1e4 | i16 pitch*1e4 | u8 hp | u8 armor | u8 life | 1 B reserved
+SHOT 48 B: u8 type=3 | u8 weapon | u16 seq | f64 t | f32 origin xyz | f32 dir xyz | f32 dist | u8 surface (255 none) | u8 hitFlags (1 player, 2 head, 4 kill) | u8 botSlot (255 = sender) | 1 B reserved | u32 match tag
 ```
+The match tag is FNV-1a of the match id (never 0); 0 means the sender is in the menu, lobby or results. A snapshot only
+feeds an entity when its tag is our match's.
 `t` is the sender's `performance.now()` in ms. `weapon` is an index into `WEAPON_ORDER` (255 = none). `flags` uses the
 `FLAG` bits, and `life` the `LIFE` values. Rates: PSNAP 20 Hz in a match and 5 Hz in the lobby (for liveness and clock offset);
 BOTS 15 Hz from the host; SHOT immediately per shot.
@@ -659,15 +683,17 @@ BOTS 15 Hz from the host; SHOT immediately per shot.
 ### 8.4 Reliable payloads
 | Action | Payload | Sender, when |
 |---|---|---|
-| hello | `{v, name, st:'lobby'\|'live', mid, hum}` | everyone, on join and every 2 s in the lobby |
+| hello | `{v, name, st:'lobby'\|'live', mid, hum, js: room join wall ms, hr: [ids heard in the last 3 s]}` | everyone, on join and every 2 s (in a match too) |
 | lobby | `{ep, cd: ms to start\|null, ro:[{id, name}], mode}` | host, every 1 s in the lobby |
 | start | `{mid, seed, t0h, th, ro:[{id, name, kind:'h'\|'b', slot}], ep}` | host, `startLeadMs` before t0 (validate maps kind to 'human'/'bot') |
-| hit | `{sid, by, tgt, w, z: 0 body\|1 head\|2 limb, dmg, d, sp:[3], tp:[3], t: match ms}` | shooter (or host for a bot shooter), broadcast |
-| death | `{id, by\|null, w: weapon\|'zone'\|'fall', hs, sid\|null, pos:[3]}` | victim (host for bots), broadcast |
-| pick | `{uid, t: match ms, by: botId\|null}` | picker (host for bots) |
-| drop | `{items:[{uid, type, ref, qty, pos}]}` | dropper (host for bots) |
-| nade | `{gid: owner:n, by, o:[3], v:[3], fuse, t: match ms}` | thrower (host for bots) |
-| host | `{ep, id}` | new host after migration |
+| hit | `{mid, sid, by, tgt, w, z: 0 body\|1 head\|2 limb, dmg, d, sp:[3], tp:[3], t: match ms}` | shooter (or host for a bot shooter), broadcast |
+| death | `{mid, id, by\|null, w: weapon\|'zone'\|'fall'\|'left', hs, sid\|null, pos:[3]}` | victim (host for bots), broadcast; 'left' = forfeit (left alive, disconnected) |
+| pick | `{mid, uid, t: match ms, by: botId\|null}` | picker (host for bots; a bot pick from any player of the match is accepted) |
+| drop | `{mid, items:[{uid, type, ref, qty, pos}]}` | dropper (host for bots) |
+| nade | `{mid, gid: owner:n, by, o:[3], v:[3], fuse, t: match ms}` | thrower (host for bots) |
+| host | `{ep, id, mid\|null}` | new host after migration (mid of the match, null in the lobby) |
+| leave | `{mid, alive}` | a player leaving our match (LEAVE MATCH, main menu, tab closed), after its 'left' death + drop when alive |
+| kick | `{mid}` | to a peer we dropped that still sends live snapshots of our match: it forfeits (if it dropped us too, only the higher id gives way) |
 
 ### 8.5 Authority and flows
 - **Start:** non-hosts set `t0 = t0h + sync.clockOffset(host)`. The offset comes from lobby snapshots
@@ -695,14 +721,29 @@ BOTS 15 Hz from the host; SHOT immediately per shot.
 - **Loot:** pick up optimistically and send `pick`. On a conflict, the earliest `t` wins, then the lowest id. The loser reverts and
   sees a toast. Crate opening is a `pick` of `k<id>`; the contents are deterministic.
 - **Zone and fall deaths:** `death` with `by: null`, `w: 'zone'|'fall'`.
-- **Leaving:** `PEER_LEAVE` or more than `NET.dropMs` stale during a match counts as death with weapon `'left'` (a local
-  event only, no drop).
+- **Leaving:** see game/match in 5.6: an announced leave (`death` 'left' + `drop` + `leave`) or net/sync's liveness drop
+  counts as death with weapon `'left'` (kill feed "left the match"); a Trystero disconnect alone does not.
+- **Bot deaths** come from the host, or from any player still in the match (after a host stall two peers may both have
+  simulated the bots for a moment; accepting either keeps bot fates identical).
 
 ### 8.6 Interpolation and liveness
 Remote entities render at `now - interpDelay`, where `interpDelay = clamp(2 x interval + 2 x jitter, 80, 200)` ms. Positions
-lerp and yaw takes the shortest arc. When snapshots run out, the entity extrapolates for at most 100 ms, then holds. After 3 s of
-silence it is `stale` (drawn as a ghost, excluded from host election). After 10 s, or on `onPeerLeave`, it is removed.
+lerp and yaw takes the shortest arc. When snapshots run out, the entity extrapolates for at most 100 ms, then holds.
 Out-of-order packets are discarded with `seqNewer`. The local player keeps 1 s of its own pose history for validation.
+Snapshots and liveness run from a 20 Hz timer as well as from the frame, so a slow renderer still sends at 20 Hz.
+Liveness (silence is measured with this page's own stalls removed: a tick gap over 1 s shifts every last-heard time):
+- 3 s: `stale` (ghost, out of lobby rosters); 6 s (`NET.hostStaleMs`): unresponsive, loses the host role.
+- 10 s (`NET.dropMs`) in a match: dropped (PEER_LEAVE 'timeout' -> 'left' death; its connection is closed so Trystero
+  renegotiates) only with evidence that our own link works: another player is heard, or an own-link probe (a no-store
+  HEAD request to the page's own URL) or a relay message succeeded after the silence began. If another player still lists
+  the silent one in its hello `hr`, only our link to him broke: he stays a ghost and the connection is renegotiated.
+- No evidence (probe failed, browser offline, no relay socket) while hearing nobody: this client is the one cut off ->
+  NET_LINK 'lost' ('link'). A page that itself stalled for about `NET.dropMs` (sleep, frozen tab) forfeits on resume
+  ('stall'), and a dropped peer that keeps sending live snapshots is told with `kick` ('kicked').
+- While every other player is silent for 3 s the HUD shows "Connection interrupted".
+- Nobody is dropped and no stall forfeits before match time 15 s (match start is the heaviest moment on a slow machine).
+- Players on the results screen belong to the lobby context (the next round pulls them in) but never host the lobby
+  (hello `rs`), since only the lobby screen runs the countdown.
 Browsers stop `requestAnimationFrame` in hidden tabs. While online, `core/loop.js` then drives the frame from a worker
 timer at 20 Hz without rendering, so a hidden host keeps simulating bots and every hidden player keeps sending snapshots.
 
@@ -721,6 +762,12 @@ timer at 20 Hz without rendering, so a hidden host keeps simulating bots and eve
 ### 8.8 Known limits (from the research)
 NAT traversal is unproven without TURN (`NET.turn` is empty until an account exists), so roughly 10 to 20 % of player pairs may
 fail to connect directly. `session.diagnostics()` exposes the relay count and the ICE pair type, and the lobby shows them.
+Trystero keeps one RTCPeerConnection per remote peer across rooms and a pool of pre-made offers; it refreshes an offer older
+than ~57 s with rollback + restartIce + createOffer({iceRestart}), and in Chrome that rollback drops the data m-section, so
+such offers can never connect. session.js passes `rtcPolyfill` (a subclass that skips the offerer's rollback and makes
+restartIce a no-op) and closes connections it considers dead, so late joiners and reconnects work after the first minute.
+Nostr relays only exchange about one message a minute per room once peers are connected, so reconnecting after a drop
+takes up to about a minute.
 
 ---
 
@@ -739,12 +786,16 @@ and degrade sanely to 800x450 (test viewport).
 ### 9.2 HUD layout
 - **Top centre:** compass strip with the heading and POI bearings, and the zone timer beneath it ("ZONE CLOSING 0:42" or
   "NEXT ZONE 1:10").
+  Online, "Connection interrupted" appears under it while every other player has been silent for 3 s (NET_LINK).
 - **Top right:** minimap (150 m radius) with the alive count and kills, and the kill feed below it.
 - **Bottom left:** callsign, health bar, 3 armor plate segments, and carried plates.
 - **Bottom right:** weapon name, magazine / reserve, frags, and the second-slot weapon name dimmed.
 - **Centre:** dynamic crosshair, hitmarkers, damage arcs, the interaction prompt ("[F] PICK UP M4A1", "[F] OPEN CRATE"), the
   action progress ring, plane/freefall/chute prompts with an altimeter, and the scope overlay.
-- **Overlays:** gas tint when outside, low-health vignette, full map (M), scoreboard (Tab), death screen, spectate bar, pause.
+- **World:** the aimed-at nameplate: the player or bot under the crosshair (90 m, x1.8 in ADS, `world.lineOfSight`
+  re-checked every 120 ms) gets its name and distance above the head.
+- **Overlays:** gas tint when outside, low-health vignette, full map (M), scoreboard (Tab), death screen (or "Disconnected"
+  with Return to lobby when `state.match.netLost`), spectate bar, pause.
 
 ### 9.3 UI intents (`emit(EV.UI_INTENT, {type, ...})`, handled in main.js)
 `practice`, `quickplay`, `create_private`, `join_private {code}`, `start_now`, `leave_lobby`, `pause`, `resume`,

@@ -430,7 +430,7 @@ function hit(targetId) {
   const me = getPlayer(state.selfId), tgt = typeof targetId === 'string' ? getPlayer(targetId) : nearestTarget();
   if (!tgt) { log('no target in range', 'err'); return; }
   const head = sid % 3 === 0, d = Math.hypot(tgt.pos.x - me.pos.x, tgt.pos.z - me.pos.z);
-  const msg = { sid: sid++, by: state.selfId, tgt: tgt.id, w: 'm4a1', z: head ? 1 : 0, dmg: head ? 40 : 26, d,
+  const msg = { mid: state.match.id, sid: sid++, by: state.selfId, tgt: tgt.id, w: 'm4a1', z: head ? 1 : 0, dmg: head ? 40 : 26, d,
     sp: [me.pos.x, me.pos.y, me.pos.z], tp: [tgt.pos.x, tgt.pos.y, tgt.pos.z], t: matchMs() };
   pendingHits.set(msg.sid, { target: tgt.id, hpBefore: tgt.hp, sentAt: performance.now() });
   session.send('hit', msg);
@@ -462,7 +462,7 @@ on(EV.NET_HIT, ({ from, data }) => {
   victim.hp = Math.max(0, victim.hp - dmg);
   if (victim.hp <= 0) {
     victim.alive = false; victim.life = LIFE.DEAD;
-    const death = { id: victim.id, by: data.by, w: data.w, hs: data.z === 1, sid: data.sid, pos: [victim.pos.x, victim.pos.y, victim.pos.z] };
+    const death = { mid: state.match.id, id: victim.id, by: data.by, w: data.w, hs: data.z === 1, sid: data.sid, pos: [victim.pos.x, victim.pos.y, victim.pos.z] };
     session.send('death', death);
     emit(EV.PLAYER_KILLED, { id: victim.id, by: data.by, weapon: data.w, headshot: death.hs, pos: death.pos });
   }
@@ -478,7 +478,7 @@ function dieInZone() {
   if (!me.alive) return;
   me.hp = 0; me.alive = false; me.life = LIFE.DEAD;
   const pos = [me.pos.x, me.pos.y, me.pos.z];
-  session.send('death', { id: me.id, by: null, w: 'zone', hs: false, sid: null, pos });
+  session.send('death', { mid: state.match.id, id: me.id, by: null, w: 'zone', hs: false, sid: null, pos });
   emit(EV.PLAYER_KILLED, { id: me.id, by: null, weapon: 'zone', headshot: false, pos });
 }
 
@@ -498,7 +498,7 @@ function claim(uid) {
   const it = loot.get(uid);
   if (!it || it.by) return false;
   it.by = state.selfId; it.t = matchMs();
-  session.send('pick', { uid, t: it.t, by: null });
+  session.send('pick', { mid: state.match.id, uid, t: it.t, by: null });
   log(`PICK claim ${uid} (${it.type}) at ${it.t.toFixed(0)} ms`, 'loot');
   return true;
 }
@@ -532,7 +532,7 @@ function dropItems() {
       pos: [me.pos.x + Math.cos(a) * 1.2, 0, me.pos.z + Math.sin(a) * 1.2] });
   }
   for (const it of items) loot.set(it.uid, { uid: it.uid, x: it.pos[0], z: it.pos[2], type: it.type, by: null, t: 0, dropped: true });
-  session.send('drop', { items });
+  session.send('drop', { mid: state.match.id, items });
   log(`DROP ${items.length} items`, 'loot');
 }
 on(EV.NET_DROP, ({ from, data }) => {
@@ -557,7 +557,7 @@ function throwNade() {
   if (!inMatch()) return;
   const me = getPlayer(state.selfId);
   const d = [-Math.sin(me.yaw), 0, -Math.cos(me.yaw)];
-  const msg = { gid: `${state.selfId.slice(0, 8)}:${nadeN++}`, by: state.selfId, o: [me.pos.x, 1.6, me.pos.z], v: [d[0] * 13, 5.5, d[2] * 13], fuse: 3.2, t: matchMs() };
+  const msg = { mid: state.match.id, gid: `${state.selfId.slice(0, 8)}:${nadeN++}`, by: state.selfId, o: [me.pos.x, 1.6, me.pos.z], v: [d[0] * 13, 5.5, d[2] * 13], fuse: 3.2, t: matchMs() };
   session.send('nade', msg);
   addNade(msg, state.selfId);
 }
@@ -582,39 +582,41 @@ function test(name, fn) {
 const near = (a, b, eps) => Math.abs(a - b) <= eps;
 function runSelfTests() {
   const P = protocol, T = sync.testing;
-  test('PSNAP 40 B round trip', () => {
-    const s = { weapon: 'm700', seq: 65535, t: 123456.789, x: 12.5, y: -3.25, z: 400.125, yaw: -2.9, pitch: 0.4, flags: FLAG.ADS | FLAG.CROUCH, hp: 73, armor: 150, life: LIFE.CHUTE };
+  test('PSNAP 44 B round trip (match tag)', () => {
+    const s = { weapon: 'm700', seq: 65535, t: 123456.789, x: 12.5, y: -3.25, z: 400.125, yaw: -2.9, pitch: 0.4, flags: FLAG.ADS | FLAG.CROUCH, hp: 73, armor: 150, life: LIFE.CHUTE, tag: P.matchTag('aF2PFtwN') };
     const b = P.encodePlayerSnap(s), d = P.decodePlayerSnap(b);
-    const ok = b.byteLength === 40 && d.weapon === 'm700' && d.seq === 65535 && d.t === s.t && near(d.x, 12.5, 1e-5) && near(d.z, 400.125, 1e-4) && d.flags === s.flags && d.hp === 73 && d.armor === 150 && d.life === LIFE.CHUTE;
+    const ok = b.byteLength === 44 && d.tag === s.tag && d.tag !== 0 && P.matchTag(null) === 0 && d.weapon === 'm700' && d.seq === 65535 && d.t === s.t && near(d.x, 12.5, 1e-5) && near(d.z, 400.125, 1e-4) && d.flags === s.flags && d.hp === 73 && d.armor === 150 && d.life === LIFE.CHUTE;
     return { pass: ok, detail: `${b.byteLength} B, seq ${d.seq}, life ${d.life}` };
   });
   test('BOTS batch 15 bots round trip', () => {
     const bots = []; for (let i = 0; i < 15; i++) bots.push({ slot: i + 1, weapon: WEAPON_ORDER[i % 5], flags: i, x: i * 10.5, y: 2, z: -i * 3, yaw: Math.PI - 0.0001 * i, pitch: -0.3, hp: 100 - i, armor: i * 10, life: i % 6 });
-    const b = P.encodeBotBatch(1000.5, 7, bots), d = P.decodeBotBatch(b);
-    const ok = b.byteLength === 12 + 24 * 15 && d.bots.length === 15 && d.bots.every((e, i) => e.slot === i + 1 && near(e.yaw, wrapAngle(bots[i].yaw), 2e-4) && e.hp === bots[i].hp);
+    const b = P.encodeBotBatch(1000.5, 7, bots, 77), d = P.decodeBotBatch(b);
+    const ok = b.byteLength === 16 + 24 * 15 && d.tag === 77 && d.bots.length === 15 && d.bots.every((e, i) => e.slot === i + 1 && near(e.yaw, wrapAngle(bots[i].yaw), 2e-4) && e.hp === bots[i].hp);
     return { pass: ok, detail: `${b.byteLength} B, yaw quantised to 1e-4 rad` };
   });
-  test('SHOT 44 B round trip (bot slot, flags)', () => {
-    const s = { weapon: 'ak47', seq: 9, t: 55.5, origin: [1, 2, 3], dir: [0, 0, -1], dist: 87.25, surface: 4, hitFlags: 3, botSlot: 12 };
-    const d = P.decodeShot(P.encodeShot(s));
-    return d && d.botSlot === 12 && d.hitFlags === 3 && d.surface === 4 && near(d.dist, 87.25, 1e-4) && d.dir[2] === -1;
+  test('SHOT 48 B round trip (bot slot, flags, tag)', () => {
+    const s = { weapon: 'ak47', seq: 9, t: 55.5, origin: [1, 2, 3], dir: [0, 0, -1], dist: 87.25, surface: 4, hitFlags: 3, botSlot: 12, tag: 0xfffffffe };
+    const b = P.encodeShot(s), d = P.decodeShot(b);
+    return b.byteLength === 48 && d && d.tag === 0xfffffffe && d.botSlot === 12 && d.hitFlags === 3 && d.surface === 4 && near(d.dist, 87.25, 1e-4) && d.dir[2] === -1;
   });
   test('Malformed binary is dropped', () => {
-    const bad = new ArrayBuffer(39); new DataView(bad).setUint8(0, 1);   // one byte short of a PSNAP
+    const bad = new ArrayBuffer(43); new DataView(bad).setUint8(0, 1);   // one byte short of a PSNAP
     const nan = P.encodePlayerSnap({ weapon: null, seq: 1, t: 1, x: NaN, y: 0, z: 0, yaw: 0, pitch: 0, flags: 0, hp: 1, armor: 0, life: 0 });
     return P.decodePlayerSnap(bad) === null && P.decodePlayerSnap(nan) === null && P.decodeBotBatch(new ArrayBuffer(13)) === null;
   });
   test('seqNewer wraps at 16 bits', () => P.seqNewer(0, 65535) && P.seqNewer(5, 65530) && !P.seqNewer(65535, 0) && !P.seqNewer(7, 7) && P.seqNewer(100, 40000) && !P.seqNewer(40000, 100));
   test('Validators sanitise and reject', () => {
     const v = P.validate;
-    const okHit = v.hit({ sid: 1, by: 'a', tgt: 'b', w: 'ak47', z: 1, dmg: 40, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
-    const badHit = v.hit({ sid: 1, by: 'a', tgt: 'b', w: 'railgun', z: 1, dmg: 40, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
-    const bigDmg = v.hit({ sid: 1, by: 'a', tgt: 'b', w: 'ak47', z: 1, dmg: 9999, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
+    const okHit = v.hit({ mid: 'm1', sid: 1, by: 'a', tgt: 'b', w: 'ak47', z: 1, dmg: 40, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
+    const badHit = v.hit({ mid: 'm1', sid: 1, by: 'a', tgt: 'b', w: 'railgun', z: 1, dmg: 40, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
+    const bigDmg = v.hit({ mid: 'm1', sid: 1, by: 'a', tgt: 'b', w: 'ak47', z: 1, dmg: 9999, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
+    const noMid = v.hit({ sid: 1, by: 'a', tgt: 'b', w: 'ak47', z: 1, dmg: 40, d: 12, sp: [0, 0, 0], tp: [1, 0, 1], t: 5000 });
     const hello = v.hello({ v: 1, name: '<b>x</b>', st: 'live', hum: 3 });
     const dupSlots = v.start({ mid: 'm', seed: 1, t0h: 1, th: 0, ep: 0, ro: [{ id: 'a', slot: 0 }, { id: 'b', slot: 0 }] });
     const drop = v.drop({ items: Array.from({ length: 17 }, (_, i) => ({ uid: 'u' + i, type: 'ammo', qty: 1, pos: [0, 0, 0] })) });
-    const pass = !!okHit && !badHit && !bigDmg && hello && hello.name === 'bxb' && !dupSlots && !drop && v.death({ id: 'a', by: null, w: 'zone', pos: [0, 0, 0] });
-    return { pass, detail: 'hit, hello, start, drop, death' };
+    const pass = !!okHit && !badHit && !bigDmg && !noMid && hello && hello.name === 'bxb' && !dupSlots && !drop && v.death({ mid: 'm1', id: 'a', by: null, w: 'left', pos: [0, 0, 0], t: 61234 })
+      && !v.death({ id: 'a', by: null, w: 'zone', pos: [0, 0, 0], t: 1 }) && !v.death({ mid: 'm1', id: 'a', by: null, w: 'zone', pos: [0, 0, 0] }) && v.leave({ mid: 'm1', alive: 1 }).alive === true && !v.kick({});
+    return { pass, detail: 'hit (needs mid), hello, start, drop, death (needs mid and time), leave, kick' };
   });
   test('Private codes: 400 generated, alphabet only', () => {
     const set = new Set();
@@ -681,17 +683,34 @@ function runSelfTests() {
     for (let i = 0; i < 100; i++) { const ts = i * 50, lat = minLat + rnd() * rnd() * 60; off = T.updateOffset(off, ts + skew + lat, ts); }
     return { pass: Math.abs(off - (skew + minLat)) < 3, detail: `estimate ${(off - skew).toFixed(2)} ms above skew (true min ${minLat})` };
   });
+  test('Clock offset learns a lasting latency rise within seconds', () => {
+    let seed = 5; const rnd = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    const o = T.createOffsetEst(), skew = 5000;
+    let at10 = 0, at20 = 0, low = Infinity;
+    for (let i = 0; i < 600; i++) {                       // 30 s at 20 Hz: 20 ms min latency, +150 ms from t = 10 s
+      const ts = i * 50, lat = (ts < 10000 ? 20 : 170) + rnd() * rnd() * 60;
+      const est = T.offsetSample(o, ts + skew + lat, ts) - skew;
+      if (ts < 10000) low = Math.min(low, est);
+      if (ts === 10000 - 50) at10 = est;
+      if (ts === 19950) at20 = est;
+    }
+    const final = o.est - skew;
+    return { pass: Math.abs(at10 - 20) < 3 && Math.abs(at20 - 170) < 5 && Math.abs(final - 170) < 5, detail: `before ${at10.toFixed(1)} ms, 10 s after the rise ${at20.toFixed(1)} ms, end ${final.toFixed(1)} ms (true 20 then 170)` };
+  });
   test('Pose history: 1 s ring, interpolated lookup', () => {
     const r = T.createRing(1, 60);
     for (let i = 0; i <= 120; i++) T.ringPush(r, i * (1000 / 60), i * 0.1, 0, 0);
     const p = T.ringAt(r, 1500 + 1000 / 120), old = T.ringAt(r, 500);
     return { pass: p && near(p.x, 9.05, 1e-3) && old === null, detail: `x at 1508 ms ${p && p.x.toFixed(3)}, 1.5 s ago: ${old}` };
   });
-  test('Host election: lowest live id, roster during a match', () => {
+  test('Host election: lowest live id, roster during a match, contexts, lobby join order', () => {
     const e = session.electHost;
     const a = e('m', [{ id: 'k' }, { id: 'z' }]), b = e('m', [{ id: 'a', stale: true }, { id: 'z' }]), c = e('m', [{ id: 'a' }, { id: 'c' }], ['m', 'c']);
     const d = e('q', [{ id: 'b', dropped: true }]);
-    return { pass: a === 'k' && b === 'm' && c === 'c' && d === 'q', detail: `${a}, ${b}, ${c}, ${d}` };
+    const f = e('m', [{ id: 'a', away: true }, { id: 'b', dead: true }, { id: 'k' }]);               // left / unresponsive peers never host
+    const g = e('m', [{ id: 'a', since: 2000 }, { id: 'z', since: 1000 }], null, { bySince: true, selfSince: 1500 });   // creator first
+    const o = e('m', [{ id: 'z', away: true }], null, { selfOut: true });
+    return { pass: a === 'k' && b === 'm' && c === 'c' && d === 'q' && f === 'k' && g === 'z' && o === null, detail: `${a}, ${b}, ${c}, ${d}, ${f}, ${g}, ${o}` };
   });
   const pass = tests.filter((t) => t.pass).length;
   $('testSummary').innerHTML = `<span class="${pass === tests.length ? 'good' : 'bad'}">${pass}/${tests.length} pass</span>`;

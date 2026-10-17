@@ -5,9 +5,19 @@
 // host), inventory.reset(), controller.spawn('plane') (or 'ground' with DEV.skipPlane), zone.setup(seed),
 // loot.setup(seed), bots.setup(...), MATCH_START, MATCH_PHASE. Alive counting, placement and kill/damage counters
 // come from PLAYER_KILLED / PLAYER_DAMAGED; when <= 1 is alive: phase 'ended' and MATCH_END {winnerId, placement, stats}.
+// One result on every client: each death carries the match time it happened at on its authority (the victim for a
+// human, the host for a bot: PLAYER_KILLED.at / 'death'.t), and placements are ranked by that time, never by the order
+// deaths reach this client. Online, the result waits a latency-sized settle window after the alive count reaches 1
+// (deaths still in flight, such as the last two trading kills, are counted); the winner is the survivor, or when
+// nobody survived, whoever died last. A death that arrives after the end still revises the result (MATCH_RESULT).
 // The plane flight line comes from stream(seed, 'plane'); planePath() and planePosAt() are pure.
-// Host migration: HOST_CHANGED to self during a match -> bots.takeOver(). A peer that leaves mid-match counts as dead
-// (PLAYER_KILLED {weapon: 'left'}, no drop, no credit).
+// Host migration: HOST_CHANGED {migrated} to self during a match -> bots.takeOver(). A peer that leaves mid-match counts
+// as dead (PLAYER_KILLED {weapon: 'left'}, no credit): its own 'death' {w:'left'} + inventory drop when it leaves alive,
+// its 'leave' {mid}, or net/sync's drop after NET.dropMs of silence (PEER_LEAVE {reason:'timeout'}). A raw transport
+// disconnect is not a death by itself: net/sync decides from liveness, so two players cut off from each other never
+// both "win". Leaving (LEAVE MATCH, main menu, closing the tab) announces it: leave() sends 'death' + drop when alive
+// and 'leave'. When net/sync reports this client lost its own link (NET_LINK 'lost': frozen for ~NET.dropMs, link down,
+// or kicked), forfeit(): state.match.netLost = reason, the local player dies with 'left', session stops hosting.
 import * as THREE from 'three';
 import { MATCH, BOTS, DEV, SPAWN_LOADOUT, PLAYER } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
@@ -15,6 +25,7 @@ import { state, debug, createPlayer, resetMatchState, getPlayer, localPlayer, bo
 import { stream, randomSeed } from '../core/rng.js';
 import { siteById, POIS } from '../core/mapdata.js';
 import * as session from '../net/session.js';
+import * as damage from '../combat/damage.js';
 import * as sync from '../net/sync.js';
 import * as lobby from '../net/lobby.js';
 import * as controller from '../player/controller.js';
@@ -29,13 +40,15 @@ import * as plane from './plane.js';
 const TUNE = {
   practiceLeadMs: MATCH.startLeadMs,   // practice shows the same outside pre-roll as online
   liveGrace: 1.5,                      // s after the forced jump before 'live' even if a remote snapshot still says PLANE
+  settleMs: 900,                       // online: ms (+ the worst round trip) between the alive count reaching 1 and the
+  settleMaxMs: 2500,                   // final result, so deaths still in flight are counted the same way everywhere
 };
 
 let inited = false;
 let pathCache = null, pathSeed = -1;
 const dead = new Set();
-const fates = new Map();       // id -> {place, by, weapon, at}: final placement and cause, for the scoreboard
-let lastVictim = null;
+const deaths = new Map();      // id -> {at: match s on the death's authority, by, weapon}: placement and cause
+let settleUntil = 0;           // performance.now() when a pending result becomes final (0: none pending)
 let doorsOpen = false;
 let endedAt = 0;
 let pausedAt = 0;
@@ -137,8 +150,8 @@ export function beginFromNetwork(start, fromPeerId) {
 function begin(start, t0, mode) {
   resetMatchState();
   dead.clear();
-  fates.clear();
-  lastVictim = null;
+  deaths.clear();
+  settleUntil = 0;
   doorsOpen = false;
   endedAt = 0;
   pausedAt = 0;
@@ -225,48 +238,102 @@ export function update(dt) {
     me.damage = Math.round(m.stats.damage);
   }
 
-  if (m.phase !== 'ended' && m.roster.length >= 2 && alive <= 1 && m.time > 0) finish();
+  if (m.phase !== 'ended' && m.roster.length >= 2 && alive <= 1 && m.time > 0) {
+    const now = performance.now();
+    if (!state.online) finish();
+    else if (!settleUntil) settleUntil = now + settleWindow();
+    else if (now >= settleUntil) finish();
+  }
+}
+
+const isAlive = (e) => !!e && e.alive && e.life !== LIFE.SPECTATE && !dead.has(e.id);
+
+/** Online settle time: deaths decided on another client reach us within about one round trip after our own view. */
+function settleWindow() {
+  let worst = 0;
+  for (const r of state.match.roster) if (r.kind === 'human' && r.id !== state.selfId) worst = Math.max(worst, safe(() => session.rtt(r.id), 0));
+  return Math.min(TUNE.settleMaxMs, TUNE.settleMs + worst);
+}
+
+/** Dead roster ids, best placed first: the latest death first (ties: lower id), so every client ranks them alike. */
+function deathOrder() {
+  return [...deaths.entries()]
+    .sort((a, b) => b[1].at - a[1].at || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    .map(([id]) => id);
+}
+
+/** Placement of a dead roster entry: everyone without a recorded death ranks above it, then later deaths. 0 if alive. */
+function placeOf(id) {
+  if (!deaths.has(id)) return 0;
+  let undecided = 0;
+  for (const r of state.match.roster) if (!deaths.has(r.id)) undecided++;
+  return undecided + deathOrder().indexOf(id) + 1;
+}
+
+/** The survivor; with nobody alive, whoever died last (a final trade goes to the later death on every client). */
+function decideWinner() {
+  for (const r of state.match.roster) if (isAlive(getPlayer(r.id))) return r.id;
+  for (const r of state.match.roster) if (!deaths.has(r.id)) return r.id;   // shown dead, its death still in flight
+  return deathOrder()[0] || null;
 }
 
 function finish() {
   const m = state.match;
-  let winner = null;
-  for (const e of state.players.values()) if (e.alive && e.life !== LIFE.SPECTATE && !dead.has(e.id)) { winner = e.id; break; }
-  if (!winner) winner = lastVictim;
+  settleUntil = 0;
+  const winner = decideWinner();
   m.winnerId = winner;
-  if (winner) fates.set(winner, { place: 1, by: null, weapon: null, at: m.time });
-  if (winner === state.selfId) m.placement = 1;
-  else if (!m.placement) m.placement = Math.max(1, m.alive + 1);
+  m.placement = winner === state.selfId ? 1 : (placeOf(state.selfId) || Math.max(1, m.alive + 1));
   endedAt = performance.now();
   setPhase('ended');
   emit(EV.MATCH_END, { winnerId: winner, placement: m.placement, stats: { ...m.stats } });
 }
 
-/** Leave the current match (local cleanup, resetMatchState). The caller decides the next app state. */
+/** A death reached us after the end: re-rank, and tell the UI if the winner or our placement changed. */
+function revise() {
+  const m = state.match;
+  const winner = decideWinner();
+  const placement = winner === state.selfId ? 1 : (placeOf(state.selfId) || m.placement);
+  if (winner === m.winnerId && placement === m.placement) return;
+  m.winnerId = winner;
+  m.placement = placement;
+  emit(EV.MATCH_RESULT, { winnerId: winner, placement, stats: { ...m.stats }, revised: true });
+}
+
+/**
+ * Leave the current match (local cleanup, resetMatchState). The caller decides the next app state. Online, the others
+ * are told first: a living player forfeits ('death' {w:'left'} and its inventory drop), then 'leave' {mid}.
+ */
 export function leave() {
+  const m = state.match;
+  if (state.online && m.id && m.phase !== 'idle') {
+    const me = localPlayer();
+    const alive = !!(me && me.alive && m.phase !== 'ended');
+    if (alive) safe(() => damage.kill(me.id, null, 'left', false, null), null);
+    safe(() => session.send('leave', { mid: m.id, alive }), null);
+  }
   try { loot.clear(); } catch (e) { console.warn('[GAME/match] loot.clear failed', e); }
   try { bots.setup([], 0); } catch (e) { console.warn('[GAME/match] bots reset failed', e); }
   plane.setVisible(false);
   zone.setVisible(false);
   dead.clear();
-  fates.clear();
-  lastVictim = null;
+  deaths.clear();
+  settleUntil = 0;
   doorsOpen = false;
   resetMatchState();
 }
 
 // ------------------------------------------------------------------------------------------ events
-function onKilled({ id, by, weapon, headshot, pos }) {
+function onKilled({ id, by, weapon, headshot, pos, at }) {
   const m = state.match;
   if (m.phase === 'idle' || dead.has(id)) return;
   dead.add(id);
-  lastVictim = id;
   const victim = getPlayer(id);
   if (victim && weapon === 'left') { victim.alive = false; victim.life = LIFE.DEAD; }
   let alive = 0;
-  for (const e of state.players.values()) if (e.alive && e.life !== LIFE.SPECTATE && !dead.has(e.id)) alive++;
+  for (const e of state.players.values()) if (isAlive(e)) alive++;
   m.alive = alive;
-  fates.set(id, { place: alive + 1, by: by || null, weapon: weapon || null, at: m.time });
+  // the authority's match time of the death (a peer's clock agrees with ours to a few ms); else the time it reached us
+  deaths.set(id, { at: Number.isFinite(at) ? at : Math.round(m.time * 1000) / 1000, by: by || null, weapon: weapon || null });
   if (by && by !== id && weapon !== 'left') {
     const k = getPlayer(by);
     if (k) k.kills = (k.kills || 0) + 1;
@@ -280,10 +347,10 @@ function onKilled({ id, by, weapon, headshot, pos }) {
       }
     }
   }
-  if (id === state.selfId) {
-    m.placement = alive + 1;
-    m.stats.survived = Math.max(0, m.time);
-  }
+  if (id === state.selfId) m.stats.survived = Math.max(0, deaths.get(id).at);
+  // an earlier death that reached us late moves our own placement down a rank (the death screen reads it)
+  if (deaths.has(state.selfId) && m.phase !== 'ended') m.placement = placeOf(state.selfId);
+  if (m.phase === 'ended') revise();
 }
 
 function onDamaged({ id, amount, from }) {
@@ -293,19 +360,45 @@ function onDamaged({ id, amount, from }) {
   if (a) a.damage = (a.damage || 0) + amount;
 }
 
-function onPeerLeave({ id }) {
+function leftMatch(id, at) {
   const m = state.match;
   if (m.phase === 'idle' || m.phase === 'ended') return;
   const e = getPlayer(id);
   if (!e || e.kind !== 'remote' || !e.alive || dead.has(id)) return;
-  emit(EV.PLAYER_KILLED, { id, by: null, weapon: 'left', headshot: false, pos: [e.pos.x, e.pos.y, e.pos.z] });
+  emit(EV.PLAYER_KILLED, { id, by: null, weapon: 'left', headshot: false, pos: [e.pos.x, e.pos.y, e.pos.z], at: Number.isFinite(at) ? at : undefined });
 }
 
-function onHostChanged({ hostId, self }) {
+/**
+ * Only net/sync's liveness drop counts here; a transport-level disconnect alone is decided by liveness first. The
+ * player is ranked from the moment he was last heard, which every client knows to within a network delay.
+ */
+function onPeerLeave({ id, reason }) {
+  if (reason !== 'timeout') return;
+  const heard = safe(() => sync.lastHeardAt(id), null);
+  leftMatch(id, heard != null && heard > state.match.t0 ? Math.round(heard - state.match.t0) / 1000 : undefined);
+}
+
+function onNetLeave({ from, data }) {
+  if (!data || data.mid !== state.match.id) return;
+  leftMatch(from);
+}
+
+/** This client lost its place in the match (see the header). */
+function forfeit(reason) {
+  const m = state.match;
+  if (!state.online || m.phase === 'idle' || m.netLost) return;
+  m.netLost = reason || 'link';
+  safe(() => session.setSelfOut(true), null);
+  const me = localPlayer();
+  if (me && me.alive && m.phase !== 'ended') safe(() => damage.kill(me.id, null, 'left', false, null), null);
+}
+
+function onHostChanged({ hostId, self, migrated }) {
   const m = state.match;
   if (m.phase === 'idle') return;
   for (const e of state.players.values()) if (e.kind === 'bot') e.owner = hostId;
-  if (self && m.phase !== 'ended') bots.takeOver();
+  // a context switch (the match just began) is not a migration: bots.setup already built the brains
+  if (self && migrated !== false && m.phase !== 'ended') bots.takeOver();
 }
 
 function onNetStart({ from, data }) {
@@ -325,6 +418,8 @@ export function init() {
   on(EV.PLAYER_KILLED, onKilled);
   on(EV.PLAYER_DAMAGED, onDamaged);
   on(EV.PEER_LEAVE, onPeerLeave);
+  on(EV.NET_LEAVE, onNetLeave);
+  on(EV.NET_LINK, ({ state: st, reason }) => { if (st === 'lost') forfeit(reason); });
   on(EV.HOST_CHANGED, onHostChanged);
   // practice pauses freeze the shared clock (online matches never pause)
   on(EV.PAUSE, ({ paused }) => {
@@ -356,6 +451,7 @@ export function init() {
     planePath: () => ({ ...planePath() }),
     matchInfo: () => ({ phase: state.match.phase, time: state.match.time, alive: state.match.alive, winnerId: state.match.winnerId, placement: state.match.placement, stats: { ...state.match.stats } }),
     spectate: (id) => camera.setSpectate(id ?? null),
+    forfeit: (reason = 'link') => { forfeit(reason); return state.match.netLost; },
     scoreboard: () => scoreboard(),
   });
 }
@@ -365,29 +461,30 @@ export const endedFor = () => (endedAt ? (performance.now() - endedAt) / 1000 : 
 
 /**
  * Scoreboard rows (GAME addition for the UI's Tab overlay and results screen): every roster entry with
- * {id, name, kind:'human'|'bot', self, alive, kills, damage, place (0 while alive), by, byName, weapon}.
- * Sorted: living players by kills then damage, then the dead by placement (best first).
+ * {id, name, kind:'human'|'bot', self, alive, kills, damage, place (0 while alive), by, byName, weapon, at}.
+ * Places come from the death times (see the header), so every client lists the same order. A winner who died in a
+ * final trade keeps place 1 and its cause. Sorted: living players by kills then damage, then the dead best first.
  */
 export function scoreboard() {
   const rows = [];
-  for (const r of state.match.roster) {
+  const m = state.match;
+  for (const r of m.roster) {
     const e = getPlayer(r.id);
-    const f = fates.get(r.id);
-    const alive = !!(e && e.alive && !dead.has(r.id)) && !(f && f.place > 1);
-    const by = f && f.by ? getPlayer(f.by) : null;
+    const d = deaths.get(r.id) || null;
+    const alive = !d && isAlive(e);
+    const place = d ? placeOf(r.id) : (m.phase === 'ended' && r.id === m.winnerId ? 1 : 0);
+    const by = d && d.by ? getPlayer(d.by) : null;
     rows.push({
       id: r.id, name: r.name, kind: r.kind, self: r.id === state.selfId, alive,
       kills: e ? e.kills || 0 : 0, damage: Math.round(e ? e.damage || 0 : 0),
-      place: f ? f.place : 0, by: f ? f.by : null, byName: by ? by.name : null, weapon: f ? f.weapon : null,
+      place, by: d ? d.by : null, byName: by ? by.name : null, weapon: d ? d.weapon : null, at: d ? d.at : null,
     });
   }
   rows.sort((a, b) => {
     const pa = a.place || 0, pb = b.place || 0;
+    if (pa === 1 || pb === 1) return pa === pb ? 0 : pa === 1 ? -1 : 1;
     if (a.alive !== b.alive) return a.alive ? -1 : 1;
-    if (a.alive || (pa === 1) || (pb === 1)) {
-      if (pa === 1 || pb === 1) return pa === 1 ? -1 : 1;
-      return b.kills - a.kills || b.damage - a.damage;
-    }
+    if (a.alive) return b.kills - a.kills || b.damage - a.damage;
     return pa - pb;
   });
   return rows;

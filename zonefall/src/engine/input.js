@@ -350,6 +350,11 @@ export function wheel() { return enabled ? wheelFrame : 0; }
 export function lock() {
   if (testLock) { setTestLocked(true); return; }
   if (!canvasEl || locked || typeof canvasEl.requestPointerLock !== 'function') return;
+  // An online match starts from a network message, not a click: browsers refuse a lock without a recent user gesture
+  // (and headless Chromium hangs inside one it grants), so do not even ask then; the match's click-to-play overlay
+  // takes the first click instead.
+  const ua = typeof navigator !== 'undefined' ? navigator.userActivation : null;
+  if (document.hidden || (ua && !ua.isActive)) return;
   try {
     const p = canvasEl.requestPointerLock({ unadjustedMovement: true });
     if (p && typeof p.catch === 'function') {

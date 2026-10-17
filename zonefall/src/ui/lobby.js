@@ -2,14 +2,15 @@
 // Shows net/lobby.get(): mode, room code with copy-link button (location + '?room=CODE'), roster with host
 // marker and the local player highlighted, "slots filled with bots at start", countdown, status text, connection
 // diagnostics line (session.diagnostics(): relays open, per-peer RTT and channel). Buttons: START NOW (host only),
-// LEAVE. Re-renders on LOBBY_UPDATE; the countdown ticks every frame from update().
+// RETRY (after a connection failure, with the automatic retry counting down), LEAVE. Re-renders on LOBBY_UPDATE; the
+// countdown ticks every frame from update().
 import { emit, on, EV } from '../core/bus.js';
 import { MATCH, NET } from '../config.js';
 import * as session from '../net/session.js';
 import { h, sfx, GLYPH, setText, show as showEl, clock } from './dom.js';
 
 let el = null, eyebrowEl, codeWrap, codeEl, copyBtn, countWrap, countEl, countLabel, statusEl, textEl;
-let startBtn, leaveBtn, practiceBtn, rosterEl, rosterHead, diagEl, dotEl;
+let startBtn, leaveBtn, practiceBtn, retryBtn, rosterEl, rosterHead, diagEl, dotEl;
 let last = null, lastSecond = -1, diagTimer = 0;
 
 const REGION = { eu: 'Europe', na: 'North America', sa: 'South America', as: 'Asia', oc: 'Oceania', af: 'Africa' };
@@ -32,6 +33,8 @@ export function mount(root) {
 
   startBtn = h('button', { type: 'button', class: 'zf-btn zf-btn--primary', html: `<span>Start now</span>${GLYPH.chevron}` });
   startBtn.addEventListener('click', () => { sfx('confirm'); emit(EV.UI_INTENT, { type: 'start_now' }); });
+  retryBtn = h('button', { type: 'button', class: 'zf-btn zf-btn--primary', html: '<span>Retry</span>' });
+  retryBtn.addEventListener('click', () => { sfx('confirm'); emit(EV.UI_INTENT, { type: 'lobby_retry' }); });
   practiceBtn = h('button', { type: 'button', class: 'zf-btn zf-btn--solid', html: '<span>Play practice instead</span>' });
   practiceBtn.addEventListener('click', () => { sfx('confirm'); emit(EV.UI_INTENT, { type: 'leave_lobby' }); emit(EV.UI_INTENT, { type: 'practice' }); });
   leaveBtn = h('button', { type: 'button', class: 'zf-btn zf-btn--ghost', html: `${GLYPH.back}<span>Leave lobby</span>` });
@@ -43,7 +46,7 @@ export function mount(root) {
     codeWrap,
     h('div', { class: 'zf-lobby__state' }, dotEl, statusEl),
     countWrap, textEl,
-    h('div', { class: 'zf-lobby__actions' }, startBtn, practiceBtn, leaveBtn),
+    h('div', { class: 'zf-lobby__actions' }, startBtn, retryBtn, practiceBtn, leaveBtn),
     h('p', { class: 'zf-lobby__rules', text: `Countdown starts at ${MATCH.minHumansToCountdown} players (${MATCH.lobbyCountdown} s) and shortens to ${MATCH.lobbyCountdownFull} s at 6. Empty slots up to ${MATCH.maxPlayers} are filled with bots at start.` }));
 
   rosterHead = h('header', { class: 'zf-roster__head' });
@@ -108,6 +111,7 @@ export function render(lobby) {
   setText(textEl, lobby.text || '');
   showEl(startBtn, !!lobby.isHost && lobby.status !== 'starting' && lobby.status !== 'error' && lobby.status !== 'connecting');
   showEl(practiceBtn, lobby.status === 'error');
+  showEl(retryBtn, lobby.status === 'error');
 
   // roster: humans first (host marked, self highlighted), then the bot-filled slots
   const rtt = peerRtt();
@@ -163,6 +167,11 @@ function renderDiag() {
 /** Per frame while the lobby is visible: countdown text and the last-10-seconds tick. */
 export function tick() {
   if (!last || !el || el.hidden) return;
+  if (last.status === 'error') {
+    // the automatic retry counts down on the Retry button
+    const left = last.retryAt != null ? Math.ceil((last.retryAt - performance.now()) / 1000) : 0;
+    setText(retryBtn.querySelector('span'), left > 0 ? `Retry (auto in ${left} s)` : 'Retry');
+  }
   const ends = last.countdownEndsAt;
   const counting = ends != null && (last.status === 'countdown' || last.status === 'waiting');
   showEl(countWrap, counting || last.status === 'starting');

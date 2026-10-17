@@ -175,7 +175,7 @@ function spawnInternal(g, fromNet) {
   const local = g.owner === state.selfId;
   emit(EV.GRENADE_THROW, { gid: g.gid, owner: g.owner, origin: g.origin, vel: g.vel, local });
   if (!fromNet && state.online && (local || (isBotId(g.owner) && state.isHost))) {
-    session.send('nade', { gid: g.gid, by: g.owner, o: g.origin.map((v) => Math.round(v * 1000) / 1000), v: g.vel.map((v) => Math.round(v * 1000) / 1000), fuse: Math.round(g.fuse * 1000) / 1000, t: Math.round(g.t) });
+    session.send('nade', { mid: state.match.id, gid: g.gid, by: g.owner, o: g.origin.map((v) => Math.round(v * 1000) / 1000), v: g.vel.map((v) => Math.round(v * 1000) / 1000), fuse: Math.round(g.fuse * 1000) / 1000, t: Math.round(g.t) });
   }
   // Late receivers fast-forward to now.
   if (fromNet) {
