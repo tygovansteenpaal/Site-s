@@ -279,9 +279,12 @@ async function onPeerHandshake(peerId, send, receive) {
   await send({ v: TUNE.protocol, app: NET.appId });
   const got = await receive();
   const d = got && typeof got === 'object' && 'data' in got ? got.data : got;
-  if (!d || d.v !== TUNE.protocol) {
-    if (d && Number.isFinite(d.v)) mismatch = { theirs: d.v, ours: TUNE.protocol, at: performance.now(), room: roomId, peer: peerId };
-    throw new Error(`protocol mismatch ${TUNE.protocol}/${d && d.v}`);
+  // a reply without a version number is not another game version (that toast would tell someone to reload for
+  // nothing): a plain handshake failure, Trystero tries again
+  if (!d || !Number.isFinite(d.v)) throw new Error('handshake failed: unexpected reply');
+  if (d.v !== TUNE.protocol) {
+    mismatch = { theirs: d.v, ours: TUNE.protocol, at: performance.now(), room: roomId, peer: peerId };
+    throw new Error(`protocol mismatch ${TUNE.protocol}/${d.v}`);
   }
 }
 
@@ -449,7 +452,7 @@ function keeperTick() {
 // interpolation, hit validation and liveness all see it exactly like a slow connection on the production code path.
 const SIM = DEV.netsim;
 let simAnnounced = false;
-const simStats = { out: 0, in: 0, lost: 0, late: 0 };
+const simStats = { out: 0, in: 0, lost: 0, late: 0, afterClose: 0 };
 const ON_MESSAGE = typeof RTCDataChannel === 'function' ? Object.getOwnPropertyDescriptor(RTCDataChannel.prototype, 'onmessage') : null;
 
 /** Delivery time for one simulated message, or -1 if it is lost. `q` keeps reliable messages in order per direction. */
@@ -492,7 +495,12 @@ function simChannel(ch) {
           const at = simAt(q, 'in', unreliable);
           if (at < 0) return;
           simStats.in++;
-          setTimeout(() => { if (user) user.call(ch, e); }, at - performance.now());
+          // a closed channel delivers nothing more (as in a real browser): without this check, messages of a
+          // connection Trystero just replaced reached the new connection's handshake for the same peer id
+          setTimeout(() => {
+            if (ch.readyState !== 'open') { simStats.afterClose++; return; }
+            if (user) user.call(ch, e);
+          }, at - performance.now());
         } : null);
       },
     });

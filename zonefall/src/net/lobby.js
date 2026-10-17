@@ -13,7 +13,10 @@
 // Connection failures: the lobby shows the error with a Retry button and retries by itself (5, 10, 20, then every
 // 30 s); losing every relay while alone holds the alone countdown instead of starting a bot match.
 // Private lobbies: the address bar carries ?room=CODE while in one (a refresh comes back to it, never to an old
-// one); a code nobody is in says so; the creator (remembered per tab, so also after a refresh) hosts the lobby.
+// one); a code nobody is in says so once TUNE.nobodyAfterMs passes without a single player (a busy room's connections
+// can take longer than the join probe, so until then it reads "Looking for players"); the creator (remembered per tab,
+// so also after a refresh) hosts the lobby. A player arriving at a full lobby never sees a countdown he will not deploy
+// in, and his arrival does not extend the countdown of the others.
 import { NET, MATCH } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, debug, APP } from '../core/state.js';
@@ -33,6 +36,8 @@ export const TUNE = {
   maxHumans: MATCH.maxHumans, // humans per room; overridable in tests through debug.net.lobby.TUNE
   retryMs: [5000, 10000, 20000, 30000],   // automatic reconnect attempts after a connection failure (last one repeats)
   unseatedHopMs: 4000,       // quick play: a full room that only showed it after we settled -> search the next bucket
+  nobodyAfterMs: 10000,      // private join: no player seen this long after settling -> "nobody is in this lobby" (a
+                             // busy room's connections can take several seconds to form, longer than the join probe)
 };
 
 const SA_ZONES = /^America\/(Sao_Paulo|Argentina|Buenos_Aires|Cordoba|Mendoza|Bogota|Lima|Santiago|Caracas|La_Paz|Montevideo|Asuncion|Guayaquil|Cayenne|Paramaribo|Guyana|Recife|Fortaleza|Belem|Manaus|Cuiaba|Porto_Velho|Rio_Branco|Boa_Vista|Maceio|Bahia|Araguaina|Santarem|Campo_Grande|Noronha|Punta_Arenas|Eirunepe)/;
@@ -99,6 +104,8 @@ let inited = false;
 let lastFlow = null;           // {kind: 'quick'|'create'|'join', code}: what Retry runs again
 let retryTimer = 0, retries = 0;
 let unseatedSince = 0;
+let everSeen = false;          // some player of this room connected (or said hello) since we joined it
+let nobodyToasted = false;
 
 function now() { return performance.now(); }
 
@@ -117,13 +124,16 @@ export function init() {
   if (inited) return;
   inited = true;
   on(EV.NET_HELLO, ({ from, data }) => {
+    everSeen = true;
     const prev = infos.get(from);
     infos.set(from, { name: data.name, st: data.st, mid: data.mid, hum: data.hum, js: data.js, at: now() });
     if (!prev && state.app === APP.LOBBY) refresh(true);
   });
   on(EV.PEER_JOIN, ({ id }) => {
+    everSeen = true;
     sayHello(id);   // in a match too: a quick-play searcher must learn that this room is live
-    if (state.app === APP.LOBBY && session.isHost() && L.countdownEndsAt != null && !started) {
+    // a newcomer who gets a seat gets time to load in; one arriving at a full lobby does not hold up the others
+    if (state.app === APP.LOBBY && session.isHost() && L.countdownEndsAt != null && !started && buildRoster().some((r) => r.id === id)) {
       L.countdownEndsAt = Math.max(L.countdownEndsAt, now() + TUNE.minLeadMs);
     }
     if (state.app === APP.LOBBY) refresh(true);
@@ -372,6 +382,7 @@ function resetFor(mode, code) {
   lastHostLobby = null;
   started = false; forced = false;
   unseatedSince = 0;
+  everSeen = false; nobodyToasted = false;
   L.mode = mode; L.code = code; L.link = code ? shareLink(code) : null; L.countdownEndsAt = null; L.created = false; L.seated = true;
   setRoomParam(code);
   phase = 'connecting';
@@ -435,11 +446,7 @@ export async function joinPrivate(input) {
     leave();
     throw new Error(`Lobby ${code} is full (${TUNE.maxHumans} players).`);
   }
-  const nobody = session.allPeers().length === 0 && infos.size === 0;
-  settle();
-  if (nobody && !creator && !session.versionMismatch()) {
-    emit(EV.TOAST, { text: `Nobody is in lobby ${code} right now. Check the code with your squad. You can wait here for them.`, kind: 'warn', ms: 7000 });
-  }
+  settle();   // nobody here yet: update() says so once TUNE.nobodyAfterMs passes without a single player
 }
 
 /** Leave the lobby and the room. */
@@ -450,6 +457,7 @@ export function leave() {
   clearTimeout(retryTimer);
   retries = 0;
   lastFlow = null;
+  everSeen = false; nobodyToasted = false;
   if (state.online) session.leave();
   infos.clear();
   lastHostLobby = null;
@@ -473,10 +481,16 @@ function waitingText() {
     const mm = mismatchText();
     if (mm) return mm;
     if (L.mode !== 'private') return 'Waiting for players';
-    return L.created ? 'Share the code to invite your squad'
-      : `Nobody else is in lobby ${L.code} right now. Check the code with your squad, or wait here for them.`;
+    if (L.created || everSeen) return 'Share the code to invite your squad';
+    return nobodyHere() ? `Nobody else is in lobby ${L.code} right now. Check the code with your squad, or wait here for them.`
+      : `Looking for players in lobby ${L.code}`;
   }
   return 'Waiting for players';
+}
+
+/** Private join, not the creator: no player of this room seen for TUNE.nobodyAfterMs since we settled in it. */
+function nobodyHere() {
+  return L.mode === 'private' && !L.created && !everSeen && phase === 'settled' && now() - settledAt >= TUNE.nobodyAfterMs;
 }
 
 /** A player with another game version tried to connect (net/session handshake): say who has to reload. */
@@ -495,6 +509,10 @@ export function update(dt) {
   if (t >= nextHelloAt) { nextHelloAt = t + TUNE.helloEveryMs; sayHello(); }
   if (state.app !== APP.LOBBY) return;
   if (phase !== 'settled') { refresh(false); return; }
+  if (!nobodyToasted && nobodyHere() && !session.versionMismatch()) {
+    nobodyToasted = true;
+    emit(EV.TOAST, { text: `Nobody is in lobby ${L.code} right now. Check the code with your squad. You can wait here for them.`, kind: 'warn', ms: 7000 });
+  }
 
   const isHost = session.isHost();
   const humans = buildRoster();

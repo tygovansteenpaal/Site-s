@@ -100,8 +100,10 @@ pinned versions (see the import map in `index.html`).
 
 URL switches for testing: `?quality=low|medium|high`, `?practice` (straight into practice), `?seed=N`, `?bots=N`,
 `?skipplane&spawn=harrow` (start on the ground at a site), `?fastzone` (zone timings x0.1), `?room=CODE`, `?name=X`,
-`?mute`, `?nopost`, `?debug`, and `?net=local` (a BroadcastChannel transport between tabs of one browser instead of
-the relays).
+`?mute`, `?nopost`, `?debug`, `?net=local` (a BroadcastChannel transport between tabs of one browser instead of
+the relays), and `?netsim=PING[,LOSS[,JITTER]]` to play on a simulated bad connection, for example `?netsim=150,5`
+(150 ms extra round trip, 5 % loss of unreliable messages each way; reliable ones arrive late instead) or
+`?netsim=250,2,40` (plus up to 40 ms jitter). It only affects the page that has it and is off without the switch.
 
 ## Code layout
 
