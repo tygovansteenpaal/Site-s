@@ -103,6 +103,17 @@ function wireEvents() {
     deathAt = performance.now() + TUNE.deathScreenDelay;
     deathShown = false;
   });
+  on(EV.NET_LINK, ({ state: st }) => {
+    // Lost the match connection while already dead or spectating: the explanation replaces whatever was showing.
+    if (st !== 'lost' || state.app !== APP.MATCH) return;
+    const wasAlive = !!getPlayer(state.selfId)?.alive;
+    queueMicrotask(() => {                // after game/match has recorded the forfeit (state.match.netLost)
+      if (wasAlive || state.app !== APP.MATCH) return;   // a living player dies from the forfeit; PLAYER_KILLED shows it
+      deathAt = 0; deathShown = true;
+      screens.showSpectate(null);
+      screens.showDeath({ killer: state.local.killer });
+    });
+  });
   on(EV.MATCH_END, ({ winnerId }) => {
     if (state.app !== APP.MATCH) return;
     const name = winnerId ? (getPlayer(winnerId)?.name || '') : '';
@@ -181,12 +192,14 @@ function updateMatch(dt) {
   const locked = lockedNow();
   const now = performance.now();
 
-  if (deathAt && !deathShown && now >= deathAt && dead && !state.local.spectating) {
+  const lost = !!state.match.netLost;   // disconnected from the match: the explanation stays, no spectating
+  if (deathAt && !deathShown && now >= deathAt && dead && (!state.local.spectating || lost)) {
     deathShown = true;
+    if (lost) screens.showSpectate(null);
     screens.showDeath({ killer: state.local.killer });
   }
   // spectate bar follows the camera's target
-  const spec = state.local.spectating || null;
+  const spec = lost ? null : (state.local.spectating || null);
   if (spec !== lastSpecId) {
     lastSpecId = spec;
     if (spec && dead) screens.showSpectate(getPlayer(spec)?.name || '');

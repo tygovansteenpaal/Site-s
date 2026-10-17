@@ -297,13 +297,14 @@ export const BOTS = Object.freeze({
 // ---------------------------------------------------------------- networking (Trystero Nostr, see ARCHITECTURE.md section 8)
 export const NET = Object.freeze({
   appId: 'zonefall-v1',
-  protocol: 1,
+  protocol: 2,                            // bump on every wire change (2: match tags, mid on in-match payloads, leave/kick)
   relays: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.snort.social', 'wss://nostr.mom',
     'wss://relay.nostr.net', 'wss://nostr.oxtr.dev', 'wss://relay.piazza.today', 'wss://nostr.rblb.it'],
   turn: [],                               // [{urls, username, credential}] when a TURN account exists
   snapRate: 20, lobbySnapRate: 5, botRate: 15,
   interpDelay: 100, interpMin: 80, interpMax: 200,
   staleMs: 3000, dropMs: 10000,
+  hostStaleMs: 6000,                      // silence (own stalls excluded) before a peer loses the host role / bots are taken over
   maxMsgsPerSec: 80,
   quickPrefix: 'zf1-qp', privatePrefix: 'zf1-pv', buckets: 30, bucketProbeMs: 3500,
   codeAlphabet: 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', codeLength: 5,

@@ -27,6 +27,9 @@ export const EV = Object.freeze({
   NET_DROP: 'net:drop',                 // {from, data}
   NET_NADE: 'net:nade',                 // {from, data}
   NET_SHOT: 'net:shot',                 // {from, shooterId, shot}  (decoded SHOT binary)
+  NET_LEAVE: 'net:leave',               // {from, data: {mid, alive}}  a peer left our match (LEAVE MATCH, menu, tab closed)
+  NET_KICK: 'net:kick',                 // {from, data: {mid}}  a peer dropped us from our match after a long silence
+  NET_LINK: 'net:link',                 // {state: 'ok'|'interrupted'|'lost', reason}  our own connection during a match
   LOBBY_UPDATE: 'lobby:update',         // {lobby}  (net/lobby.getLobby() snapshot)
 
   // match

@@ -585,7 +585,7 @@ function deadCam(me, dt) {
   if (deathT < 0) startDeathCam();
   deathT += dt;
   const D = TUNE.death;
-  if (deathT > D.duration && state.app === APP.MATCH) {
+  if (deathT > D.duration && state.app === APP.MATCH && !state.match.netLost) {   // disconnected: nothing live to watch
     if (!spectating) setSpectate(null);
     if (spectating) return spectateCam(dt);
   }

@@ -7,6 +7,10 @@
 // low-health vignette, gas tint while outside the zone, interaction prompt from state.local.nearby, action progress ring
 // (state.local.action/actionT), plane/freefall/chute prompts and altimeter, sniper scope overlay when
 // state.local.scoped, scoreboard on Tab, FPS when settings.showFps.
+// Online: a connection banner under the zone timer while every other player has gone silent (NET_LINK 'interrupted'),
+// and the aimed-at nameplate: the player or bot under the crosshair, within range and in line of sight
+// (world.lineOfSight, ARCHITECTURE.md 5.7), gets its name and distance above the head.
+import * as THREE from 'three';
 import { on, EV } from '../core/bus.js';
 import { state, gfx, LIFE, FLAG, getPlayer, hasFlag } from '../core/state.js';
 import * as settings from '../core/settings.js';
@@ -17,6 +21,7 @@ import * as renderer from '../engine/renderer.js';
 import * as session from '../net/session.js';
 import * as match from '../game/match.js';
 import * as map from './map.js';
+import * as world from '../world/world.js';
 import { h, setText, setClass, setVar, setTransform, show as vis, keycap, keyOf, GLYPH, clock } from './dom.js';
 
 export const TUNE = {
@@ -31,6 +36,10 @@ export const TUNE = {
   pickupMs: 3200,
   announceMs: 3000,
   lowHealth: 35,
+  plateRange: 90,            // m: aimed-at nameplate range (x1.8 while aiming down sights)
+  plateMinDeg: 1.2,          // smallest aim cone for the nameplate, deg (widened to the body's angular size up close)
+  plateLosMs: 120,           // line-of-sight re-check interval for the nameplate target
+  plateHoldMs: 450,          // the nameplate stays this long after the crosshair leaves the target
 };
 
 const MODE = { auto: 'Auto', semi: 'Semi', bolt: 'Bolt' };
@@ -60,6 +69,11 @@ function tpl() {
       <span class="zf-zonetimer__label" data-zlabel></span>
       <span class="zf-zonetimer__time" data-ztime>0:00</span>
       <span class="zf-zonetimer__bar"><i data-zbar></i></span>
+    </div>
+    <div class="zf-netwarn" hidden role="status">
+      <span class="zf-netwarn__dot" aria-hidden="true"></span>
+      <span class="zf-netwarn__text">Connection interrupted</span>
+      <span class="zf-netwarn__sub">Waiting for the other players</span>
     </div>
     <div class="zf-zonewarn" hidden>
       <span class="zf-zonewarn__icon">${GLYPH.gas}</span>
@@ -104,6 +118,7 @@ function tpl() {
       <div class="zf-weapon__aux"><span class="zf-frag" title="Frag grenades">${GLYPH.frag}<b data-frags>0</b><span class="zf-key" data-action="grenade">G</span></span></div>
     </div>
   </div>
+  <div class="zf-nameplate" hidden aria-hidden="true"><b data-npn></b><span data-npd></span></div>
   <div class="zf-center">
     <div class="zf-cross"><i class="t"></i><i class="r"></i><i class="b"></i><i class="l"></i><i class="d"></i></div>
     <svg class="zf-hit" viewBox="-30 -30 60 60" aria-hidden="true"><g><path d="M-17 -17L-7 -7M17 -17L7 -7M-17 17L-7 7M17 17L7 7"/></g><circle class="zf-hit__ring" r="14"/></svg>
@@ -203,6 +218,8 @@ export function mount(root) {
   Object.assign($, {
     compass: q('.zf-compass'), compassStrip: q('.zf-compass__strip'), compassMarks: q('.zf-compass__marks'), hdg: q('[data-hdg]'),
     zt: q('.zf-zonetimer'), ztPhase: q('[data-zphase]'), ztLabel: q('[data-zlabel]'), ztTime: q('[data-ztime]'), ztBar: q('[data-zbar]'),
+    nw: q('.zf-netwarn'),
+    np: q('.zf-nameplate'), npName: q('[data-npn]'), npDist: q('[data-npd]'),
     zw: q('.zf-zonewarn'), zwDps: q('[data-zdps]'), zwDir: q('[data-zdir]'), zwDist: q('[data-zdist]'),
     ann: q('.zf-announce'), annK: q('[data-ak]'), annT: q('[data-at]'), annS: q('[data-as]'),
     mapSlot: q('.zf-hud__mapslot'), alive: q('[data-alive]'), kills: q('[data-kills]'), feed: q('.zf-feed'),
@@ -250,6 +267,7 @@ export function mount(root) {
   on(EV.WEAPON_SWITCH, ({ id }) => { if (id === state.selfId) { $.weapon.classList.remove('is-swap'); void $.weapon.offsetWidth; $.weapon.classList.add('is-swap'); } });
   on(EV.PLATE_DONE, ({ id }) => { if (id === state.selfId) { $.armorWrap.classList.remove('is-done'); void $.armorWrap.offsetWidth; $.armorWrap.classList.add('is-done'); } });
   on(EV.SETTINGS_CHANGED, ({ key }) => { if (key === 'showFps') vis($.fps, !!settings.get('showFps')); });
+  on(EV.NET_LINK, ({ state: st }) => setLink(st));
   on('input:bindings', () => refreshKeys());
 }
 
@@ -284,6 +302,8 @@ export function reset() {
 
 function onMatchStart() {
   reset();
+  setLink('ok');
+  plate.id = null; plate.until = 0; vis($.np, false);
   announce('Kessler Isle', `${state.match.roster.length || MATCH.maxPlayers} operators`, 'Last one standing wins');
 }
 
@@ -756,6 +776,7 @@ export function update(dt) {
   if (me) updateCrosshair(me, alive, life);
   updateCenter(me || { vel: null }, alive, life, inv, dt);
   updateArcs(hdg, c.x, c.z);
+  if (me) updateNameplate(me, alive && !spectating); else vis($.np, false);
   updateScope(dt);
   updateFeed();
   map.updateMinimap(dt);
@@ -770,3 +791,65 @@ export function update(dt) {
 
 /** HUD root (dev harness). */
 export function element() { return el; }
+
+// ------------------------------------------------------------------------------------------ connection banner
+/** NET_LINK state -> banner: 'interrupted' shows it; 'ok' hides it, and so does 'lost' (the death screen explains it). */
+export function setLink(st) {
+  if (!$.nw) return;
+  vis($.nw, st === 'interrupted');
+}
+
+// ------------------------------------------------------------------------------------------ nameplate
+const plate = { id: null, until: 0, losAt: 0, losId: null, los: false };
+const npEye = new THREE.Vector3(), npAt = new THREE.Vector3(), npProj = new THREE.Vector3();
+
+/** The player or bot under the crosshair (alive, in range, in the aim cone), or null. */
+function aimedAt(me) {
+  const eye = state.local.eye, dir = state.local.aimDir;
+  if (!eye || !dir) return null;
+  const range = TUNE.plateRange * (state.local.ads > 0.5 ? 1.8 : 1);
+  let best = null, bestScore = Infinity;
+  for (const e of state.players.values()) {
+    if (e === me || !e.alive || e.life === LIFE.DEAD || e.life === LIFE.SPECTATE || e.life === LIFE.PLANE) continue;
+    const dx = e.pos.x - eye.x, dy = e.pos.y + 1.15 - eye.y, dz = e.pos.z - eye.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (d < 1 || d > range) continue;
+    const along = (dx * dir.x + dy * dir.y + dz * dir.z) / d;
+    if (along <= 0) continue;
+    const ang = Math.acos(Math.min(1, along)) * DEG;
+    const cone = Math.max(TUNE.plateMinDeg, Math.atan2(0.75, d) * DEG);   // about a body width either side
+    if (ang > cone) continue;
+    const score = ang / cone + d / range * 0.25;
+    if (score < bestScore) { bestScore = score; best = e; }
+  }
+  return best;
+}
+
+function updateNameplate(me, alive) {
+  const now = performance.now();
+  let target = null;
+  if (alive && !state.local.scoped) {
+    const cand = aimedAt(me);
+    if (cand) {
+      if (cand.id !== plate.losId || now - plate.losAt > TUNE.plateLosMs) {
+        plate.losId = cand.id;
+        plate.losAt = now;
+        npEye.copy(state.local.eye);
+        npAt.set(cand.pos.x, cand.pos.y + 1.4, cand.pos.z);
+        try { plate.los = world.lineOfSight(npEye, npAt); } catch (e) { plate.los = true; }
+      }
+      if (plate.los) target = cand;
+    }
+  }
+  if (target) { plate.id = target.id; plate.until = now + TUNE.plateHoldMs; }
+  const e = plate.id && now < plate.until ? getPlayer(plate.id) : null;
+  if (!e || !e.alive || !alive || !gfx.camera) { vis($.np, false); return; }
+  npProj.set(e.pos.x, e.pos.y + 2.05 + (hasFlag(e, FLAG.CROUCH) ? -0.45 : 0), e.pos.z).project(gfx.camera);
+  if (npProj.z > 1 || Math.abs(npProj.x) > 1.05 || Math.abs(npProj.y) > 1.05) { vis($.np, false); return; }
+  const w = el.clientWidth || innerWidth, hgt = el.clientHeight || innerHeight;
+  setTransform($.np, `translate(${((npProj.x + 1) / 2 * w).toFixed(1)}px, ${((1 - npProj.y) / 2 * hgt).toFixed(1)}px) translate(-50%, -100%)`);
+  setText($.npName, e.name);
+  setText($.npDist, `${Math.round(e.pos.distanceTo(me.pos))} m`);
+  setClass($.np, 'is-human', e.kind === 'remote');
+  vis($.np, true);
+}

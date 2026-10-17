@@ -72,9 +72,15 @@ There is no game server. The page is static files on GitHub Pages, and players c
 - **Authority.** Every player is authoritative for their own movement, health and inventory. A shooter detects a hit
   against what they see and reports it; the victim's browser checks it (fire rate, damage cap, range, both positions
   against recent history) before applying it. Remote players are drawn about 100 ms in the past and interpolated.
-- **Host.** The player with the lowest peer id is the host: it runs the lobby countdown, sends the match start (a
-  shared seed, so the zone, the plane route and the loot are identical everywhere) and simulates the bots. If the host
-  leaves, the next player takes over without interrupting the match. A host keeps simulating while its tab is hidden.
+- **Host.** In the lobby, the player who joined first (the creator of a private lobby) is the host: it runs the
+  countdown and sends the match start (a shared seed, so the zone, the plane route and the loot are identical
+  everywhere). In a match, the player with the lowest peer id among those still in it simulates the bots. If that
+  player leaves the match or goes silent for 6 s, the next one takes over without interrupting the match. A host keeps
+  simulating while its tab is hidden. Every message carries the match it belongs to, so players who went back to the
+  lobby can start the next round while others finish theirs, without the two ever mixing.
+- **Dropping out.** Leaving a match early drops your loot where you stood. A player silent for 10 s is removed from the
+  match ("left the match"). A browser that was asleep or lost its own connection that long shows "Disconnected" with a
+  button back to the lobby instead of playing on alone.
 - **Limits.** Without a TURN relay server, roughly one in ten player pairs behind strict NATs or corporate firewalls
   cannot connect directly. The lobby shows the relay count and the connection type per player. If the relays cannot
   be reached at all, the lobby says so and offers a practice match instead.

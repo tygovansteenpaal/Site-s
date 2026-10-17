@@ -132,9 +132,15 @@ export function showDeath(info = {}) {
   const kills = info.kills ?? state.match.stats.kills;
   const damage = Math.round(info.damage ?? state.match.stats.damage);
   const self = !k.id || k.id === state.selfId;
+  const lost = !!state.match.netLost;
   deathEl.textContent = '';
   const killerLine = h('div', { class: 'zf-death__killer' });
-  if (k.weapon === 'zone' || k.weapon === 'fall') {
+  if (lost) {
+    const why = state.match.netLost === 'stall' ? 'This tab stopped running for too long (sleep or a frozen window)'
+      : state.match.netLost === 'kicked' ? 'The other players stopped hearing from you' : 'Your connection to the other players dropped';
+    killerLine.append(h('span', { class: 'zf-label', text: 'Cause' }), h('b', { text: 'Connection lost' }),
+      h('span', { class: 'zf-death__how' }, h('span', { text: `${why}. You were removed from the match.` })));
+  } else if (k.weapon === 'zone' || k.weapon === 'fall') {
     killerLine.append(h('span', { class: 'zf-label', text: 'Cause' }), h('b', { text: k.weapon === 'zone' ? 'Caught in the zone' : 'Fall damage' }));
   } else if (self && k.weapon === 'frag') {
     killerLine.append(h('span', { class: 'zf-label', text: 'Cause' }), h('b', { text: 'Your own frag' }));
@@ -147,17 +153,17 @@ export function showDeath(info = {}) {
   }
   const spectate = btn('Spectate', 'zf-btn--primary', () => { sfx('confirm'); emit(EV.UI_INTENT, { type: 'spectate' }); });
   spectate.append(keycap('jump'));
-  const leave = btn('Leave match', 'zf-btn--ghost', () => { sfx('back'); emit(EV.UI_INTENT, { type: 'leave_match' }); });
+  const leave = btn(lost ? 'Return to lobby' : 'Leave match', lost ? 'zf-btn--primary' : 'zf-btn--ghost', () => { sfx('back'); emit(EV.UI_INTENT, { type: 'leave_match' }); });
   const alive = Math.max(0, state.match.alive || 0);
   deathEl.append(
     h('div', { class: 'zf-death__scrim' }),
     h('div', { class: 'zf-death__body' },
       h('p', { class: 'zf-eyebrow' }, h('span', { text: `${ordinal(placement)} of ${total}` }), h('span', { text: `${alive} still in the fight` })),
-      h('h1', { class: 'zf-death__title', text: 'Eliminated' }),
+      h('h1', { class: 'zf-death__title', text: lost ? 'Disconnected' : 'Eliminated' }),
       killerLine,
       h('dl', { class: 'zf-stats zf-stats--row' },
         stat('Placement', `#${placement}`), stat('Kills', String(kills)), stat('Damage', String(damage))),
-      h('div', { class: 'zf-death__actions' }, alive > 0 ? spectate : null, leave),
+      h('div', { class: 'zf-death__actions' }, alive > 0 && !lost ? spectate : null, leave),
       h('p', { class: 'zf-death__hint' }, keycap('pause'), ' opens the menu')));
   deathEl.hidden = false;
   deathEl.classList.remove('is-in'); void deathEl.offsetWidth; deathEl.classList.add('is-in');

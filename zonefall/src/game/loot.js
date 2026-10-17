@@ -234,14 +234,17 @@ export function pickup(uid, by) {
   const t = nowMs();
   const ok = applyPick(uid, by, t);
   if (ok && state.online && (by === state.selfId || (isBotId(by) && state.isHost))) {
-    session.send('pick', { uid, t, by: isBotId(by) ? by : null });
+    session.send('pick', { mid: state.match.id, uid, t, by: isBotId(by) ? by : null });
   }
   return ok;
 }
 
 function onNetPick({ from, data }) {
   if (!data || !data.uid) return;
-  const by = data.by && isBotId(data.by) ? (from === state.hostId ? data.by : null) : from;
+  // Bot picks come from the host; after a host stall another player may have run the bots for a moment, so a bot pick
+  // from any player still in our match counts too (items are unique, the earliest claim wins as usual).
+  const botOk = from === state.hostId || session.inMatchPeer(from);
+  const by = data.by && isBotId(data.by) ? (botOk ? data.by : null) : from;
   if (!by) return;
   const t = Number.isFinite(data.t) ? data.t : nowMs();
   const uid = data.uid;
@@ -327,7 +330,7 @@ export function drop(list, pos, ownerId, scatter = LOOT.dropScatter) {
   const owner = ownerId === state.selfId || (isBotId(ownerId) && state.isHost);
   if (out.length && state.online && owner) {
     for (let i = 0; i < out.length; i += 16) {
-      session.send('drop', { items: out.slice(i, i + 16).map((it) => ({ uid: it.uid, type: it.type, ref: it.ref, qty: it.qty, pos: it.pos.map((v) => Math.round(v * 1000) / 1000) })) });
+      session.send('drop', { mid: state.match.id, items: out.slice(i, i + 16).map((it) => ({ uid: it.uid, type: it.type, ref: it.ref, qty: it.qty, pos: it.pos.map((v) => Math.round(v * 1000) / 1000) })) });
     }
   }
   return out;

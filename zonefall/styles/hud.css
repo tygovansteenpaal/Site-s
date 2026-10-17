@@ -115,6 +115,30 @@
 .zf-zonewarn__dir { display: inline-flex; width: calc(18 * var(--u)); height: calc(18 * var(--u)); margin-left: calc(4 * var(--u)); }
 .zf-zonewarn__dir .zf-glyph { width: 100%; height: 100%; }
 
+/* online: connection banner (NET_LINK) */
+.zf-netwarn {
+  display: flex; align-items: center; gap: calc(10 * var(--u));
+  padding: calc(7 * var(--u)) calc(14 * var(--u));
+  background: rgba(10, 10, 12, 0.62); border: 1px solid rgba(232, 178, 58, 0.55);
+  color: var(--zf-accent); text-shadow: none;
+}
+.zf-netwarn__dot { width: calc(8 * var(--u)); height: calc(8 * var(--u)); border-radius: 50%; background: currentColor; animation: zf-netblink 1s steps(2, end) infinite; }
+@keyframes zf-netblink { 50% { opacity: 0.2; } }
+.zf-netwarn__text { font: 700 calc(13 * var(--u))/1 var(--zf-display); letter-spacing: 0.24em; text-transform: uppercase; }
+.zf-netwarn__sub { font: 600 calc(11 * var(--u))/1 var(--zf-mono); color: var(--zf-hud-dim); }
+@media (prefers-reduced-motion: reduce) { .zf-netwarn__dot { animation: none; } }
+
+/* aimed-at nameplate (positioned per frame by ui/hud.js) */
+.zf-nameplate {
+  position: absolute; left: 0; top: 0; display: flex; align-items: baseline; gap: calc(6 * var(--u));
+  padding: calc(3 * var(--u)) calc(7 * var(--u)) calc(2 * var(--u));
+  background: rgba(12, 8, 8, 0.55); border-bottom: 2px solid var(--zf-danger);
+  pointer-events: none; white-space: nowrap; will-change: transform;
+}
+.zf-nameplate b { font: 700 calc(13 * var(--u))/1 var(--zf-display); letter-spacing: 0.12em; text-transform: uppercase; color: #ffb3a6; }
+.zf-nameplate span { font: 600 calc(10 * var(--u))/1 var(--zf-mono); color: rgba(233, 231, 225, 0.8); }
+.zf-nameplate.is-human b { color: #ffffff; }
+
 /* announcements */
 .zf-announce {
   position: absolute; left: 50%; top: 21vh; transform: translateX(-50%);

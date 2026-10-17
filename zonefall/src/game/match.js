@@ -6,8 +6,13 @@
 // loot.setup(seed), bots.setup(...), MATCH_START, MATCH_PHASE. Alive counting, placement and kill/damage counters
 // come from PLAYER_KILLED / PLAYER_DAMAGED; when <= 1 is alive: phase 'ended' and MATCH_END {winnerId, placement, stats}.
 // The plane flight line comes from stream(seed, 'plane'); planePath() and planePosAt() are pure.
-// Host migration: HOST_CHANGED to self during a match -> bots.takeOver(). A peer that leaves mid-match counts as dead
-// (PLAYER_KILLED {weapon: 'left'}, no drop, no credit).
+// Host migration: HOST_CHANGED {migrated} to self during a match -> bots.takeOver(). A peer that leaves mid-match counts
+// as dead (PLAYER_KILLED {weapon: 'left'}, no credit): its own 'death' {w:'left'} + inventory drop when it leaves alive,
+// its 'leave' {mid}, or net/sync's drop after NET.dropMs of silence (PEER_LEAVE {reason:'timeout'}). A raw transport
+// disconnect is not a death by itself: net/sync decides from liveness, so two players cut off from each other never
+// both "win". Leaving (LEAVE MATCH, main menu, closing the tab) announces it: leave() sends 'death' + drop when alive
+// and 'leave'. When net/sync reports this client lost its own link (NET_LINK 'lost': frozen for ~NET.dropMs, link down,
+// or kicked), forfeit(): state.match.netLost = reason, the local player dies with 'left', session stops hosting.
 import * as THREE from 'three';
 import { MATCH, BOTS, DEV, SPAWN_LOADOUT, PLAYER } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
@@ -15,6 +20,7 @@ import { state, debug, createPlayer, resetMatchState, getPlayer, localPlayer, bo
 import { stream, randomSeed } from '../core/rng.js';
 import { siteById, POIS } from '../core/mapdata.js';
 import * as session from '../net/session.js';
+import * as damage from '../combat/damage.js';
 import * as sync from '../net/sync.js';
 import * as lobby from '../net/lobby.js';
 import * as controller from '../player/controller.js';
@@ -242,8 +248,18 @@ function finish() {
   emit(EV.MATCH_END, { winnerId: winner, placement: m.placement, stats: { ...m.stats } });
 }
 
-/** Leave the current match (local cleanup, resetMatchState). The caller decides the next app state. */
+/**
+ * Leave the current match (local cleanup, resetMatchState). The caller decides the next app state. Online, the others
+ * are told first: a living player forfeits ('death' {w:'left'} and its inventory drop), then 'leave' {mid}.
+ */
 export function leave() {
+  const m = state.match;
+  if (state.online && m.id && m.phase !== 'idle') {
+    const me = localPlayer();
+    const alive = !!(me && me.alive && m.phase !== 'ended');
+    if (alive) safe(() => damage.kill(me.id, null, 'left', false, null), null);
+    safe(() => session.send('leave', { mid: m.id, alive }), null);
+  }
   try { loot.clear(); } catch (e) { console.warn('[GAME/match] loot.clear failed', e); }
   try { bots.setup([], 0); } catch (e) { console.warn('[GAME/match] bots reset failed', e); }
   plane.setVisible(false);
@@ -293,7 +309,7 @@ function onDamaged({ id, amount, from }) {
   if (a) a.damage = (a.damage || 0) + amount;
 }
 
-function onPeerLeave({ id }) {
+function leftMatch(id) {
   const m = state.match;
   if (m.phase === 'idle' || m.phase === 'ended') return;
   const e = getPlayer(id);
@@ -301,11 +317,33 @@ function onPeerLeave({ id }) {
   emit(EV.PLAYER_KILLED, { id, by: null, weapon: 'left', headshot: false, pos: [e.pos.x, e.pos.y, e.pos.z] });
 }
 
-function onHostChanged({ hostId, self }) {
+/** Only net/sync's liveness drop counts here; a transport-level disconnect alone is decided by liveness first. */
+function onPeerLeave({ id, reason }) {
+  if (reason !== 'timeout') return;
+  leftMatch(id);
+}
+
+function onNetLeave({ from, data }) {
+  if (!data || data.mid !== state.match.id) return;
+  leftMatch(from);
+}
+
+/** This client lost its place in the match (see the header). */
+function forfeit(reason) {
+  const m = state.match;
+  if (!state.online || m.phase === 'idle' || m.netLost) return;
+  m.netLost = reason || 'link';
+  safe(() => session.setSelfOut(true), null);
+  const me = localPlayer();
+  if (me && me.alive && m.phase !== 'ended') safe(() => damage.kill(me.id, null, 'left', false, null), null);
+}
+
+function onHostChanged({ hostId, self, migrated }) {
   const m = state.match;
   if (m.phase === 'idle') return;
   for (const e of state.players.values()) if (e.kind === 'bot') e.owner = hostId;
-  if (self && m.phase !== 'ended') bots.takeOver();
+  // a context switch (the match just began) is not a migration: bots.setup already built the brains
+  if (self && migrated !== false && m.phase !== 'ended') bots.takeOver();
 }
 
 function onNetStart({ from, data }) {
@@ -325,6 +363,8 @@ export function init() {
   on(EV.PLAYER_KILLED, onKilled);
   on(EV.PLAYER_DAMAGED, onDamaged);
   on(EV.PEER_LEAVE, onPeerLeave);
+  on(EV.NET_LEAVE, onNetLeave);
+  on(EV.NET_LINK, ({ state: st, reason }) => { if (st === 'lost') forfeit(reason); });
   on(EV.HOST_CHANGED, onHostChanged);
   // practice pauses freeze the shared clock (online matches never pause)
   on(EV.PAUSE, ({ paused }) => {
@@ -356,6 +396,7 @@ export function init() {
     planePath: () => ({ ...planePath() }),
     matchInfo: () => ({ phase: state.match.phase, time: state.match.time, alive: state.match.alive, winnerId: state.match.winnerId, placement: state.match.placement, stats: { ...state.match.stats } }),
     spectate: (id) => camera.setSpectate(id ?? null),
+    forfeit: (reason = 'link') => { forfeit(reason); return state.match.netLost; },
     scoreboard: () => scoreboard(),
   });
 }

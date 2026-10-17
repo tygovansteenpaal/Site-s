@@ -256,7 +256,12 @@ function wireFlow() {
   });
   bus.on(EV.PLAYER_KILLED, ({ id }) => { if (id === state.selfId) setPaused(false); });
   bus.on(EV.APP_STATE, ({ to }) => input.setEnabled(to === APP.MATCH));
-  addEventListener('pagehide', () => { if (state.online) session.leave(); });
+  addEventListener('pagehide', () => {
+    if (!state.online) return;
+    // closing the tab mid-match: forfeit and announce it (death drop, 'leave') before the graceful room leave
+    if (state.app === APP.MATCH || state.app === APP.RESULTS) { try { match.leave(); } catch (err) { console.warn('[ZONEFALL] match.leave on pagehide failed', err); } }
+    session.leave();
+  });
 }
 
 // ------------------------------------------------------------------------------------------ frame
@@ -264,7 +269,7 @@ function frame(dt, now, hidden = false) {
   try {
     input.update();
     if (state.online) sync.update(dt);
-    if (state.app === APP.LOBBY) lobby.update(dt);
+    if (state.online) lobby.update(dt);   // lobby countdown; in a match only the hello heartbeat
 
     const simulate = state.app === APP.MATCH && !(state.paused && state.match.mode === 'practice');
     if (simulate) {

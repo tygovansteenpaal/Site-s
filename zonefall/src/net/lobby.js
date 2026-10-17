@@ -2,19 +2,23 @@
 // Quick play: rooms `${NET.quickPrefix}-${region}-${n}` (region from the time zone), n = 1..NET.buckets. Each try waits
 // NET.bucketProbeMs for 'hello' replies and hops to n + 1 if a peer reports st:'live' or the room already holds
 // MATCH.maxHumans humans. Private: a NET.codeLength code from NET.codeAlphabet, room `${NET.privatePrefix}-${code}`,
-// password = code. Every peer says 'hello' on join and every 2 s in the lobby. The host (net/session) runs the countdown
-// (MATCH.lobbyCountdown at >= 2 humans, MATCH.lobbyCountdownFull at >= 6, quick play alone: bots after
-// MATCH.aloneStartAfter), broadcasts 'lobby' every second and calls game/match.hostBegin(humans) at zero.
-// Non-hosts mirror the countdown from 'lobby'.
+// password = code. Every peer says 'hello' on join and every 2 s (in a match too, with st:'live'). The lobby host
+// (net/session: the peer that joined the room first) runs the countdown (MATCH.lobbyCountdown at >= 2 humans,
+// MATCH.lobbyCountdownFull at >= 6, quick play alone: bots after MATCH.aloneStartAfter), broadcasts 'lobby' every
+// second and calls game/match.hostBegin(humans) at zero. Non-hosts mirror the countdown from 'lobby'.
+// The roster only holds peers in the lobby context (session.contextPeers): players still in a match are never pulled
+// into the next one. While some are, a private lobby waits for them (START NOW overrides); quick play carries on.
 import { NET, MATCH } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, debug, APP } from '../core/state.js';
 import { PROTOCOL_VERSION, ACTIONS } from './protocol.js';
 import * as session from './session.js';
+import * as sync from './sync.js';
 import * as match from '../game/match.js';
 
 export const TUNE = {
   helloEveryMs: 2000,
+  helloFreshMs: 6000,        // a 'live' hello older than this no longer counts as a match in progress
   lobbyEveryMs: 1000,
   emitEveryMs: 250,          // LOBBY_UPDATE cadence while something is ticking (plus on every change)
   joinProbeMs: 2500,         // private join: how long to listen for hellos before deciding the room is not full
@@ -88,7 +92,7 @@ function now() { return performance.now(); }
 
 function helloPayload() {
   const live = (state.app === APP.MATCH || state.app === APP.RESULTS) && state.match.phase !== 'idle' && state.match.phase !== 'ended';
-  return { v: PROTOCOL_VERSION, name: state.name || 'Operator', st: live ? 'live' : 'lobby', mid: state.match.id || null, hum: session.peers().length + 1 };
+  return { v: PROTOCOL_VERSION, name: state.name || 'Operator', st: live ? 'live' : 'lobby', mid: state.match.id || null, hum: session.contextPeers().length + 1, js: session.joinedAt(), hr: sync.heardPeers(), rs: state.app === APP.RESULTS };
 }
 
 function sayHello(target = null) {
@@ -101,7 +105,7 @@ export function init() {
   inited = true;
   on(EV.NET_HELLO, ({ from, data }) => {
     const prev = infos.get(from);
-    infos.set(from, { name: data.name, st: data.st, mid: data.mid, hum: data.hum, at: now() });
+    infos.set(from, { name: data.name, st: data.st, mid: data.mid, hum: data.hum, js: data.js, at: now() });
     if (!prev && state.app === APP.LOBBY) refresh(true);
   });
   on(EV.PEER_JOIN, ({ id }) => {
@@ -124,6 +128,7 @@ export function init() {
     if (state.app === APP.LOBBY) refresh(true);
   });
   on(EV.NET_START, ({ from, data }) => {
+    if (state.app !== APP.LOBBY && state.app !== APP.RESULTS) return;   // playing another match: not for us
     if (from !== session.hostId()) return;
     if (!data.ro.some((r) => r.id === state.selfId)) {
       // The host started with a full roster that does not include us (joined in the same instant as others):
@@ -188,16 +193,26 @@ function shareLink(code) {
 function buildRoster() {
   const self = state.selfId;
   const host = session.hostId();
-  const ids = [self, ...session.peers()];
-  const order = (id) => session.joinIndex(id);
-  let list;
+  // contextPeers() is already in lobby-host order (join time, then id); self slots in by the same rule
+  const peersInLobby = session.contextPeers();
+  const mine = session.joinedAt() || Infinity;
+  const at = (id) => (id === self ? mine : infos.get(id)?.js || Infinity);
+  const ordered = [];
+  let placed = false;
+  for (const id of peersInLobby) {
+    if (!placed && (mine < at(id) || (mine === at(id) && self < id))) { ordered.push(self); placed = true; }
+    ordered.push(id);
+  }
+  if (!placed) ordered.push(self);
+  if (host && ordered.includes(host)) { ordered.splice(ordered.indexOf(host), 1); ordered.unshift(host); }
+  let list = ordered;
   if (!session.isHost() && lastHostLobby && now() - lastHostLobby.at < 4000) {
     // the host's order is authoritative; append anyone it has not listed yet
     const seen = new Set();
     list = [];
-    for (const r of lastHostLobby.ro) if (ids.includes(r.id) && !seen.has(r.id)) { seen.add(r.id); list.push(r.id); }
-    for (const id of ids.sort((a, b) => order(a) - order(b))) if (!seen.has(id)) list.push(id);
-  } else list = ids.sort((a, b) => order(a) - order(b));
+    for (const r of lastHostLobby.ro) if (ordered.includes(r.id) && !seen.has(r.id)) { seen.add(r.id); list.push(r.id); }
+    for (const id of ordered) if (!seen.has(id)) list.push(id);
+  }
   return list.slice(0, TUNE.maxHumans).map((id) => ({
     id,
     name: id === self ? (state.name || 'Operator') : (infos.get(id)?.name || lastHostLobby?.ro.find((r) => r.id === id)?.name || 'Joining'),
@@ -206,11 +221,17 @@ function buildRoster() {
   }));
 }
 
+/** Some connected player is in a match right now (its snapshots carry a match tag, or a recent hello says 'live'). */
 function liveElsewhere() {
-  const ids = new Set(session.allPeers());
-  for (const [id, info] of infos) if (ids.has(id) && info.st === 'live') return true;
+  if (session.peersInMatch().length) return true;
+  const ids = new Set(session.peers());
+  const t = now();
+  for (const [id, info] of infos) if (ids.has(id) && info.st === 'live' && t - info.at < TUNE.helloFreshMs && !session.contextPeers().includes(id)) return true;
   return false;
 }
+
+/** A private lobby waits for its players still in a match; quick play and START NOW do not. */
+function waitForLive(live) { return live && L.mode === 'private' && !forced; }
 
 function refresh(force) {
   L.hostId = session.hostId();
@@ -366,16 +387,17 @@ export function requestStart() {
 }
 
 function waitingText() {
-  if (L.matchInProgress) return 'A match is in progress. You deploy in the next round.';
+  if (L.matchInProgress && L.mode === 'private') return 'A match is in progress. You deploy in the next round.';
   if (L.humans <= 1) return L.mode === 'private' ? 'Share the code to invite your squad' : 'Waiting for players';
   return 'Waiting for players';
 }
 
-/** Countdown, heartbeats, LOBBY_UPDATE emission. */
+/** Countdown, heartbeats, LOBBY_UPDATE emission. Called every frame while online (outside the lobby: heartbeat only). */
 export function update(dt) {
   if (!state.online || phase === 'idle') { return; }
   const t = now();
   if (t >= nextHelloAt) { nextHelloAt = t + TUNE.helloEveryMs; sayHello(); }
+  if (state.app !== APP.LOBBY) return;
   if (phase !== 'settled') { refresh(false); return; }
 
   const isHost = session.isHost();
@@ -392,7 +414,7 @@ export function update(dt) {
     } else L.countdownEndsAt = null;
   }
 
-  if (L.countdownEndsAt != null && !live) {
+  if (L.countdownEndsAt != null && !waitForLive(live)) {
     const alone = humans.length <= 1;
     L.status = 'countdown';
     L.text = alone && !forced ? 'No other players yet. Deploying with bots' : 'Match starting';
@@ -405,11 +427,11 @@ export function update(dt) {
 
 function hostTick(t, humans, live) {
   const n = humans.length;
-  if (live) {
+  if (forced) {
+    // START NOW: countdownEndsAt already set to now
+  } else if (waitForLive(live)) {
     L.countdownEndsAt = null;
     aloneSince = t;
-  } else if (forced) {
-    // START NOW: countdownEndsAt already set to now
   } else if (n >= MATCH.minHumansToCountdown) {
     const want = (n >= 6 ? MATCH.lobbyCountdownFull : MATCH.lobbyCountdown) * 1000;
     if (L.countdownEndsAt == null || L.countdownEndsAt - t > want) L.countdownEndsAt = t + want;
