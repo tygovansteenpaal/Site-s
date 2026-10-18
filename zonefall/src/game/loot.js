@@ -63,6 +63,8 @@ let items = new Map();            // uid -> Item
 let spawnsById = new Map();       // spawn id -> spawn
 const localPicks = new Map();     // uid -> {item, t, swapUids}
 const remoteTaken = new Map();    // uid -> {by, t}
+const lostClaims = new Map();     // uid -> {by, t, timer}: a claim we lost; the toast names the earliest claim seen
+const LOST_TOAST_MS = 400;        // claims of a three-way race arrive within about a one-way delay of each other
 const dropCounters = new Map();   // owner id -> next drop number
 let dirty = true;
 const lastRebuildAt = new THREE.Vector3(1e9, 0, 0);
@@ -249,6 +251,8 @@ function onNetPick({ from, data }) {
   const t = Number.isFinite(data.t) ? data.t : nowMs();
   const uid = data.uid;
   if (items.has(uid)) { applyPick(uid, by, t); remoteTaken.set(uid, { by, t }); return; }
+  const lost = lostClaims.get(uid);
+  if (lost && (t < lost.t || (t === lost.t && String(by) < String(lost.by)))) { lost.by = by; lost.t = t; }   // an even earlier claim
   const mine = localPicks.get(uid);
   if (!mine) return;
   const within = Math.abs(nowMs() - mine.t) <= LOOT.pickConflictMs + 1500;
@@ -258,8 +262,16 @@ function onNetPick({ from, data }) {
   localPicks.delete(uid);
   inventory.revert(mine.item);
   for (const d of mine.swapUids) if (items.has(d)) pickup(d, state.selfId);
-  const p = getPlayer(by);
-  emit(EV.TOAST, { text: `${p ? p.name.toUpperCase() : 'SOMEONE'} GOT THERE FIRST`, kind: 'warn', ms: 1800 });
+  // The toast waits a moment: in a three-way race the claim that beat ours may itself lose to an earlier one still on
+  // its way, and the toast must name the player who really got the item.
+  const rec = { by, t, timer: 0 };
+  lostClaims.set(uid, rec);
+  rec.timer = setTimeout(() => {
+    if (lostClaims.get(uid) !== rec) return;
+    lostClaims.delete(uid);
+    const p = getPlayer(rec.by);
+    emit(EV.TOAST, { text: `${p ? p.name.toUpperCase() : 'SOMEONE'} GOT THERE FIRST`, kind: 'warn', ms: 1800 });
+  }, LOST_TOAST_MS);
 }
 
 /**
@@ -387,6 +399,8 @@ export function clear() {
   items = new Map();
   localPicks.clear();
   remoteTaken.clear();
+  for (const rec of lostClaims.values()) clearTimeout(rec.timer);
+  lostClaims.clear();
   dropCounters.clear();
   nearbyUid = null;
   if (state.local) state.local.nearby = null;

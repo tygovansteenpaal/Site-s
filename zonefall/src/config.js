@@ -311,7 +311,7 @@ export const BOTS = Object.freeze({
 // ---------------------------------------------------------------- networking (Trystero Nostr, see ARCHITECTURE.md section 8)
 export const NET = Object.freeze({
   appId: 'zonefall-v1',
-  protocol: 3,                            // bump on every wire change (2: match tags, mid on in-match payloads, leave/kick; 3: death time, reserved away tag 0xffffffff)
+  protocol: 4,                            // bump on every wire change (2: match tags, mid on in-match payloads, leave/kick; 3: death time, reserved away tag 0xffffffff; 4: no room password or handshake, version in hello, relay through a common peer, bye, host-declared drops)
   relays: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.snort.social', 'wss://nostr.mom',
     'wss://relay.nostr.net', 'wss://nostr.oxtr.dev', 'wss://relay.piazza.today', 'wss://nostr.rblb.it'],
   turn: [],                               // [{urls, username, credential}] when a TURN account exists

@@ -261,6 +261,9 @@ export function mount(root) {
   on(EV.MATCH_START, onMatchStart);
   on(EV.PLANE_DOORS, ({ open }) => { if (open && localLife() === LIFE.PLANE) announce('Green light', 'Doors open', [`Press `, keycap('jump'), ' to jump']); });
   on(EV.ZONE_PHASE, ({ phase, state: zs, seconds }) => {
+    // an eliminated player reading his recap (not spectating) does not need zone news across the Eliminated screen
+    const me = getPlayer(state.selfId);
+    if (me && !me.alive && !state.local.spectating) return;
     if (zs === 'waiting') announce(`Zone ${phase + 1} of ${ZONE.phases.length}`, 'Zone marked', `Closes in ${clock(seconds)}. Check the map.`);
     else if (zs === 'shrinking') announce(`Zone ${phase + 1} of ${ZONE.phases.length}`, 'Zone closing', 'Get inside the white circle');
   });

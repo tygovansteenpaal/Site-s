@@ -483,16 +483,18 @@ WorldHit  = { distance, point: Vector3, normal: Vector3, surface, kind: 'terrain
 Ammo types: AK-47 and M4A1 use `ar`; MP5 and 1911 use `light`; M700 uses `sniper`.
 
 ### 5.5 NET: `net/*`
-**net/protocol.js** (complete): `PROTOCOL_VERSION`, `MSG`, `ACTIONS`, `matchTag(mid)`, `encode/decodePlayerSnap`,
-`encode/decodeBotBatch`, `encode/decodeShot`, `msgType`, `toArrayBuffer`, `seqNewer`,
-`validate.{hello, lobby, start, hit, death, pick, drop, nade, host, leave, kick}`, `ZONE_CODE`, `ZONE_NAME`, `SHOT_HIT`.
+**net/protocol.js** (complete): `PROTOCOL_VERSION`, `MSG`, `ACTIONS`, `RELAYABLE`, `matchTag(mid)`, `encode/decodePlayerSnap`,
+`encode/decodeBotBatch`, `encode/decodeShot`, `encode/decodeFwd`, `msgType`, `toArrayBuffer`, `seqNewer`,
+`validate.{hello, lobby, start, hit, death, pick, drop, nade, host, leave, kick, fwd, bye}`, `ZONE_CODE`, `ZONE_NAME`, `SHOT_HIT`.
 
-**net/session.js:** `async connect({roomId, password})`, `leave()`, `online()`, `selfId()`, `peers()`, `contextPeers()`,
+**net/session.js:** `async connect({roomId, joiner})`, `leave()`, `online()`, `selfId()`, `peers()`, `contextPeers()`,
 `peersInMatch()`, `hostId()`, `isHost()`, `epoch()`, `joinedAt()`, `contextTag()`, `send(action, data, target?)`,
 `sendBinary(buf, target?, {contextOnly}?)`, `setBinaryHandler(fn)`, `setStale(peerId, stale)`, `setUnresponsive(peerId, on)`,
 `notePeerContext(peerId, tag)`, `markDropped(peerId)`, `isOut(peerId)`, `inMatchPeer(peerId)`, `setSelfOut(on)`,
-`heardByOthers(peerId)`, `repairConnection(peerId)`, `linkHealth()`, `probeLink()`, `noteLocalStall(ms)`,
-`async ping(peerId)`, `rtt(peerId)`, `diagnostics()`. Emits NET_STATUS, PEER_JOIN/LEAVE, HOST_CHANGED {hostId, epoch, self,
+`heardByOthers(peerId)`, `silenceConfirmed(peerId, heardAt)`, `declareDropped(peerId, {t, pos})`, `repairConnection(peerId)`,
+`linkHealth()`, `probeLink()`, `noteLocalStall(ms)`, `protocolVersion()`, `setGreeter(fn)`, `helloNow()`, `versionMismatch()`,
+`unreachable()`, `pendingAttempts()`,
+`directLinks()`, `routeInfo(peerId)`, `async ping(peerId)`, `rtt(peerId)`, `diagnostics()`. Emits NET_STATUS, PEER_JOIN/LEAVE, HOST_CHANGED {hostId, epoch, self,
 migrated} and NET_* per action (NET_LEAVE, NET_KICK included). Hands Trystero `rtcPolyfill` = a RTCPeerConnection subclass
 that works around Trystero 0.25.4's broken refresh of pooled offers (see 8.8).
 
@@ -662,17 +664,30 @@ when we elect it. A client that hears nobody at all does not take the bots until
 - **Unreliable** (one per peer, `negotiated:true, id:42, ordered:false, maxRetransmits:0`): PSNAP, BOTS, SHOT.
   Sends are dropped while `bufferedAmount > 16384`. Until the channel is open, binary goes through the reliable `bin` action.
 - **Reliable** (Trystero actions, JSON): `hello`, `lobby`, `start`, `hit`, `death`, `pick`, `drop`, `nade`, `host`, `leave`,
-  `kick`, `bin`. In-match payloads carry `mid`; one for another match (or from a peer that left or was dropped from ours)
-  is dropped. BOTS and SHOT are only sent to peers in our match; PSNAP goes to everyone (liveness and context).
-  Every incoming payload goes through `protocol.validate[action]`. Handshake: `onPeerHandshake` exchanges `{v: PROTOCOL_VERSION}`,
-  and a mismatch rejects the peer. Peers that send more than `NET.maxMsgsPerSec` are ignored for 1 s.
+  `kick`, `bin`, `fwd`, `bye`. In-match payloads carry `mid`; one for another match (or from a peer that left or was dropped
+  from ours) is dropped. BOTS and SHOT are only sent to peers in our match; PSNAP goes to everyone (liveness and context).
+  Every incoming payload goes through `protocol.validate[action]`. Peers that send more than `NET.maxMsgsPerSec` are
+  ignored for 1 s.
+- **Joining (protocol 4):** no Trystero room password (the private code is in the room id) and no handshake callback:
+  both ran in Trystero's per-peer handshake queue, keyed by peer id only, so under jitter and loss a stale password
+  challenge from a replaced connection failed the next attempt again and again. A connected peer counts (PEER_JOIN,
+  rosters, election, binary) once its first `hello` carries our version; another version is a mismatch the lobby
+  explains (who must reload, and whose lobby it is).
+- **Relay through a common peer:** two players without a working direct connection (both behind symmetric NAT, a strict
+  firewall, a link that broke mid-match) talk through a third one that reaches both: reliable payloads in `fwd`
+  (`{to, a, d}` to the relay, `{f, a, d}` from it), binary in FWD frames. One hop only. Hellos list each player's direct
+  links (`ln`, round trips `lr`, lobby join times `lj`), so every client finds players it never connected to, picks the
+  relay with the lowest total round trip, and counts a player still connecting through a relay in the lobby host
+  election. A direct connection that delivers nothing (not even a pong) for 3.5 s is bypassed through a relay; pings
+  keep running on it and bring it back when it works. `bye` (sent when leaving the room) makes relays stop at once.
 
 ### 8.3 Binary layouts (little-endian; `src/net/protocol.js` is the reference)
-Protocol 2 (`NET.protocol`; bump it on every wire change, the handshake rejects other versions):
+Protocol 4 (`NET.protocol`; bump it on every wire change, a hello of another version is refused):
 ```
 PSNAP 44 B: u8 type=1 | u8 weapon | u16 seq | f64 t | f32 x y z | f32 yaw | f32 pitch | u16 flags | u8 hp | u8 armor | u8 life | 3 B reserved | u32 match tag
 BOTS 16+24n: u8 type=2 | u8 count | u16 seq | f64 t | u32 match tag || per bot: u8 slot | u8 weapon | u16 flags | f32 x y z | i16 yaw*1e4 | i16 pitch*1e4 | u8 hp | u8 armor | u8 life | 1 B reserved
 SHOT 48 B: u8 type=3 | u8 weapon | u16 seq | f64 t | f32 origin xyz | f32 dir xyz | f32 dist | u8 surface (255 none) | u8 hitFlags (1 player, 2 head, 4 kill) | u8 botSlot (255 = sender) | 1 B reserved | u32 match tag
+FWD 3+n+m: u8 type=4 | u8 dir (0: pass to id, 1: comes from id) | u8 n | n B id (ASCII) | m B payload (a complete PSNAP, BOTS or SHOT)
 ```
 The match tag is FNV-1a of the match id (never 0); 0 means the sender is in the menu, lobby or results. A snapshot only
 feeds an entity when its tag is our match's.
@@ -683,7 +698,7 @@ BOTS 15 Hz from the host; SHOT immediately per shot.
 ### 8.4 Reliable payloads
 | Action | Payload | Sender, when |
 |---|---|---|
-| hello | `{v, name, st:'lobby'\|'live', mid, hum, js: room join wall ms, hr: [ids heard in the last 3 s]}` | everyone, on join and every 2 s (in a match too) |
+| hello | `{v, name, st:'lobby'\|'live', mid, hum, js: room join wall ms, hr: [ids heard in the last 3 s], rs, ln: [direct links], lr: [their rtt], lj: [their lobby join ms or 0], mt: match s, mh: humans alive}` | everyone, the moment a peer connects and every 2 s (in a match too); carries the version check |
 | lobby | `{ep, cd: ms to start\|null, ro:[{id, name}], mode}` | host, every 1 s in the lobby |
 | start | `{mid, seed, t0h, th, ro:[{id, name, kind:'h'\|'b', slot}], ep}` | host, `startLeadMs` before t0 (validate maps kind to 'human'/'bot') |
 | hit | `{mid, sid, by, tgt, w, z: 0 body\|1 head\|2 limb, dmg, d, sp:[3], tp:[3], t: match ms}` | shooter (or host for a bot shooter), broadcast |
@@ -694,6 +709,11 @@ BOTS 15 Hz from the host; SHOT immediately per shot.
 | host | `{ep, id, mid\|null}` | new host after migration (mid of the match, null in the lobby) |
 | leave | `{mid, alive}` | a player leaving our match (LEAVE MATCH, main menu, tab closed), after its 'left' death + drop when alive |
 | kick | `{mid}` | to a peer we dropped that still sends live snapshots of our match: it forfeits (if it dropped us too, only the higher id gives way) |
+| fwd | `{to, a, d}` / `{f, a, d}` | a reliable payload for, or from, a player reached through this relay |
+| bye | `{}` | a player leaving the room (relays stop passing its traffic, nobody waits for a route timeout) |
+
+A `death` with `w:'left'` about another player is a drop announced by the match host (everyone takes him out at the
+time he was last heard); about ourselves it means we were dropped (forfeit).
 
 ### 8.5 Authority and flows
 - **Start:** non-hosts set `t0 = t0h + sync.clockOffset(host)`. The offset comes from lobby snapshots
@@ -748,10 +768,15 @@ Browsers stop `requestAnimationFrame` in hidden tabs. While online, `core/loop.j
 timer at 20 Hz without rendering, so a hidden host keeps simulating bots and every hidden player keeps sending snapshots.
 
 ### 8.7 Lobby and matchmaking
-- **Quick play:** room `zf1-qp-<region>-<n>`. The region comes from the time zone: Europe, Africa, America (north/south), Asia,
-  Australia map to eu, af, na/sa, as, oc. Each try waits `bucketProbeMs` (3.5 s); if any `hello` says `st:'live'` or the room
-  has 10 or more humans, the client hops to n+1 (up to 30).
-- **Private:** a 5-character code from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, room `zf1-pv-<CODE>`, with `password = CODE`.
+- **Quick play:** rooms `zf1-qp-v<protocol>-gl-<n>`, shared by every region, probed in order (`bucketProbeMs`, 3.5 s each)
+  so searchers converge (per-region buckets split searchers who arrived a few seconds apart). Players waiting in a
+  lobby are joined at once; full buckets are skipped; a bucket whose match is live is remembered. At the first empty
+  bucket the searcher waits (bots after 20 s alone), or, when humans are playing in a live bucket, joins that bucket's
+  lobby and is told how many play and how long the round can last: he deploys with them next round, or presses
+  "Play now with bots" (START NOW). Two or more waiting humans count down as usual; the live players join the round
+  after. The lobby lists the players of the room who are in a match ("In match").
+- **Private:** a 5-character code from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, room `zf1-pv-<CODE>` (no room password). A lone
+  player who joins while the room's match runs waits for the next round (no START NOW).
   The share link is `.../zonefall/?room=CODE`.
 - **Countdown (host):** 45 s once there are 2 or more humans, 10 s once there are 6 or more. A quick-play player who is
   still alone after 20 s (`MATCH.aloneStartAfter`) starts against 9 bots. `START NOW` (host) starts immediately. Empty slots up to
@@ -761,7 +786,10 @@ timer at 20 Hz without rendering, so a hidden host keeps simulating bots and eve
 
 ### 8.8 Known limits (from the research)
 NAT traversal is unproven without TURN (`NET.turn` is empty until an account exists), so roughly 10 to 20 % of player pairs may
-fail to connect directly. `session.diagnostics()` exposes the relay count and the ICE pair type, and the lobby shows them.
+fail to connect directly. Such a pair plays through any third player who reaches both (relay, 8.2); the lobby roster shows
+"via NAME". Only a player who reaches nobody at all (a network that blocks peer-to-peer UDP) cannot play online: he is told
+his network blocks direct connections, and the others see that a player could not connect. `session.diagnostics()`
+exposes the relay count, routes and the ICE pair type, and the lobby shows them.
 Trystero keeps one RTCPeerConnection per remote peer across rooms and a pool of pre-made offers; it refreshes an offer older
 than ~57 s with rollback + restartIce + createOffer({iceRestart}), and in Chrome that rollback drops the data m-section, so
 such offers can never connect. session.js passes `rtcPolyfill` (a subclass that skips the offerer's rollback and makes

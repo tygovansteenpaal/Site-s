@@ -12,7 +12,7 @@ hardware acceleration, plus a mouse and keyboard (a standard gamepad also works)
 
 | Mode | What happens |
 |---|---|
-| **Quick play** | Joins a public lobby for your region. With two or more players a 45 s countdown starts (10 s at six players). If nobody else shows up within 20 s you deploy against 9 bots. Up to 10 humans per match; bots fill the rest. |
+| **Quick play** | Joins the public lobby where other players are waiting (one shared set of lobbies for every region, so nobody is split off). With two or more players a 45 s countdown starts (10 s at six players). If nobody else shows up within 20 s you deploy against 9 bots. If players are already in a match, you are told how many and how long it can last, and you either wait to deploy with them in the next round or play now with bots. Up to 10 humans per match; bots fill the rest. |
 | **Private match** | Create a lobby and share its 5-character code or the invite link (`?room=CODE`). The host can press START NOW at any time; empty slots become bots. |
 | **Practice vs bots** | Offline match against 9 bots. It pauses whenever you open the menu or release the mouse. |
 
@@ -64,11 +64,14 @@ stored in your browser only.
 There is no game server. The page is static files on GitHub Pages, and players connect to each other directly:
 
 - **Finding each other.** The game uses [Trystero](https://github.com/dmotz/trystero) with its Nostr strategy: peers
-  announce themselves on a handful of public Nostr relays under a room name (quick play: one room per region and lobby
-  number; private: the lobby code, which is also the room password). The relays only carry the connection handshake.
+  announce themselves on a handful of public Nostr relays under a room name (quick play: one room per lobby number;
+  private: the lobby code). The relays only carry the connection handshake.
 - **Playing.** Once two browsers have exchanged their WebRTC offers, all game traffic goes over a direct WebRTC
   connection: an unreliable, unordered data channel for 20 Hz movement snapshots, bot updates and shots, and reliable
   messages for lobby state, match start, hits, deaths, loot pickups and grenades.
+- **When two players cannot connect directly** (both behind strict NATs or firewalls, and there is no TURN server),
+  their traffic goes through any other player who reaches both of them; the lobby shows "via NAME" next to such a
+  player. A player whose network blocks peer-to-peer traffic entirely is told so in the lobby.
 - **Authority.** Every player is authoritative for their own movement, health and inventory. A shooter detects a hit
   against what they see and reports it; the victim's browser checks it (fire rate, damage cap, range, both positions
   against recent history) before applying it. Remote players are drawn about 100 ms in the past and interpolated.

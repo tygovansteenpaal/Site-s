@@ -672,6 +672,31 @@ function runSelfTests() {
     T.pushSample(tr, s(10), 0); T.pushSample(tr, s(12), 1); const r1 = T.pushSample(tr, s(11), 2), r2 = T.pushSample(tr, s(12), 3);
     return !r1 && !r2 && tr.ooo === 2 && tr.lost === 1 && tr.buf.length === 2;
   });
+  test('Late sample still ahead of the render time is slotted in', () => {
+    const tr = T.createTrack('l');
+    const s = (seq, lt) => ({ seq, t: seq, lt, x: seq, y: 0, z: 0, yaw: 0, pitch: 0 });
+    T.pushSample(tr, s(10, 100), 0); T.pushSample(tr, s(12, 200), 1);
+    tr.renderT = 120;                                   // rendering between 10 and 12: 11 is still useful
+    const r1 = T.pushSample(tr, s(11, 150), 2);
+    tr.renderT = 190;                                   // 13 skipped, 14 arrives, then 13 too late (behind 190)
+    T.pushSample(tr, s(14, 300), 3); const r2 = T.pushSample(tr, s(13, 180), 4);
+    const order = tr.buf.map((x) => x.seq).join(',');
+    return { pass: r1 && !r2 && order === '10,11,12,14' && tr.late === 1 && tr.ooo === 1 && tr.lost === 1, detail: `buffer ${order}, late ${tr.late}, ooo ${tr.ooo}, lost ${tr.lost}` };
+  });
+  test('Relay: FWD frame round trip, fwd envelope and hello links validated', () => {
+    const snap = P.encodePlayerSnap({ weapon: 'm4a1', seq: 7, t: 1234.5, x: 1, y: 2, z: 3, yaw: 0.5, pitch: 0, flags: 0, hp: 90, armor: 50, life: 3, tag: 99 });
+    const f = P.decodeFwd(P.encodeFwd(P.FWD_TO, 'peerABC123', snap));
+    const inner = f && P.decodePlayerSnap(f.payload);
+    const g = P.decodeFwd(P.encodeFwd(P.FWD_FROM, 'x', snap));
+    const v = P.validate;
+    const fwdTo = v.fwd({ to: 'b', a: 'hit', d: { any: 1 } }), fwdFrom = v.fwd({ f: 'a', a: 'start', d: {} });
+    const both = v.fwd({ to: 'b', f: 'a', a: 'hit', d: {} }), nested = v.fwd({ to: 'b', a: 'fwd', d: {} }), bin = v.fwd({ to: 'b', a: 'bin', d: {} });
+    const h = v.hello({ v: 4, name: 'A', ln: ['b', 'c', 7], lr: [12, 'x'], lj: [5, 0], mt: 30, mh: 2 });
+    const pass = !!f && f.dir === P.FWD_TO && f.id === 'peerABC123' && inner && inner.seq === 7 && inner.tag === 99 && g.dir === P.FWD_FROM && g.id === 'x'
+      && P.decodeFwd(new ArrayBuffer(3)) === null && !!fwdTo && !!fwdFrom && !both && !nested && !bin
+      && h.ln.join() === 'b,c' && h.lr.join() === '12,0' && h.lj.join() === '5,0' && h.mt === 30 && h.mh === 2 && !!v.bye({});
+    return { pass, detail: 'FWD to/from, payload intact; fwd needs exactly one of to/f and a relayable action; hello ln/lr/lj aligned' };
+  });
   test('Adaptive delay = clamp(2 interval + 2 jitter)', () => {
     const mk = (interval, jitter) => { const tr = T.createTrack('d'); tr.recv = 10; tr.interval = interval; tr.jitter = jitter; return T.targetDelay(tr); };
     const a = mk(50, 3), b = mk(50, 40), c = mk(200, 10), d = mk(20, 2);

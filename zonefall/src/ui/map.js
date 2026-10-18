@@ -112,15 +112,22 @@ function planeView() {
   return { a: p.a, b: p.b, doorsA: at(p.doorsOpenAt), doorsB: at(p.forceJumpAt), pos: at(Math.max(0, state.match.time)) };
 }
 
+let miniW = 0;   // the minimap's CSS width (ResizeObserver; a clientWidth read per frame forced a layout per frame)
+
 export function updateMinimap(dt) {
-  if (!mini || !mini.isConnected || mini.closest('[hidden]')) return;
+  // a hidden tab (simulation only) and a hidden HUD draw nothing
+  if (!mini || !mini.isConnected || (typeof document !== 'undefined' && document.hidden) || mini.closest('[hidden]')) return;
+  if (!miniW) {
+    miniW = mini.clientWidth;
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => { miniW = mini.clientWidth || miniW; }).observe(mini);
+  }
   const c = viewCentre();
   if (!c) return;
   const hd = heading();
   const now = performance.now();
   const plane = planeView();
   const n = drawMinimap(miniCanvas, { x: c.x, z: c.z, heading: hd, zone: state.zone, pings: activePings(), now, plane });
-  const r = mini.clientWidth / 2 - 9;
+  const r = miniW / 2 - 9;
   setTransform(northEl, `translate(${(n.nx * r).toFixed(1)}px, ${(n.ny * r).toFixed(1)}px)`);
   if (bigOpen) drawBig(c, hd, now, plane);
 }

@@ -1,7 +1,10 @@
 // ZONEFALL - lobby screen. OWNER: UI. Contract: ARCHITECTURE.md 9.
 // Shows net/lobby.get(): mode, room code with copy-link button (location + '?room=CODE'), roster with host
 // marker and the local player highlighted, "slots filled with bots at start", countdown, status text, connection
-// diagnostics line (session.diagnostics(): relays open, per-peer RTT and channel). Buttons: START NOW (host only),
+// diagnostics line (session.diagnostics(): relays open, per-peer RTT and channel), players of the room who are in a
+// match right now (listed apart, "In match"), a player reached through another one ("via Charlie"), and a connectivity
+// note when someone cannot connect at all. Buttons: START NOW (host only; "Play now with bots" for a lone quick-play
+// player waiting for a match in progress),
 // RETRY (after a connection failure, with the automatic retry counting down), LEAVE. Re-renders on LOBBY_UPDATE; the
 // countdown ticks every frame from update().
 import { emit, on, EV } from '../core/bus.js';
@@ -9,12 +12,12 @@ import { MATCH, NET } from '../config.js';
 import * as session from '../net/session.js';
 import { h, sfx, GLYPH, setText, show as showEl, clock } from './dom.js';
 
-let el = null, eyebrowEl, codeWrap, codeEl, copyBtn, countWrap, countEl, countLabel, statusEl, textEl;
+let el = null, eyebrowEl, codeWrap, codeEl, copyBtn, countWrap, countEl, countLabel, statusEl, textEl, noteEl;
 let startBtn, leaveBtn, practiceBtn, retryBtn, rosterEl, rosterHead, diagEl, dotEl;
 let last = null, lastSecond = -1, diagTimer = 0;
 
-const REGION = { eu: 'Europe', na: 'North America', sa: 'South America', as: 'Asia', oc: 'Oceania', af: 'Africa' };
-const STATUS_LABEL = { connecting: 'Connecting', waiting: 'Waiting for players', countdown: 'Countdown running', starting: 'Deploying', error: 'Connection problem' };
+const REGION = { eu: 'Europe', na: 'North America', sa: 'South America', as: 'Asia', oc: 'Oceania', af: 'Africa', gl: 'Global' };
+const STATUS_LABEL = { connecting: 'Connecting', waiting: 'Waiting for players', countdown: 'Countdown running', starting: 'Deploying', error: 'Connection problem', blocked: 'Cannot connect to players' };
 
 export function mount(root) {
   el = h('section', { class: 'zf-lobby', 'aria-label': 'Lobby', hidden: true });
@@ -30,6 +33,7 @@ export function mount(root) {
   countLabel = h('span', { class: 'zf-label', text: 'Deploying in' });
   countWrap = h('div', { class: 'zf-lobby__countwrap' }, countLabel, countEl);
   textEl = h('p', { class: 'zf-lobby__text' });
+  noteEl = h('p', { class: 'zf-lobby__note', role: 'status' });
 
   startBtn = h('button', { type: 'button', class: 'zf-btn zf-btn--primary', html: `<span>Start now</span>${GLYPH.chevron}` });
   startBtn.addEventListener('click', () => { sfx('confirm'); emit(EV.UI_INTENT, { type: 'start_now' }); });
@@ -45,7 +49,7 @@ export function mount(root) {
     h('h1', { class: 'zf-lobby__title', text: 'Lobby' }),
     codeWrap,
     h('div', { class: 'zf-lobby__state' }, dotEl, statusEl),
-    countWrap, textEl,
+    countWrap, textEl, noteEl,
     h('div', { class: 'zf-lobby__actions' }, startBtn, retryBtn, practiceBtn, leaveBtn),
     h('p', { class: 'zf-lobby__rules', text: `Countdown starts at ${MATCH.minHumansToCountdown} players (${MATCH.lobbyCountdown} s) and shortens to ${MATCH.lobbyCountdownFull} s at 6. Empty slots up to ${MATCH.maxPlayers} are filled with bots at start.` }));
 
@@ -99,7 +103,8 @@ export function render(lobby) {
   if (!lobby) return;
   last = lobby;
   const mode = lobby.mode === 'private' ? 'Private lobby' : 'Quick play';
-  const region = lobby.region ? (REGION[lobby.region] || lobby.region.toUpperCase()) : null;
+  const ns = lobby.mode !== 'private' ? (lobby.ns || lobby.region) : null;
+  const region = ns ? (REGION[ns] || ns.toUpperCase()) : null;
   eyebrowEl.textContent = '';
   for (const t of [mode, region, lobby.mode !== 'private' && lobby.bucket ? `Lobby ${lobby.bucket}` : null].filter(Boolean)) eyebrowEl.append(h('span', { text: t }));
 
@@ -109,8 +114,11 @@ export function render(lobby) {
   setText(statusEl, STATUS_LABEL[lobby.status] || lobby.status || '');
   el.dataset.status = lobby.status || '';
   setText(textEl, lobby.text || '');
-  showEl(startBtn, !!lobby.isHost && lobby.status !== 'starting' && lobby.status !== 'error' && lobby.status !== 'connecting');
-  showEl(practiceBtn, lobby.status === 'error');
+  setText(noteEl, lobby.note || '');
+  showEl(noteEl, !!lobby.note);
+  showEl(startBtn, !!lobby.canStart && lobby.status !== 'starting' && lobby.status !== 'error' && lobby.status !== 'connecting');
+  setText(startBtn.querySelector('span'), lobby.startLabel || 'Start now');
+  showEl(practiceBtn, lobby.status === 'error' || lobby.status === 'blocked');
   showEl(retryBtn, lobby.status === 'error');
 
   // roster: humans first (host marked, self highlighted), then the bot-filled slots
@@ -127,10 +135,17 @@ export function render(lobby) {
       h('span', { class: 'zf-roster__tags' },
         p.host ? h('span', { class: 'zf-tag zf-tag--host', html: `${GLYPH.host}<span>Host</span>` }) : null,
         p.self ? h('span', { class: 'zf-tag zf-tag--self', text: 'You' }) : null),
-      h('span', { class: 'zf-roster__ping', data: { bars: String(bars) } },
-        p.self ? '' : ms ? `${ms} ms` : '...', h('i'), h('i'), h('i')));
+      h('span', { class: 'zf-roster__ping', data: { bars: String(bars) }, title: p.via ? `Connected through ${p.via}` : '' },
+        p.self ? '' : ms ? `${ms} ms${p.via ? ` via ${p.via}` : ''}` : '...', h('i'), h('i'), h('i')));
     rosterEl.append(li);
   });
+  // players of this room in a match right now: they are not in this lobby, but they join the next round
+  for (const p of lobby.inMatch || []) {
+    rosterEl.append(h('li', { class: 'zf-roster__row is-away' },
+      h('span', { class: 'zf-roster__idx', text: '--' }),
+      h('span', { class: 'zf-roster__name', text: p.name }),
+      h('span', { class: 'zf-roster__tags' }, h('span', { class: 'zf-tag zf-tag--away', text: 'In match' }))));
+  }
   const connected = humans.length > 0;
   const bots = connected ? Math.max(0, MATCH.maxPlayers - humans.length) : 0;
   if (!connected) {

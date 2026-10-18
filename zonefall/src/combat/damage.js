@@ -154,6 +154,9 @@ export function nextSid() { sidSeq = (sidSeq + 1) & 0x7fffffff; return sidSeq; }
 export function dealHit(hit) {
   const target = getPlayer(hit.target);
   if (!target || !target.alive) return null;
+  // A remote player we have not heard from for NET.staleMs is a frozen ghost of where he was: a hit on it would only
+  // be rejected by his client. No hitmarker, no damage counted, nothing sent.
+  if (state.online && target.kind === 'remote' && target.stale) return null;
   const dmg = damageAt(hit.weapon, hit.zone, hit.distance);
   const dir = dirOf(hit.origin, hit.targetPos);
   const info = { from: hit.shooter, weapon: hit.weapon, zone: hit.zone, dir, kind: 'bullet', sid: hit.sid };
@@ -194,8 +197,9 @@ function dirOf(from, to) {
 export function kill(victimId, killerId, weapon, headshot, sid = null) {
   const e = getPlayer(victimId);
   if (!e || !e.alive && e.life === LIFE.DEAD) return;
+  const wasLife = e.life;
   e.alive = false;
-  e.life = LIFE.DEAD;
+  e.life = leaveLife(e.life, weapon);
   e.hp = 0;
   const pos = [e.pos.x, e.pos.y, e.pos.z];
   if (victimId === state.selfId) {
@@ -213,6 +217,8 @@ export function kill(victimId, killerId, weapon, headshot, sid = null) {
     session.send('death', { mid: state.match.id, id: victimId, by: killerId || null, w: weapon, hs: !!headshot, sid: sid == null ? null : sid, pos: round3(pos), t });
   }
   if (weapon === 'left' && !forfeit) return;
+  // A forfeit from the plane or the sky over the sea drops nothing: the items would land on the sea floor.
+  if (weapon === 'left' && isAirborne(wasLife) && safe(() => world.isWater(pos[0], pos[2]), false)) return;
   // Death drop: the authority spawns the items (loot broadcasts 'drop' when online).
   let items = null;
   if (victimId === state.selfId) items = inventory.dropAll();
@@ -354,6 +360,16 @@ function checkHit(hit, fromPeerId) {
 
 function safe(fn, fallback) { try { const v = fn(); return v == null ? fallback : v; } catch (e) { return fallback; } }
 
+const isAirborne = (life) => life === LIFE.PLANE || life === LIFE.FREEFALL || life === LIFE.CHUTE;
+
+/**
+ * Life state after a death: a player who leaves (forfeit, dropped) while in the plane or in the air has no body to
+ * leave behind (SPECTATE: hidden, not counted), instead of a corpse hanging in the sky on every client.
+ */
+export function leaveLife(life, weapon) {
+  return weapon === 'left' && (isAirborne(life) || life === LIFE.SPECTATE) ? LIFE.SPECTATE : LIFE.DEAD;
+}
+
 function remember(key) {
   if (seenSet.has(key)) return false;
   seenSet.add(key);
@@ -383,7 +399,7 @@ function onNetDeath({ from, data: d }) {
     // Normally only the host reports bot deaths. After a host stall two peers may both have simulated the bots for a
     // moment; a bot death from any player still in our match is accepted (idempotent), so bot fates never diverge.
     if (from !== state.hostId && !safe(() => session.inMatchPeer(from), false)) return;
-  } else if (from !== d.id) return;
+  } else if (from !== d.id && !(d.decl && d.w === 'left')) return;   // decl: a drop the match host announced (net/session)
   const e = getPlayer(d.id);
   if (!e || (!e.alive && e.life === LIFE.DEAD)) return;
   // Our frag killed a remote player whose own explosion ran a moment before ours (his death arrived first, so our
@@ -394,7 +410,7 @@ function onNetDeath({ from, data: d }) {
     emit(EV.HIT_CONFIRMED, { target: d.id, dmg: Math.round(dealt), zone: 'body', kill: true, armorBroke: (e.armor || 0) > 0, distance: 0 });
   }
   e.alive = false;
-  e.life = LIFE.DEAD;
+  e.life = leaveLife(e.life, d.w);
   e.hp = 0;
   emit(EV.PLAYER_KILLED, { id: d.id, by: d.by, weapon: d.w, headshot: !!d.hs, pos: d.pos, at: d.t == null ? undefined : d.t / 1000 });
 }

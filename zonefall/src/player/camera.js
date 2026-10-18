@@ -18,7 +18,8 @@
 //               low-detail hands filled the screen when the camera sat in its sight)
 //   'fp'        first person at controller.getEye with head bob (V toggles tp/fp, remembered); the avatar is
 //               shadow-only and combat/viewmodel draws the weapon
-//   'dead'      2.5 s: rise out of the body, orbit it, turn toward the killer, then automatic spectate
+//   'dead'      2.5 s: rise out of the body, orbit it, turn toward the killer; then a slow orbit under the Eliminated
+//               screen until the player picks Spectate
 //   'spectate'  over-the-shoulder of another living player (cycleSpectate), or the plane / chase cams they are in
 //   'results'   slow orbit around the last focus point
 import * as THREE from 'three';
@@ -585,10 +586,10 @@ function deadCam(me, dt) {
   if (deathT < 0) startDeathCam();
   deathT += dt;
   const D = TUNE.death;
-  if (deathT > D.duration && state.app === APP.MATCH && !state.match.netLost) {   // disconnected: nothing live to watch
-    if (!spectating) setSpectate(null);
-    if (spectating) return spectateCam(dt);
-  }
+  // After the death cam the recap (the Eliminated screen: placement, kills, Spectate / Leave match) stays up over a slow
+  // orbit of the body until the player picks Spectate (UI_INTENT 'spectate' sets a target). Spectating by itself here
+  // replaced that screen one frame after it opened, since this runs before the UI each frame.
+  if (deathT > D.duration && spectating && state.app === APP.MATCH && !state.match.netLost) return spectateCam(dt);
   setMode('dead');
   avatar.setLocalViewMode('full');
   const k = smoothstep(0, 1.1, deathT);

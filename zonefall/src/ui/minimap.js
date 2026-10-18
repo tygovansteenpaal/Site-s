@@ -34,10 +34,19 @@ export function setBase(img) {
 }
 export const hasBase = () => !!base;
 
+// CSS size of each canvas, kept by a ResizeObserver: reading clientWidth every frame forced a layout per frame (the
+// HUD writes text every frame, so layout is always dirty by the time the minimap draws).
+const cssSize = new WeakMap();
+const sizeObs = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
+  for (const e of entries) cssSize.set(e.target, [e.target.clientWidth, e.target.clientHeight]);
+}) : null;
+
 function sizeCanvas(cv) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const w = Math.max(1, Math.round(cv.clientWidth * dpr));
-  const hgt = Math.max(1, Math.round(cv.clientHeight * dpr));
+  let css = cssSize.get(cv);
+  if (!css) { css = [cv.clientWidth, cv.clientHeight]; cssSize.set(cv, css); if (sizeObs) sizeObs.observe(cv); }
+  const w = Math.max(1, Math.round(css[0] * dpr));
+  const hgt = Math.max(1, Math.round(css[1] * dpr));
   if (cv.width !== w || cv.height !== hgt) { cv.width = w; cv.height = hgt; }
   return dpr;
 }

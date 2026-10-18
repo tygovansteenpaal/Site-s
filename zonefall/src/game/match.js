@@ -328,7 +328,7 @@ function onKilled({ id, by, weapon, headshot, pos, at }) {
   if (m.phase === 'idle' || dead.has(id)) return;
   dead.add(id);
   const victim = getPlayer(id);
-  if (victim && weapon === 'left') { victim.alive = false; victim.life = LIFE.DEAD; }
+  if (victim && weapon === 'left') { victim.alive = false; victim.life = damage.leaveLife(victim.life, 'left'); }
   let alive = 0;
   for (const e of state.players.values()) if (isAlive(e)) alive++;
   m.alive = alive;

@@ -4,18 +4,25 @@
 // Protocol 2: every binary message carries a u32 match tag (matchTag(match id), 0 = lobby/menu/results) and every
 // in-match reliable payload carries `mid`, so a peer still playing an older match (or already back in the lobby) can
 // never leak positions, shots, hits, deaths, loot or grenades into another match that shares the room.
+// Protocol 4: no Trystero room password and no handshake exchange (both raced under jitter and loss); the game version
+// rides in 'hello' (`v`, the first field every version must keep), and a peer counts only once its hello matched.
+// Two players without a direct connection talk through a third one both reach (relay): reliable payloads ride in
+// 'fwd', binary messages in FWD frames. Hellos list the sender's direct links (`ln`, `lr`) so routes can be chosen.
 import { NET, WEAPON_ORDER } from '../config.js';
 
 export const PROTOCOL_VERSION = NET.protocol;
 
 /** First byte of every binary message. */
-export const MSG = Object.freeze({ PSNAP: 1, BOTS: 2, SHOT: 3 });
+export const MSG = Object.freeze({ PSNAP: 1, BOTS: 2, SHOT: 3, FWD: 4 });
 
 /** Reliable action ids (<= 32 bytes each). */
 export const ACTIONS = Object.freeze({
   HELLO: 'hello', LOBBY: 'lobby', START: 'start', HIT: 'hit', DEATH: 'death',
-  PICK: 'pick', DROP: 'drop', NADE: 'nade', HOST: 'host', BIN: 'bin', LEAVE: 'leave', KICK: 'kick',
+  PICK: 'pick', DROP: 'drop', NADE: 'nade', HOST: 'host', BIN: 'bin', LEAVE: 'leave', KICK: 'kick', FWD: 'fwd', BYE: 'bye',
 });
+
+/** Reliable actions that may travel through a relay player ('fwd'); the transport ones never do. */
+export const RELAYABLE = Object.freeze(Object.values(ACTIONS).filter((a) => a !== ACTIONS.FWD && a !== ACTIONS.BIN));
 
 export const PSNAP_SIZE = 44;
 export const BOT_HEADER = 16;
@@ -168,6 +175,36 @@ export function decodeShot(b) {
 /** 16-bit sequence comparison: true if a is newer than b (wrap-around safe). */
 export const seqNewer = (a, b) => ((a - b) & 0xffff) !== 0 && ((a - b) & 0xffff) < 0x8000;
 
+// ------------------------------------------------------------------------------------------------ FWD (relay frame)
+// 0 u8 type=4 | 1 u8 dir (0: please pass this to `id`, 1: this comes from `id`) | 2 u8 n | 3 .. 3+n id (ASCII) | payload
+// The payload is a complete PSNAP, BOTS or SHOT message. A relay only ever turns dir 0 into dir 1 over a direct link,
+// so a frame crosses at most one relay and can never loop.
+export const FWD_TO = 0, FWD_FROM = 1;
+const FWD_ID_MAX = 40;
+
+export function encodeFwd(dir, id, payload) {
+  const ids = String(id || '');
+  const n = Math.min(ids.length, FWD_ID_MAX);
+  const body = payload instanceof ArrayBuffer ? new Uint8Array(payload) : new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  const out = new Uint8Array(3 + n + body.byteLength);
+  out[0] = MSG.FWD; out[1] = dir ? FWD_FROM : FWD_TO; out[2] = n;
+  for (let i = 0; i < n; i++) out[3 + i] = ids.charCodeAt(i) & 0x7f;
+  out.set(body, 3 + n);
+  return out.buffer;
+}
+
+/** {dir, id, payload: ArrayBuffer} or null. */
+export function decodeFwd(b) {
+  if (!b || b.byteLength < 4) return null;
+  const u = new Uint8Array(b);
+  if (u[0] !== MSG.FWD || u[1] > 1) return null;
+  const n = u[2];
+  if (n < 1 || n > FWD_ID_MAX || b.byteLength <= 3 + n) return null;
+  let id = '';
+  for (let i = 0; i < n; i++) { const c = u[3 + i]; if (c < 33 || c > 126) return null; id += String.fromCharCode(c); }
+  return { dir: u[1], id, payload: b.slice(3 + n) };
+}
+
 // ------------------------------------------------------------------------------------------------ reliable payloads
 function finite(...xs) { for (const x of xs) if (typeof x !== 'number' || !Number.isFinite(x)) return false; return true; }
 const str = (x, max) => (typeof x === 'string' && x.length > 0 && x.length <= max ? x : null);
@@ -186,13 +223,24 @@ const ITEM_TYPES = new Set(['weapon', 'ammo', 'plate', 'frag']);
 export const validate = Object.freeze({
   // {v, name, st: 'lobby'|'live', mid, hum, js: wall-clock ms this peer joined the room (lobby host = earliest),
   //  hr: ids of the players this peer heard in the last NET.staleMs (a player is only dropped when nobody hears him),
-  //  rs: on the results screen (counts for the next round, but never hosts the lobby: it does not run the countdown)}
+  //  rs: on the results screen (counts for the next round, but never hosts the lobby: it does not run the countdown),
+  //  ln: ids this peer has a working direct connection to, lr: their round trips in ms (relay route choice),
+  //  lj: their room join times while they are in the lobby (0 otherwise), so a player still connecting through a relay
+  //      already counts in the lobby host election (nobody hosts a second countdown in the meantime),
+  //  mt: match time in s of its match while live, mh: humans still alive in it (quick-play searchers are told)}
+  // `v` stays the first check in every version: a hello of another version is still recognised as one.
   hello(d) {
     if (!d || typeof d !== 'object') return null;
     const v = intIn(d.v, 0, 1000);
     if (v === null) return null;
-    const hr = Array.isArray(d.hr) ? d.hr.slice(0, 16).map((x) => str(x, 40)).filter(Boolean) : [];
-    return { v, name: cleanName(d.name), st: d.st === 'live' ? 'live' : 'lobby', mid: str(d.mid, 24), hum: intIn(d.hum, 0, 64) ?? 0, js: numIn(d.js, 0, 1e15) ?? 0, hr, rs: d.rs === true };
+    const ids = (a) => (Array.isArray(a) ? a.slice(0, 16).map((x) => str(x, 40)).filter(Boolean) : []);
+    const hr = ids(d.hr), ln = ids(d.ln);
+    const lr = ln.map((_, i) => (Array.isArray(d.lr) ? numIn(d.lr[i], 0, 60000) ?? 0 : 0));
+    const lj = ln.map((_, i) => (Array.isArray(d.lj) ? numIn(d.lj[i], 0, 1e15) ?? 0 : 0));
+    return {
+      v, name: cleanName(d.name), st: d.st === 'live' ? 'live' : 'lobby', mid: str(d.mid, 24), hum: intIn(d.hum, 0, 64) ?? 0, js: numIn(d.js, 0, 1e15) ?? 0, hr, rs: d.rs === true,
+      ln, lr, lj, mt: numIn(d.mt, -60, 7200), mh: intIn(d.mh, 0, 64),
+    };
   },
   // {ep, cd: ms until start | null, ro: [{id, name}], mode}
   lobby(d) {
@@ -280,6 +328,18 @@ export const validate = Object.freeze({
     if (!d || typeof d !== 'object') return null;
     const mid = str(d.mid, 24);
     return mid ? { mid } : null;
+  },
+  // relay envelope: {to, a, d} to the relay player (pass it to `to`), {f, a, d} from it (it comes from `f`); `d` is
+  // the inner payload of action `a`, validated by the receiver like a direct one
+  fwd(d) {
+    if (!d || typeof d !== 'object' || !RELAYABLE.includes(d.a)) return null;
+    const to = d.to == null ? null : str(d.to, 40), f = d.f == null ? null : str(d.f, 40);
+    if ((to === null) === (f === null)) return null;
+    return { to, f, a: d.a, d: d.d };
+  },
+  // {}: the sender leaves the room now (a relay stops passing its traffic, everyone removes it at once)
+  bye(d) {
+    return d && typeof d === 'object' ? {} : null;
   },
 });
 

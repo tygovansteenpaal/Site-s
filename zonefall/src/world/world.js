@@ -387,12 +387,31 @@ export function getHeight(x, z) { return hf.heightAt(x, z); }
  * Highest walkable surface at (x, z) at or below fromY: terrain, floors, stairs, roofs, props.
  * @returns {{y:number, normal:number[], surface:number}}  normal [x,y,z]; surface is a config.SURFACE id
  */
+// Terrain normal and surface per 1 m cell (direct-mapped): the analytic heightfield is the largest CPU cost of a host
+// simulating bots (a normal is four height evaluations, a surface reads the paint layers), and both barely change
+// within a metre. The height itself stays exact.
+const GC_BITS = 12, GC_SIZE = 1 << GC_BITS, GC_MASK = GC_SIZE - 1;
+const gcKey = new Int32Array(GC_SIZE * 2).fill(0x7fffffff);
+const gcNorm = new Float32Array(GC_SIZE * 3);
+const gcSurf = new Int16Array(GC_SIZE);
+function terrainCell(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const k = ((ix * 73856093) ^ (iz * 19349663)) & GC_MASK;
+  if (gcKey[k * 2] !== ix || gcKey[k * 2 + 1] !== iz) {
+    const n = hf.normalAt(ix + 0.5, iz + 0.5, [0, 1, 0]);
+    gcNorm[k * 3] = n[0]; gcNorm[k * 3 + 1] = n[1]; gcNorm[k * 3 + 2] = n[2];
+    gcSurf[k] = hf.surfaceAt(ix + 0.5, iz + 0.5);
+    gcKey[k * 2] = ix; gcKey[k * 2 + 1] = iz;
+  }
+  return k;
+}
+
 export function getGround(x, z, fromY = Infinity) {
   const th = hf.heightAt(x, z);
   const st = collision.groundBelow(x, z, fromY);
   if (st && st.y >= th - 0.02 && st.y <= fromY + 1e-3) return { y: st.y, normal: st.normal, surface: st.surface };
-  const n = hf.normalAt(x, z, [0, 1, 0]);
-  return { y: th, normal: n, surface: hf.surfaceAt(x, z) };
+  const k = terrainCell(x, z);
+  return { y: th, normal: [gcNorm[k * 3], gcNorm[k * 3 + 1], gcNorm[k * 3 + 2]], surface: gcSurf[k] };
 }
 
 /** Terrain surface type at (x, z) (GRASS, DIRT, ROCK, ASPHALT, SAND, WATER ...). */

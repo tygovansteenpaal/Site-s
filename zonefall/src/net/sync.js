@@ -60,18 +60,23 @@ export const TUNE = {
 /** A per-entity snapshot buffer with arrival statistics. Exported through `testing` for the harness self-tests. */
 export function createTrack(id) {
   return {
-    id, buf: [], newest: null, lastRecv: 0, heardAt: 0, interval: 0, jitter: 0, delay: NET.interpDelay, recv: 0, lost: 0, ooo: 0,
+    id, buf: [], newest: null, lastRecv: 0, heardAt: 0, interval: 0, jitter: 0, delay: NET.interpDelay, recv: 0, lost: 0, ooo: 0, late: 0,
+    renderT: 0,   // local time this track was last sampled at (an older sample that is still ahead of it is kept)
     stale: false, dead: false, dropped: false, killed: false, speed: 0, starved: false,
     // catch-up smoothing (smoothJump): last raw sampled position and the decaying render offset
     has: false, px: 0, py: 0, pz: 0, ex: 0, ey: 0, ez: 0,
   };
 }
 
-/** Push a decoded sample (needs .seq, .t, and .lt = local time) into a track. Returns false if it was out of date. */
+/**
+ * Push a decoded sample (needs .seq, .t, and .lt = local time) into a track. Returns false if it was useless. A sample
+ * that arrives after a newer one (reordered on the way) is slotted into the buffer while it is still ahead of the
+ * render time, so a late but usable snapshot is not wasted; behind it, it only counts as out of order.
+ */
 export function pushSample(tr, s, now) {
   const last = tr.newest;
   if (last) {
-    if (!seqNewer(s.seq, last.seq)) { tr.ooo++; return false; }
+    if (!seqNewer(s.seq, last.seq)) return insertLate(tr, s);
     const gap = (s.seq - last.seq) & 0xffff;
     if (gap > 1) tr.lost += gap - 1;
     const dt = now - tr.lastRecv;
@@ -86,6 +91,22 @@ export function pushSample(tr, s, now) {
   tr.newest = s;
   tr.lastRecv = now;
   tr.recv++;
+  return true;
+}
+
+function insertLate(tr, s) {
+  const buf = tr.buf;
+  if (!tr.renderT || s.lt <= tr.renderT || !buf.length || !seqNewer(s.seq, buf[0].seq)) { tr.ooo++; return false; }
+  let i = buf.length - 1;
+  while (i > 0 && seqNewer(buf[i - 1].seq, s.seq)) i--;
+  if (buf[i].seq === s.seq || (i > 0 && buf[i - 1].seq === s.seq)) { tr.ooo++; return false; }   // a duplicate
+  const lo = i > 0 ? buf[i - 1].lt : -Infinity, hi = buf[i].lt;
+  if (!(s.lt > lo && s.lt < hi)) s.lt = Number.isFinite(lo) ? (lo + hi) / 2 : hi - 1;
+  if (s.lt <= tr.renderT) { tr.ooo++; return false; }
+  buf.splice(i, 0, s);
+  if (buf.length > TUNE.bufferSize) buf.shift();
+  if (tr.lost > 0) tr.lost--;      // counted as lost when the newer one skipped its sequence number
+  tr.late++;
   return true;
 }
 
@@ -426,13 +447,32 @@ function othersInMatch() {
 function liveness(now, inMatch) {
   const myTag = session.contextTag();
   // the lobby is relaxed (nothing moves there; hellos count as life too), a match reacts within seconds
-  const staleAfter = myTag ? NET.staleMs : TUNE.lobbyStaleMs, deadAfter = myTag ? NET.hostStaleMs : TUNE.lobbyDeadMs;
+  // Match start is the heaviest moment for a slow machine: within the start grace a peer (the host above all) keeps its
+  // role through a long stall; bots are still in the plane then, so nothing visible waits on it.
+  const starting = myTag && state.match.time < TUNE.startGraceS;
+  const staleAfter = myTag ? NET.staleMs : TUNE.lobbyStaleMs;
+  const deadAfter = !myTag ? TUNE.lobbyDeadMs : starting ? Math.max(NET.hostStaleMs, TUNE.startGraceS * 1000) : NET.hostStaleMs;
   let others = 0, heard = 0;
   for (const [id, tr] of tracks) {
     if (isBotId(id)) continue;
     const silent = now - tr.heardAt;
-    if (!tr.stale && silent > staleAfter) { tr.stale = true; session.setStale(id, true); }
-    if (!tr.dead && silent > deadAfter) { tr.dead = true; session.setUnresponsive(id, true); }
+    if (!tr.stale && silent > staleAfter) {
+      tr.stale = true;
+      session.setStale(id, true);
+      if (myTag) session.helloNow();          // tell the others at once that we stopped hearing him (hello `hr`)
+      // A player of our match that others still hear but that no route reaches from here (no common relay): say so,
+      // rather than leaving a frozen figure unexplained. With a relay available this never shows.
+      if (myTag && inMatch && !tr.dropped && !session.isOut(id) && session.heardByOthers(id) && now - (tr.unreachToastAt || -1e9) > 30000) {
+        tr.unreachToastAt = now;
+        const e = getPlayer(id);
+        if (e && e.kind === 'remote' && e.alive) emit(EV.TOAST, { text: `Lost the connection to ${e.name}. Reconnecting.`, kind: 'warn', ms: 4000 });
+      }
+    }
+    // Unresponsive after NET.hostStaleMs, or sooner once every other player of the match says he does not hear him
+    // either (their hellos after the silence began leave him out): a crashed host hands the bots over in about 4 s.
+    if (!tr.dead && (silent > deadAfter || (myTag && !starting && silent > NET.staleMs + 500 && session.silenceConfirmed(id, tr.heardAt)))) {
+      tr.dead = true; session.setUnresponsive(id, true);
+    }
     if (!inMatch || !myTag || tr.dropped || session.isOut(id)) continue;
     const e = getPlayer(id);
     if (!e || e.kind !== 'remote') continue;
@@ -463,19 +503,31 @@ function liveness(now, inMatch) {
     const evidence = heard > 0 || (!linkDead && (probeOk || (link.relaysOpen > 0 && link.lastRelayMsgAt > since)));
     if (!evidence && !linkDead) session.probeLink();
     if (heard > 0 && session.heardByOthers(id)) {
-      // someone else still hears him: only our link to him broke. Keep the ghost, renegotiate the connection.
+      // someone else still hears him: only our link to him broke (his traffic normally comes through that player as a
+      // relay). Keep the ghost, renegotiate the connection.
       if (now - (tr.repairAt || 0) > TUNE.repairEveryMs) { tr.repairAt = now; session.repairConnection(id); counters.repairs++; }
+      continue;
+    }
+    if (heard > 0 && !session.isHost() && silent <= NET.dropMs + TUNE.decideMaxMs) {
+      // We still hear other players: dropping him is the match host's call ('left' death for everyone at once), so all
+      // clients agree. Only if no decision ever comes do we decide on our own.
       continue;
     }
     if (evidence || silent > NET.dropMs + TUNE.decideMaxMs) {
       tr.dropped = true;
-      session.markDropped(id);
+      if (session.isHost()) {
+        const e2 = getPlayer(id);
+        const t = Math.max(0, tr.heardAt - state.match.t0);
+        session.declareDropped(id, { t, pos: e2 ? [round2(e2.pos.x), round2(e2.pos.y), round2(e2.pos.z)] : [0, 0, 0] });
+      } else session.markDropped(id);
     } else if (linkDead && heard === 0) {
       setLink('lost', 'link');               // nobody heard and no relay either: we are the one cut off
       return;
     }
   }
 }
+
+function round2(v) { return Math.round(v * 100) / 100; }
 
 /** Send loop + interpolation of all remote entities into state.players. No-op offline. */
 export function update(dt) {
@@ -558,7 +610,8 @@ function interpolate(now, dt, inMatch) {
     const e = getPlayer(id);
     if (!e) continue;
     if (bot ? (e.kind !== 'bot' || session.isHost()) : e.kind !== 'remote') continue;
-    if (!sampleTrack(tr, now - tr.delay, tmp)) continue;
+    tr.renderT = now - tr.delay;
+    if (!sampleTrack(tr, tr.renderT, tmp)) continue;
     smoothJump(tr, tmp, rdt);
     const src = tmp.src, newest = tr.newest;
     e.pos.set(tmp.x, tmp.y, tmp.z);
@@ -571,7 +624,7 @@ function interpolate(now, dt, inMatch) {
     e.hp = newest.hp;
     e.armor = newest.armor;
     const dead = killed.has(id) || tr.killed;
-    e.life = dead ? LIFE.DEAD : src.life;
+    e.life = dead ? (e.life === LIFE.SPECTATE ? LIFE.SPECTATE : LIFE.DEAD) : src.life;   // SPECTATE: left from the air, no body
     e.alive = !dead && newest.life !== LIFE.DEAD && newest.life !== LIFE.SPECTATE;
     tr.speed = damp(tr.speed, Math.hypot(tmp.vx, tmp.vz), TUNE.speedLambda, dt);
     e.speed = tr.speed;
@@ -700,7 +753,7 @@ export function stats() {
   const list = [];
   for (const [id, tr] of tracks) {
     list.push({
-      id, bot: isBotId(id), recv: tr.recv, lost: tr.lost, ooo: tr.ooo, interval: Math.round(tr.interval * 10) / 10,
+      id, bot: isBotId(id), recv: tr.recv, lost: tr.lost, ooo: tr.ooo, late: tr.late, interval: Math.round(tr.interval * 10) / 10,
       jitter: Math.round(tr.jitter * 10) / 10, delay: Math.round(tr.delay), silentMs: Math.round(now - tr.heardAt),
       stale: tr.stale, unresponsive: tr.dead, dropped: tr.dropped, starved: tr.starved, buffered: tr.buf.length,
       offset: offsets.has(id) ? Math.round(clockOffset(id) * 10) / 10 : null,
