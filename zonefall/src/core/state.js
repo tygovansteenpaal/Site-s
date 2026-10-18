@@ -44,6 +44,7 @@ function freshMatch() {
     winnerId: null,       // writer: game/match
     placement: 0,         // local final placement (1 = winner); writer: game/match
     stats: { kills: 0, damage: 0, headshots: 0, survived: 0, longest: 0 }, // local; writer: game/match (damage: combat/damage)
+    netLost: null,        // online: why this client lost its place in the match ('stall'|'link'|'kicked'), else null; writer: game/match
   };
 }
 

@@ -24,6 +24,9 @@ const TUNE = {
   lootSpacing: 2.5, lootWallMargin: 0.65, lootLift: 0.05,
   lootTolerance: 0.15,
   mapSize: 1024,
+  // A site mesh spread wider than this (the scattered countryside farms, cabins and power poles) is cut into square
+  // cells so the camera and the sun's shadow camera can cull the parts that are far away (INTEGRATION).
+  splitRadius: 200, splitCell: 150,
 };
 
 let built = false;
@@ -43,6 +46,46 @@ const stats = { buildMs: 0, stages: {} };
 
 const err = (m) => new Error(`[WORLD/world] ${m}`);
 const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+
+/** Split an indexed geometry into one geometry per square XZ cell (by triangle centroid), keeping every attribute. */
+function splitByCell(geo, cell) {
+  const idx = geo.index.array, pos = geo.attributes.position;
+  const buckets = new Map();
+  for (let t = 0; t < idx.length; t += 3) {
+    const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+    const cx = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3, cz = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
+    const key = `${Math.floor(cx / cell)},${Math.floor(cz / cell)}`;
+    let list = buckets.get(key);
+    if (!list) buckets.set(key, (list = []));
+    list.push(a, b, c);
+  }
+  if (buckets.size < 2) return [geo];
+  const names = Object.keys(geo.attributes);
+  const remap = new Int32Array(pos.count);
+  const out = [];
+  for (const list of buckets.values()) {
+    remap.fill(-1);
+    const order = [];
+    const index = new Uint32Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      const v = list[i];
+      if (remap[v] < 0) { remap[v] = order.length; order.push(v); }
+      index[i] = remap[v];
+    }
+    const g = new THREE.BufferGeometry();
+    for (const n of names) {
+      const src = geo.attributes[n], k = src.itemSize;
+      const arr = new src.array.constructor(order.length * k);
+      for (let i = 0; i < order.length; i++) for (let j = 0; j < k; j++) arr[i * k + j] = src.array[order[i] * k + j];
+      g.setAttribute(n, new THREE.BufferAttribute(arr, k, src.normalized));
+    }
+    g.setIndex(order.length > 65535 ? new THREE.BufferAttribute(index, 1) : new THREE.BufferAttribute(Uint16Array.from(index), 1));
+    g.computeBoundingSphere();
+    out.push(g);
+  }
+  geo.dispose();
+  return out;
+}
 
 // ------------------------------------------------------------------------------------------ build
 /**
@@ -87,12 +130,16 @@ export async function build(opts) {
   buildingsOut = await run('buildings', (p) => buildBuildings(layout, p));
   const surf = surfaceMaterial();
   for (const g of buildingsOut.groups) {
-    const mesh = new THREE.Mesh(g.geometry, surf);
-    mesh.name = `site_${g.site}`;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.matrixAutoUpdate = false;
-    worldRoot.add(mesh);
+    const r = g.geometry.boundingSphere ? g.geometry.boundingSphere.radius : 0;
+    const parts = r > TUNE.splitRadius ? splitByCell(g.geometry, TUNE.splitCell) : [g.geometry];
+    parts.forEach((geo, i) => {
+      const mesh = new THREE.Mesh(geo, surf);
+      mesh.name = parts.length > 1 ? `site_${g.site}_${i}` : `site_${g.site}`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.matrixAutoUpdate = false;
+      worldRoot.add(mesh);
+    });
   }
   await run('props', (p) => props.buildProps(worldRoot, layout, quality, groundForProps, p));
   layout.hedges = buildingsOut.hedges;
@@ -340,12 +387,31 @@ export function getHeight(x, z) { return hf.heightAt(x, z); }
  * Highest walkable surface at (x, z) at or below fromY: terrain, floors, stairs, roofs, props.
  * @returns {{y:number, normal:number[], surface:number}}  normal [x,y,z]; surface is a config.SURFACE id
  */
+// Terrain normal and surface per 1 m cell (direct-mapped): the analytic heightfield is the largest CPU cost of a host
+// simulating bots (a normal is four height evaluations, a surface reads the paint layers), and both barely change
+// within a metre. The height itself stays exact.
+const GC_BITS = 12, GC_SIZE = 1 << GC_BITS, GC_MASK = GC_SIZE - 1;
+const gcKey = new Int32Array(GC_SIZE * 2).fill(0x7fffffff);
+const gcNorm = new Float32Array(GC_SIZE * 3);
+const gcSurf = new Int16Array(GC_SIZE);
+function terrainCell(x, z) {
+  const ix = Math.floor(x), iz = Math.floor(z);
+  const k = ((ix * 73856093) ^ (iz * 19349663)) & GC_MASK;
+  if (gcKey[k * 2] !== ix || gcKey[k * 2 + 1] !== iz) {
+    const n = hf.normalAt(ix + 0.5, iz + 0.5, [0, 1, 0]);
+    gcNorm[k * 3] = n[0]; gcNorm[k * 3 + 1] = n[1]; gcNorm[k * 3 + 2] = n[2];
+    gcSurf[k] = hf.surfaceAt(ix + 0.5, iz + 0.5);
+    gcKey[k * 2] = ix; gcKey[k * 2 + 1] = iz;
+  }
+  return k;
+}
+
 export function getGround(x, z, fromY = Infinity) {
   const th = hf.heightAt(x, z);
   const st = collision.groundBelow(x, z, fromY);
   if (st && st.y >= th - 0.02 && st.y <= fromY + 1e-3) return { y: st.y, normal: st.normal, surface: st.surface };
-  const n = hf.normalAt(x, z, [0, 1, 0]);
-  return { y: th, normal: n, surface: hf.surfaceAt(x, z) };
+  const k = terrainCell(x, z);
+  return { y: th, normal: [gcNorm[k * 3], gcNorm[k * 3 + 1], gcNorm[k * 3 + 2]], surface: gcSurf[k] };
 }
 
 /** Terrain surface type at (x, z) (GRASS, DIRT, ROCK, ASPHALT, SAND, WATER ...). */

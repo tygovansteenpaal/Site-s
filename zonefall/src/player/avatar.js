@@ -470,7 +470,10 @@ function buildCanopy() {
   canopyGeo.setIndex(idx);
   canopyGeo.computeVertexNormals();
   canopyGeo.computeBoundingSphere();
-  canopyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0, side: THREE.DoubleSide, name: 'chute-canopy' });
+  // Thin ripstop nylon lets daylight through: a faint emissive term keeps the shaded underside (the side the player
+  // looks at under the canopy) from reading as a black shape against the sky.
+  canopyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0, side: THREE.DoubleSide, name: 'chute-canopy',
+    emissive: new THREE.Color(0x4f5638).multiplyScalar(0.32) });
   // Suspension lines: from each rib (4 attachment points along the chord) to the left or right riser.
   const lp = [];
   for (let r = 0; r <= C.cells; r++) {

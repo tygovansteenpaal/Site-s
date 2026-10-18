@@ -7,6 +7,7 @@
 
 const MAX_DT = 0.05;
 const HIDDEN_HZ = 20;
+const HIDDEN_MIN_GAP = (1000 / HIDDEN_HZ) * 0.8;
 const WORKER_SRC = 'let id=0;onmessage=(e)=>{clearInterval(id);id=0;if(e.data>0)id=setInterval(()=>postMessage(0),e.data);};';
 
 /**
@@ -54,9 +55,15 @@ export function createLoop(frame, opts = {}) {
     step(now, false);
   }
 
+  // The worker posts a tick every 50 ms whatever the page is doing. After the main thread was busy (a long task, a slow
+  // hidden frame) the queued ticks would all run back to back with dt near 0, and on a slow machine where one hidden
+  // frame costs more than 50 ms that backlog never drains. Ticks closer than 80 % of the period are dropped instead.
+  let lastHidden = 0;
   function hiddenTick() {
     if (!loop.running || !document.hidden) return;
     const now = performance.now();
+    if (now - lastHidden < HIDDEN_MIN_GAP) return;
+    lastHidden = now;
     if (opts.background && !opts.background()) { last = now; return; }
     step(now, true);
   }

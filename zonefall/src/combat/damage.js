@@ -43,6 +43,7 @@ const lastShotT = new Map();          // shooter id -> match ms of the last vali
 const seenHits = [];                  // ring of 'by:sid:tgt' keys already applied
 const seenSet = new Set();
 const suspicion = new Map();          // shooter id -> count of failed validations seen on this peer
+const fragCredit = new Map();         // remote human id -> performance.now() our frag's splash was predicted on him
 const tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3();
 
 function err(msg) { return new Error(`[COMBAT/damage] ${msg}`); }
@@ -153,6 +154,9 @@ export function nextSid() { sidSeq = (sidSeq + 1) & 0x7fffffff; return sidSeq; }
 export function dealHit(hit) {
   const target = getPlayer(hit.target);
   if (!target || !target.alive) return null;
+  // A remote player we have not heard from for NET.staleMs is a frozen ghost of where he was: a hit on it would only
+  // be rejected by his client. No hitmarker, no damage counted, nothing sent.
+  if (state.online && target.kind === 'remote' && target.stale) return null;
   const dmg = damageAt(hit.weapon, hit.zone, hit.distance);
   const dir = dirOf(hit.origin, hit.targetPos);
   const info = { from: hit.shooter, weapon: hit.weapon, zone: hit.zone, dir, kind: 'bullet', sid: hit.sid };
@@ -167,7 +171,7 @@ export function dealHit(hit) {
   if (hit.shooter === state.selfId) emit(EV.HIT_CONFIRMED, confirm);
   if (state.online) {
     session.send('hit', {
-      sid: hit.sid, by: hit.shooter, tgt: target.id, w: hit.weapon, z: ZONE_CODE[hit.zone] ?? 0, dmg: Math.round(dmg * 100) / 100,
+      mid: state.match.id, sid: hit.sid, by: hit.shooter, tgt: target.id, w: hit.weapon, z: ZONE_CODE[hit.zone] ?? 0, dmg: Math.round(dmg * 100) / 100,
       d: Math.round(hit.distance * 100) / 100, sp: round3(hit.origin), tp: round3(hit.targetPos), t: Math.round(state.match.time * 1000),
     });
   }
@@ -187,26 +191,34 @@ function dirOf(from, to) {
 /**
  * Death of an entity this peer is authority for: set alive=false, life=DEAD, emit PLAYER_KILLED, broadcast 'death',
  * drop its inventory through game/loot.drop (local player: inventory.dropAll(); bots: their weapon + ammo).
+ * weapon 'left' on the local player is a forfeit (LEAVE MATCH while alive, connection lost): announced and dropped
+ * like any death, without a killer.
  */
 export function kill(victimId, killerId, weapon, headshot, sid = null) {
   const e = getPlayer(victimId);
   if (!e || !e.alive && e.life === LIFE.DEAD) return;
+  const wasLife = e.life;
   e.alive = false;
-  e.life = LIFE.DEAD;
+  e.life = leaveLife(e.life, weapon);
   e.hp = 0;
   const pos = [e.pos.x, e.pos.y, e.pos.z];
   if (victimId === state.selfId) {
     const k = killerId ? getPlayer(killerId) : null;
     state.local.killer = {
-      id: killerId || null, name: k ? k.name : (weapon === 'zone' ? 'The zone' : weapon === 'fall' ? 'Gravity' : 'Unknown'),
+      id: killerId || null, name: k ? k.name : (weapon === 'zone' ? 'The zone' : weapon === 'fall' ? 'Gravity' : weapon === 'left' ? 'Connection lost' : 'Unknown'),
       weapon, headshot: !!headshot, distance: k ? Math.round(k.pos.distanceTo(e.pos)) : 0,
     };
   }
-  emit(EV.PLAYER_KILLED, { id: victimId, by: killerId || null, weapon, headshot: !!headshot, pos });
-  if (state.online && weapon !== 'left') {
-    session.send('death', { id: victimId, by: killerId || null, w: weapon, hs: !!headshot, sid: sid == null ? null : sid, pos: round3(pos) });
+  // The authority's match time of the death (ms): every client ranks placements by it (game/match), not by arrival.
+  const t = Math.round(state.match.time * 1000);
+  emit(EV.PLAYER_KILLED, { id: victimId, by: killerId || null, weapon, headshot: !!headshot, pos, at: t / 1000 });
+  const forfeit = weapon === 'left' && victimId === state.selfId;
+  if (state.online && (weapon !== 'left' || forfeit)) {
+    session.send('death', { mid: state.match.id, id: victimId, by: killerId || null, w: weapon, hs: !!headshot, sid: sid == null ? null : sid, pos: round3(pos), t });
   }
-  if (weapon === 'left') return;
+  if (weapon === 'left' && !forfeit) return;
+  // A forfeit from the plane or the sky over the sea drops nothing: the items would land on the sea floor.
+  if (weapon === 'left' && isAirborne(wasLife) && safe(() => world.isWater(pos[0], pos[2]), false)) return;
   // Death drop: the authority spawns the items (loot broadcasts 'drop' when online).
   let items = null;
   if (victimId === state.selfId) items = inventory.dropAll();
@@ -218,7 +230,10 @@ export function kill(victimId, killerId, weapon, headshot, sid = null) {
 }
 
 // ------------------------------------------------------------------------------------------ explosions
-/** Splash damage of an explosion at pos [x,y,z] to the local player (and bots when authority), LOS-checked. */
+/**
+ * Splash damage of an explosion at pos [x,y,z] to the local player (and bots when authority), LOS-checked. Remote
+ * humans apply their own splash; for them the thrower only predicts it (hitmarker and damage stat, like a bullet hit).
+ */
 export function explosionAt(pos, ownerId, weapon = 'frag') {
   const F = WEAPONS.frag;
   const blast = tmpA.set(pos[0], pos[1] + TUNE.explosionProbeUp, pos[2]);
@@ -227,8 +242,19 @@ export function explosionAt(pos, ownerId, weapon = 'frag') {
   for (const e of state.players.values()) {
     if (!e.alive || e.life === LIFE.PLANE || e.life === LIFE.SPECTATE || e.life === LIFE.DEAD) continue;
     const isSelf = e.id === state.selfId;
-    if (!isSelf && !(authority && isBotId(e.id))) continue;
     if (!F.selfDamage && e.id === ownerId) continue;
+    if (!isSelf && !(authority && isBotId(e.id))) {
+      if (ownerId === state.selfId && e.kind === 'remote') {
+        const est = splash(e, blast);
+        if (est > 0) {
+          const pred = predict(e, est, 'explosion');
+          state.match.stats.damage += pred.dealt;
+          fragCredit.set(e.id, performance.now());
+          emit(EV.HIT_CONFIRMED, { target: e.id, dmg: Math.round(pred.dealt), zone: 'body', kill: pred.killed, armorBroke: pred.armorBroke, distance: 0 });
+        }
+      }
+      continue;
+    }
     const dmg = splash(e, blast);
     if (dmg <= 0) continue;
     const dir = dirOf(pos, [e.pos.x, e.pos.y + 0.9, e.pos.z]);
@@ -334,6 +360,16 @@ function checkHit(hit, fromPeerId) {
 
 function safe(fn, fallback) { try { const v = fn(); return v == null ? fallback : v; } catch (e) { return fallback; } }
 
+const isAirborne = (life) => life === LIFE.PLANE || life === LIFE.FREEFALL || life === LIFE.CHUTE;
+
+/**
+ * Life state after a death: a player who leaves (forfeit, dropped) while in the plane or in the air has no body to
+ * leave behind (SPECTATE: hidden, not counted), instead of a corpse hanging in the sky on every client.
+ */
+export function leaveLife(life, weapon) {
+  return weapon === 'left' && (isAirborne(life) || life === LIFE.SPECTATE) ? LIFE.SPECTATE : LIFE.DEAD;
+}
+
 function remember(key) {
   if (seenSet.has(key)) return false;
   seenSet.add(key);
@@ -359,13 +395,24 @@ function onNetHit({ from, data: h }) {
 function onNetDeath({ from, data: d }) {
   if (!d) return;
   if (d.id === state.selfId) return;                                 // only we decide our own death
-  if (isBotId(d.id)) { if (state.isHost || from !== state.hostId) return; } else if (from !== d.id) return;
+  if (isBotId(d.id)) {
+    // Normally only the host reports bot deaths. After a host stall two peers may both have simulated the bots for a
+    // moment; a bot death from any player still in our match is accepted (idempotent), so bot fates never diverge.
+    if (from !== state.hostId && !safe(() => session.inMatchPeer(from), false)) return;
+  } else if (from !== d.id && !(d.decl && d.w === 'left')) return;   // decl: a drop the match host announced (net/session)
   const e = getPlayer(d.id);
   if (!e || (!e.alive && e.life === LIFE.DEAD)) return;
+  // Our frag killed a remote player whose own explosion ran a moment before ours (his death arrived first, so our
+  // splash prediction found him already dead): credit the hitmarker and the damage from his last snapshot vitals.
+  if (d.by === state.selfId && d.w === 'frag' && e.kind === 'remote' && performance.now() - (fragCredit.get(d.id) ?? -1e9) > 2000) {
+    const dealt = Math.max(0, (e.hp || 0) + (e.armor || 0));
+    state.match.stats.damage += dealt;
+    emit(EV.HIT_CONFIRMED, { target: d.id, dmg: Math.round(dealt), zone: 'body', kill: true, armorBroke: (e.armor || 0) > 0, distance: 0 });
+  }
   e.alive = false;
-  e.life = LIFE.DEAD;
+  e.life = leaveLife(e.life, d.w);
   e.hp = 0;
-  emit(EV.PLAYER_KILLED, { id: d.id, by: d.by, weapon: d.w, headshot: !!d.hs, pos: d.pos });
+  emit(EV.PLAYER_KILLED, { id: d.id, by: d.by, weapon: d.w, headshot: !!d.hs, pos: d.pos, at: d.t == null ? undefined : d.t / 1000 });
 }
 
 /** Subscribe to NET_HIT and NET_DEATH. */
@@ -374,7 +421,7 @@ export function init() {
   inited = true;
   on(EV.NET_HIT, onNetHit);
   on(EV.NET_DEATH, onNetDeath);
-  on(EV.MATCH_START, () => { lastHitAt.clear(); lastShotT.clear(); seenHits.length = 0; seenSet.clear(); });
+  on(EV.MATCH_START, () => { lastHitAt.clear(); lastShotT.clear(); seenHits.length = 0; seenSet.clear(); fragCredit.clear(); });
   // A practice pause freezes the match clock; the regen delay (wall clock) must not run on while paused either.
   let pausedAt = 0;
   on(EV.PAUSE, ({ paused }) => {

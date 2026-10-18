@@ -90,8 +90,12 @@ function wireEvents() {
   on(EV.LOAD_PROGRESS, ({ p, label }) => setLoading(p, label));
   on(EV.TOAST, ({ text, kind, ms }) => toast(text, kind, ms));
   on(EV.LOBBY_UPDATE, ({ lobby: l }) => lobby.render(l));
+  let netErrorToastAt = -1e9;
   on(EV.NET_STATUS, ({ status, text }) => {
-    if (status === 'error' && state.app === APP.LOBBY) toast(text || 'Connection problem', 'danger', 5000);
+    // the lobby screen keeps showing the error and retries by itself: one toast per minute, not one per attempt
+    if (status !== 'error' || state.app !== APP.LOBBY || performance.now() - netErrorToastAt < 60000) return;
+    netErrorToastAt = performance.now();
+    toast(text || 'Connection problem', 'danger', 5000);
   });
   on(EV.MATCH_START, () => {
     deathAt = 0; deathShown = false; lastSpecId = undefined; lockedThisMatch = false;
@@ -103,11 +107,27 @@ function wireEvents() {
     deathAt = performance.now() + TUNE.deathScreenDelay;
     deathShown = false;
   });
-  on(EV.MATCH_END, ({ winnerId }) => {
-    if (state.app !== APP.MATCH) return;
+  on(EV.NET_LINK, ({ state: st }) => {
+    // Lost the match connection while already dead or spectating: the explanation replaces whatever was showing.
+    if (st !== 'lost' || state.app !== APP.MATCH) return;
+    const wasAlive = !!getPlayer(state.selfId)?.alive;
+    queueMicrotask(() => {                // after game/match has recorded the forfeit (state.match.netLost)
+      if (wasAlive || state.app !== APP.MATCH) return;   // a living player dies from the forfeit; PLAYER_KILLED shows it
+      deathAt = 0; deathShown = true;
+      screens.showSpectate(null);
+      screens.showDeath({ killer: state.local.killer });
+    });
+  });
+  const announceEnd = (winnerId) => {
     const name = winnerId ? (getPlayer(winnerId)?.name || '') : '';
-    if (winnerId && winnerId === state.selfId) hud.announce('Match over', 'Victory', 'Last one standing');
+    if (winnerId && winnerId === state.selfId) hud.announce('Match over', 'Victory', getPlayer(state.selfId)?.alive ? 'Last one standing' : 'Last one to fall');
     else hud.announce('Match over', name ? `${name} wins` : 'Match over', `Results in ${MATCH.endDelay} seconds`);
+  };
+  on(EV.MATCH_END, ({ winnerId }) => { if (state.app === APP.MATCH) announceEnd(winnerId); });
+  // a death that reached us after the end re-ranked the match (game/match): show the corrected result
+  on(EV.MATCH_RESULT, ({ winnerId }) => {
+    if (state.app === APP.RESULTS) screens.showResults(resultsInfo());
+    else if (state.app === APP.MATCH) announceEnd(winnerId);
   });
   on('input:bindings', () => refreshKeycaps(root));
 }
@@ -181,12 +201,14 @@ function updateMatch(dt) {
   const locked = lockedNow();
   const now = performance.now();
 
-  if (deathAt && !deathShown && now >= deathAt && dead && !state.local.spectating) {
+  const lost = !!state.match.netLost;   // disconnected from the match: the explanation stays, no spectating
+  if (deathAt && !deathShown && now >= deathAt && dead && (!state.local.spectating || lost)) {
     deathShown = true;
+    if (lost) screens.showSpectate(null);
     screens.showDeath({ killer: state.local.killer });
   }
   // spectate bar follows the camera's target
-  const spec = state.local.spectating || null;
+  const spec = lost ? null : (state.local.spectating || null);
   if (spec !== lastSpecId) {
     lastSpecId = spec;
     if (spec && dead) screens.showSpectate(getPlayer(spec)?.name || '');

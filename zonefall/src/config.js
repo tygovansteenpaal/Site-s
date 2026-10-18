@@ -12,6 +12,19 @@ export const assetUrl = (path) => ASSET_BASE + path;
 // ---------------------------------------------------------------- dev / test switches (URL query)
 const Q = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams();
 const num = (k) => (Q.has(k) && Q.get(k) !== '' && Number.isFinite(+Q.get(k)) ? +Q.get(k) : null);
+/**
+ * ?netsim=ping[,loss[,jitter]]: opt-in bad-network simulation for online play (net/session), inert without the param.
+ * ping: ms added to the round trip of every link of this page (half on the way out, half on the way in); loss: percent
+ * of unreliable (snapshot) messages lost in each direction, reliable ones arrive late instead; jitter: up to this many
+ * extra ms per message. Example: ?netsim=150,5,30.
+ */
+function netsim(v) {
+  if (v == null) return null;
+  const [p, l, j] = String(v).split(',').map((x) => (x === '' ? 0 : Number(x)));
+  const f = (x, hi) => (Number.isFinite(x) ? Math.max(0, Math.min(hi, x)) : 0);
+  const out = { ping: f(p, 3000), loss: f(l, 90) / 100, jitter: f(j, 1000) };
+  return out.ping || out.loss || out.jitter ? Object.freeze(out) : null;
+}
 export const DEV = Object.freeze({
   quality: Q.get('quality'),            // 'low' | 'medium' | 'high' forces a tier for this session
   practice: Q.has('practice'),          // boot straight into a practice match (skips menu)
@@ -25,6 +38,7 @@ export const DEV = Object.freeze({
   debug: Q.has('debug'),                // stats overlay + bus warnings for unknown events
   fastZone: Q.has('fastzone'),          // zone timings x0.1 (tests)
   noPost: Q.has('nopost'),              // disable post chain regardless of tier
+  netsim: netsim(Q.get('netsim')),      // {ping, loss 0..0.9, jitter} or null: simulated slow network (see netsim())
 });
 
 // ---------------------------------------------------------------- surfaces (footsteps, impacts, decals)
@@ -297,13 +311,14 @@ export const BOTS = Object.freeze({
 // ---------------------------------------------------------------- networking (Trystero Nostr, see ARCHITECTURE.md section 8)
 export const NET = Object.freeze({
   appId: 'zonefall-v1',
-  protocol: 1,
+  protocol: 4,                            // bump on every wire change (2: match tags, mid on in-match payloads, leave/kick; 3: death time, reserved away tag 0xffffffff; 4: no room password or handshake, version in hello, relay through a common peer, bye, host-declared drops)
   relays: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.snort.social', 'wss://nostr.mom',
     'wss://relay.nostr.net', 'wss://nostr.oxtr.dev', 'wss://relay.piazza.today', 'wss://nostr.rblb.it'],
   turn: [],                               // [{urls, username, credential}] when a TURN account exists
-  snapRate: 20, lobbySnapRate: 5, botRate: 15,
+  snapRate: 20, lobbySnapRate: 5, botRate: 20,   // bots ride the same 20 Hz ticks as the player snapshot (same render delay)
   interpDelay: 100, interpMin: 80, interpMax: 200,
   staleMs: 3000, dropMs: 10000,
+  hostStaleMs: 6000,                      // silence (own stalls excluded) before a peer loses the host role / bots are taken over
   maxMsgsPerSec: 80,
   quickPrefix: 'zf1-qp', privatePrefix: 'zf1-pv', buckets: 30, bucketProbeMs: 3500,
   codeAlphabet: 'ABCDEFGHJKMNPQRSTUVWXYZ23456789', codeLength: 5,

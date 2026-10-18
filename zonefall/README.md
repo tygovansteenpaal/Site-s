@@ -12,7 +12,7 @@ hardware acceleration, plus a mouse and keyboard (a standard gamepad also works)
 
 | Mode | What happens |
 |---|---|
-| **Quick play** | Joins a public lobby for your region. With two or more players a 45 s countdown starts (10 s at six players). If nobody else shows up within 20 s you deploy against 9 bots. Up to 10 humans per match; bots fill the rest. |
+| **Quick play** | Joins the public lobby where other players are waiting (one shared set of lobbies for every region, so nobody is split off). With two or more players a 45 s countdown starts (10 s at six players). If nobody else shows up within 20 s you deploy against 9 bots. If players are already in a match, you are told how many and how long it can last, and you either wait to deploy with them in the next round or play now with bots. Up to 10 humans per match; bots fill the rest. |
 | **Private match** | Create a lobby and share its 5-character code or the invite link (`?room=CODE`). The host can press START NOW at any time; empty slots become bots. |
 | **Practice vs bots** | Offline match against 9 bots. It pauses whenever you open the menu or release the mouse. |
 
@@ -49,8 +49,8 @@ All keys can be rebound in Settings > Controls.
 | Scoreboard | Tab |
 | Menu (releases the mouse) | Esc or P |
 
-The camera is third person over the shoulder by default; aiming down sights looks through the weapon's own sights.
-V switches to first person, and the choice is remembered.
+The camera is third person over the shoulder by default; aiming down sights switches to a first-person view through
+the weapon's sights. V switches between third and first person, and the choice is remembered.
 
 ## Settings and performance
 
@@ -64,17 +64,26 @@ stored in your browser only.
 There is no game server. The page is static files on GitHub Pages, and players connect to each other directly:
 
 - **Finding each other.** The game uses [Trystero](https://github.com/dmotz/trystero) with its Nostr strategy: peers
-  announce themselves on a handful of public Nostr relays under a room name (quick play: one room per region and lobby
-  number; private: the lobby code, which is also the room password). The relays only carry the connection handshake.
+  announce themselves on a handful of public Nostr relays under a room name (quick play: one room per lobby number;
+  private: the lobby code). The relays only carry the connection handshake.
 - **Playing.** Once two browsers have exchanged their WebRTC offers, all game traffic goes over a direct WebRTC
   connection: an unreliable, unordered data channel for 20 Hz movement snapshots, bot updates and shots, and reliable
   messages for lobby state, match start, hits, deaths, loot pickups and grenades.
+- **When two players cannot connect directly** (both behind strict NATs or firewalls, and there is no TURN server),
+  their traffic goes through any other player who reaches both of them; the lobby shows "via NAME" next to such a
+  player. A player whose network blocks peer-to-peer traffic entirely is told so in the lobby.
 - **Authority.** Every player is authoritative for their own movement, health and inventory. A shooter detects a hit
   against what they see and reports it; the victim's browser checks it (fire rate, damage cap, range, both positions
   against recent history) before applying it. Remote players are drawn about 100 ms in the past and interpolated.
-- **Host.** The player with the lowest peer id is the host: it runs the lobby countdown, sends the match start (a
-  shared seed, so the zone, the plane route and the loot are identical everywhere) and simulates the bots. If the host
-  leaves, the next player takes over without interrupting the match. A host keeps simulating while its tab is hidden.
+- **Host.** In the lobby, the player who joined first (the creator of a private lobby) is the host: it runs the
+  countdown and sends the match start (a shared seed, so the zone, the plane route and the loot are identical
+  everywhere). In a match, the player with the lowest peer id among those still in it simulates the bots. If that
+  player leaves the match or goes silent for 6 s, the next one takes over without interrupting the match. A host keeps
+  simulating while its tab is hidden. Every message carries the match it belongs to, so players who went back to the
+  lobby can start the next round while others finish theirs, without the two ever mixing.
+- **Dropping out.** Leaving a match early drops your loot where you stood. A player silent for 10 s is removed from the
+  match ("left the match"). A browser that was asleep or lost its own connection that long shows "Disconnected" with a
+  button back to the lobby instead of playing on alone.
 - **Limits.** Without a TURN relay server, roughly one in ten player pairs behind strict NATs or corporate firewalls
   cannot connect directly. The lobby shows the relay count and the connection type per player. If the relays cannot
   be reached at all, the lobby says so and offers a practice match instead.
@@ -94,8 +103,10 @@ pinned versions (see the import map in `index.html`).
 
 URL switches for testing: `?quality=low|medium|high`, `?practice` (straight into practice), `?seed=N`, `?bots=N`,
 `?skipplane&spawn=harrow` (start on the ground at a site), `?fastzone` (zone timings x0.1), `?room=CODE`, `?name=X`,
-`?mute`, `?nopost`, `?debug`, and `?net=local` (a BroadcastChannel transport between tabs of one browser instead of
-the relays).
+`?mute`, `?nopost`, `?debug`, `?net=local` (a BroadcastChannel transport between tabs of one browser instead of
+the relays), and `?netsim=PING[,LOSS[,JITTER]]` to play on a simulated bad connection, for example `?netsim=150,5`
+(150 ms extra round trip, 5 % loss of unreliable messages each way; reliable ones arrive late instead) or
+`?netsim=250,2,40` (plus up to 40 ms jitter). It only affects the page that has it and is off without the switch.
 
 ## Code layout
 

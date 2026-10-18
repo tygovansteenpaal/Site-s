@@ -256,10 +256,13 @@ button.zf-binds__row:hover { background: rgba(233, 231, 225, 0.05); }
 .zf-lobby[data-status="countdown"] .zf-lobby__dot, .zf-lobby[data-status="starting"] .zf-lobby__dot { background: var(--zf-accent); animation: zf-blink 1s steps(2, start) infinite; }
 .zf-lobby[data-status="error"] .zf-lobby__dot { background: var(--zf-danger); }
 .zf-lobby[data-status="error"] .zf-lobby__status { color: var(--zf-danger); }
+.zf-lobby[data-status="blocked"] .zf-lobby__dot { background: var(--zf-danger); }
+.zf-lobby[data-status="blocked"] .zf-lobby__status { color: var(--zf-danger); }
 .zf-lobby__countwrap { display: flex; flex-direction: column; gap: calc(6 * var(--u)); margin-top: calc(22 * var(--u)); }
 .zf-lobby__count { margin-bottom: calc(8 * var(--u)); font: 700 clamp(72px, 10vw, 180px)/0.9 var(--zf-display); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 .zf-lobby.is-final .zf-lobby__count { color: var(--zf-accent); }
 .zf-lobby__text { margin-top: calc(14 * var(--u)); max-width: 46ch; color: var(--zf-ink-dim); font-size: calc(14.5 * var(--u)); }
+.zf-lobby__note { margin-top: calc(10 * var(--u)); max-width: 46ch; padding-left: calc(10 * var(--u)); border-left: 2px solid var(--zf-accent); color: var(--zf-ink-dim); font-size: calc(13 * var(--u)); line-height: 1.45; }
 .zf-lobby__actions { display: flex; flex-wrap: wrap; gap: calc(10 * var(--u)); margin-top: calc(26 * var(--u)); }
 .zf-lobby__rules { margin-top: calc(22 * var(--u)); max-width: 52ch; font-size: calc(12 * var(--u)); color: var(--zf-ink-faint); line-height: 1.55; }
 
@@ -288,6 +291,8 @@ button.zf-binds__row:hover { background: rgba(233, 231, 225, 0.05); }
 .zf-roster__row.is-self .zf-roster__name { color: var(--zf-accent); }
 .zf-roster__row.is-bot .zf-roster__name { font-weight: 400; color: var(--zf-ink-faint); font-size: calc(13 * var(--u)); }
 .zf-roster__row.is-bot .zf-glyph { opacity: 0.7; }
+.zf-roster__row.is-away .zf-roster__name { font-weight: 500; color: var(--zf-ink-dim); }
+.zf-tag--away { color: var(--zf-ink-faint); border-style: dashed; }
 .zf-roster__ping { display: inline-flex; align-items: flex-end; gap: 2px; font: 500 calc(11 * var(--u))/1 var(--zf-mono); color: var(--zf-ink-dim); }
 .zf-roster__ping i { width: 3px; background: rgba(233, 231, 225, 0.18); margin-left: 1px; }
 .zf-roster__ping i:nth-of-type(1) { height: 5px; margin-left: 6px; }

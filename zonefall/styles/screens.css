@@ -16,8 +16,14 @@
 .zf-death.is-in .zf-death__body > *:nth-child(5) { animation-delay: 280ms; }
 .zf-death__title {
   margin: calc(10 * var(--u)) 0 0.36em -0.03em;
-  font: 700 clamp(76px, 10.5vw, 200px)/0.8 var(--zf-display); letter-spacing: -0.005em; text-transform: uppercase; color: var(--zf-ink);
+  font: 700 clamp(40px, min(10.5vw, 17vh), 200px)/0.8 var(--zf-display); letter-spacing: -0.005em; text-transform: uppercase; color: var(--zf-ink);
   text-shadow: 0 0 40px rgba(229, 72, 77, 0.25);
+}
+@media (max-height: 420px) {
+  .zf-death__body { bottom: var(--zf-gutter); max-height: calc(100vh - 2 * var(--zf-gutter)); }
+  .zf-death__killer { margin-bottom: calc(12 * var(--u)); }
+  .zf-death__actions { margin-top: calc(12 * var(--u)); }
+  .zf-death__hint { display: none; }
 }
 .zf-death__killer { display: flex; flex-wrap: wrap; align-items: baseline; gap: calc(6 * var(--u)) calc(14 * var(--u)); margin-bottom: calc(22 * var(--u)); padding-left: calc(14 * var(--u)); border-left: 2px solid var(--zf-danger); }
 .zf-death__killer .zf-label { flex-basis: 100%; }

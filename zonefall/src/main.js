@@ -197,6 +197,7 @@ const intents = {
   async create_private() { audio.unlock(); setAppState(APP.LOBBY); await lobby.createPrivate(); },
   async join_private({ code }) { audio.unlock(); setAppState(APP.LOBBY); await lobby.joinPrivate(code); },
   start_now() { lobby.requestStart(); },
+  lobby_retry() { audio.unlock(); lobby.retry(); },
   leave_lobby() { lobby.leave(); setAppState(APP.MENU); },
   pause() { setPaused(true); },
   resume() { input.lock(); setPaused(false); },
@@ -240,8 +241,9 @@ function wireFlow() {
   });
   bus.on(EV.MATCH_START, () => { setPaused(false); setAppState(APP.MATCH); input.setEnabled(true); input.lock(); });
   bus.on(EV.MATCH_END, () => {
+    const mid = state.match.id;
     setTimeout(() => {
-      if (state.app !== APP.MATCH) return;
+      if (state.app !== APP.MATCH || state.match.id !== mid) return;   // left, or already in the next match
       input.unlock();
       setAppState(APP.RESULTS);
     }, MATCH.endDelay * 1000);
@@ -255,15 +257,30 @@ function wireFlow() {
   });
   bus.on(EV.PLAYER_KILLED, ({ id }) => { if (id === state.selfId) setPaused(false); });
   bus.on(EV.APP_STATE, ({ to }) => input.setEnabled(to === APP.MATCH));
-  addEventListener('pagehide', () => { if (state.online) session.leave(); });
 }
+
+/**
+ * Closing, reloading or navigating away mid-match: forfeit and announce it (death, inventory drop, 'leave') while the
+ * room is still open, then leave it gracefully. Trystero adds its own 'beforeunload' listener (leave every room) when
+ * it is first imported, and 'beforeunload' fires before 'pagehide', so a pagehide-only handler found the room already
+ * closed and the forfeit never left the page. This listener is registered when main.js loads (long before the lazy
+ * Trystero import) and in the capture phase, so it runs first; Trystero's sends complete in microtasks, which run
+ * before the next listener. 'pagehide' stays as the fallback for browsers that skip beforeunload (mobile Safari).
+ */
+function onPageExit() {
+  if (!state.online) return;
+  if (state.app === APP.MATCH || state.app === APP.RESULTS) { try { match.leave(); } catch (err) { console.warn('[ZONEFALL] match.leave on page exit failed', err); } }
+  try { session.leave(); } catch (err) { console.warn('[ZONEFALL] session.leave on page exit failed', err); }
+}
+addEventListener('beforeunload', onPageExit, { capture: true });
+addEventListener('pagehide', onPageExit, { capture: true });
 
 // ------------------------------------------------------------------------------------------ frame
 function frame(dt, now, hidden = false) {
   try {
     input.update();
     if (state.online) sync.update(dt);
-    if (state.app === APP.LOBBY) lobby.update(dt);
+    if (state.online) lobby.update(dt);   // lobby countdown; in a match only the hello heartbeat
 
     const simulate = state.app === APP.MATCH && !(state.paused && state.match.mode === 'practice');
     if (simulate) {
@@ -431,10 +448,12 @@ function exposeTestHooks() {
       need(typeof target !== 'string' || e, 'unknown target');
       const tx = e ? e.pos.x : target[0], tz = e ? e.pos.z : target[target.length - 1];
       const ty = e ? e.pos.y + 1.2 : target.length === 3 ? target[1] : me.pos.y + 1.4;
-      // the aim ray starts on the camera line (third person), which moves with the yaw: converge in a few passes
+      // the aim ray starts on the camera line (third person), which moves with the yaw: converge in a few passes.
+      // Right after a teleport the camera has not caught up yet, so the first pass aims from the player's eye.
       const o = new THREE.Vector3(), d = new THREE.Vector3();
       for (let k = 0; k < 3; k++) {
         camera.getAimRay(o, d);
+        if (o.distanceTo(me.pos) > 6) o.set(me.pos.x, me.pos.y + 1.6, me.pos.z);
         const dx = tx - o.x, dy = ty - o.y, dz = tz - o.z;
         me.yaw = Math.atan2(-dx, -dz);
         me.pitch = Math.atan2(dy, Math.hypot(dx, dz));
