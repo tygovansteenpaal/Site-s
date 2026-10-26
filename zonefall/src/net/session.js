@@ -86,6 +86,25 @@ function countRelays() {
 }
 
 // ------------------------------------------------------------------------------------------------ connect / leave
+// Relays: the public Nostr list, unless the page is served by the ZONEFALL server app (server/), which publishes its
+// own relay in /zonefall/server.json. Static hosts (Vercel, GitHub Pages) have no such file and keep the public list.
+let serverRelays;
+async function relayList() {
+  if (serverRelays === undefined) {
+    serverRelays = null;
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 1500);
+      const res = await fetch(new URL('../../server.json', import.meta.url), { signal: ctl.signal, cache: 'no-store' });
+      clearTimeout(t);
+      const j = res.ok ? await res.json() : null;
+      if (j && Array.isArray(j.relays) && j.relays.length) serverRelays = j.relays.map((u) => new URL(u, location.href).href.replace(/^http/, 'ws'));
+    } catch (e) { serverRelays = null; }
+  }
+  return serverRelays || NET.relays;
+}
+export const usingServer = () => !!serverRelays;
+
 /**
  * Join a room. Resolves once at least one relay socket is open; rejects after NET.relayTimeoutMs otherwise.
  * @param {{roomId:string, password?:string|null, transport?:'nostr'|'local'}} opts
@@ -110,7 +129,7 @@ export async function connect(opts) {
     } else {
       const mod = await import('trystero');
       self = mod.selfId;
-      config.relayConfig = { urls: NET.relays };
+      config.relayConfig = { urls: await relayList() };
       if (NET.turn && NET.turn.length) config.turnConfig = NET.turn;
       r = mod.joinRoom(config, opts.roomId, callbacks);
       sockets = mod.getRelaySockets;

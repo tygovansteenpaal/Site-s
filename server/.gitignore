@@ -1,0 +1,6 @@
+.venv/
+build/
+dist/
+cert/
+zonefall-server-data/
+__pycache__/
