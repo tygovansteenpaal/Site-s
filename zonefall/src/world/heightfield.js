@@ -19,6 +19,9 @@ export const TUNE = {
   roadBlend: { asphalt: 12, dirt: 8 },
   cutBlend: 2.2,             // extra blend metres per metre of cut or fill, so deep cuttings get gentle banks
   maxBlend: 34,
+  roadMixPower: 16,          // overlapping road corridors: weight^power mix (high = the nearer road dominates, still continuous)
+  roadMixAsphalt: 8,         // asphalt counts this much more, so ribbons keep sitting on their own profile
+  approachFadeIn: 8,         // m inland over which the site height pull fades in (no step at the coastline)
   profileStep: 4,            // road profile sample spacing (m)
   profileSigma: { asphalt: 22, dirt: 12 },
   maxGrade: { asphalt: 0.11, dirt: 0.2 },
@@ -307,7 +310,9 @@ export function heightPre(x, z, noPit = false) {
   const nat = natural(x, z, d);
   let h = coastal(x, z, d, nat);
   h = signalHill(x, z, h);
-  if (d > 0) h = siteApproach(x, z, h);
+  // The site pull fades in over the first metres inland. Switching it on exactly at the coastline left a sheer
+  // wall several metres high wherever a hill (Signal Hill's south flank) runs into the sea.
+  if (d > 0) h = mix(h, siteApproach(x, z, h), sstep(0, TUNE.approachFadeIn, d));
   h = rectFlatten(x, z, h);
   h = siteDiscs(x, z, h);
   if (!noPit) {
@@ -416,8 +421,10 @@ export function heightAt(x, z) {
   let h = heightPre(x, z);
   const cell = cellAt(x, z);
   if (!cell || cell.length === 0) return h;
-  // apply every road corridor that reaches this point (the strongest wins where they overlap)
-  let bestW = 0, bestH = h;
+  // Apply every road corridor that reaches this point. Where corridors overlap (switchbacks, junctions) their profiles
+  // are mixed by a steep power of their weights, asphalt preferred. Picking only the strongest one made the ground jump
+  // by metres along the line where two corridors tie: an invisible wall on a slope the render grid smooths over.
+  let maxW = 0, sumK = 0, sumKH = 0;
   for (let k = 0; k < cell.length; k += 2) {
     const r = roads[cell[k]], i = cell[k + 1];
     const d = segDist(x, z, r.xs[i], r.zs[i], r.xs[i + 1], r.zs[i + 1], tmp);
@@ -428,9 +435,12 @@ export function heightAt(x, z) {
     const blend = Math.min(TUNE.maxBlend, (TUNE.roadBlend[r.type] || 10) + Math.abs(h - rh) * TUNE.cutBlend);
     if (d >= flat + blend) continue;
     const w = d <= flat ? 1 : 1 - smoother01((d - flat) / blend);
-    if (w > bestW + 1e-6 || (w >= 0.999 && bestW >= 0.999 && r.type === 'asphalt')) { bestW = w; bestH = rh; }
+    if (w <= 0) continue;
+    const kw = Math.pow(w, TUNE.roadMixPower) * (r.type === 'asphalt' ? TUNE.roadMixAsphalt : 1);
+    sumK += kw; sumKH += kw * rh;
+    if (w > maxW) maxW = w;
   }
-  return bestW > 0 ? mix(h, bestH, bestW) : h;
+  return maxW > 0 && sumK > 0 ? mix(h, sumKH / sumK, maxW) : h;
 }
 
 /** Surface normal by central differences, written into out ([x,y,z] array or {x,y,z}). */

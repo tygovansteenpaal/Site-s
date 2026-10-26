@@ -38,7 +38,7 @@ const TUNE = {
   tp: {
     pivotStand: 1.56, pivotCrouch: 1.06, pivotSlide: 0.78, pivotSwim: 1.72,
     shoulder: 0.56, up: 0.1, dist: 2.3, distSprint: 2.65, distCrouch: 2.05, distAds: 1.5,
-    probe: 0.16, margin: 0.14, minDist: 0.25,
+    probe: 0.16, margin: 0.14, minDist: 0.25, groundClear: 0.3,
     inLambda: 40, outLambda: 4.5, shoulderLambda: 9,
     pivotLambdaH: 26, pivotLambdaV: 12,
     bob: 0.35,
@@ -124,6 +124,21 @@ function adsBlend() {
 
 function raycast(o, d, max) {
   try { return world.raycast(o, d, max); } catch (e) { return null; }
+}
+
+/**
+ * Lift p so it stays `clearance` above the ground, both as simulated (world.getHeight) and as drawn
+ * (world.getVisualHeight: the coarser render grid can sit above the physics surface on slopes). Without the second
+ * term the boom probe could park the camera inside a hillside and show the world from underneath.
+ */
+function keepAboveGround(p, clearance) {
+  let gy = -Infinity;
+  try {
+    gy = world.getHeight(p.x, p.z);
+    if (world.getVisualHeight) gy = Math.max(gy, world.getVisualHeight(p.x, p.z));
+  } catch (e) { return p; }
+  if (p.y < gy + clearance) p.y = gy + clearance;
+  return p;
 }
 
 /** Distance along d from o before the probe hits static geometry or terrain (5 rays: centre + 4 offsets). */
@@ -509,6 +524,8 @@ function groundCam(me, dt) {
   camPos.addScaledVector(right, bobX * T.bob);
   // swimming: the boom never dips under the water surface (sea level)
   if (controller.stanceInfo().stance === 'swim') camPos.y = Math.max(camPos.y, 0.3);
+  // never inside the hillside behind or below the player (uphill walks, looking up)
+  keepAboveGround(camPos, TUNE.tp.groundClear);
   // ---- ADS: travel into the weapon sight (the avatar's IRONSIGHT-aligned eye point). Entering eases out (the camera
   // is in the sight well before the weapon finishes raising), leaving eases in; the travel value itself is damped so
   // a reversal mid-way never jumps.
@@ -552,9 +569,7 @@ function chaseCam(me, dt, chute) {
   const d = Math.max(1.2, Math.min(dist, free - 0.3));
   camPos.copy(pivot).addScaledVector(fwd, -d);
   // never below the ground
-  let gy = -Infinity;
-  try { gy = world.getHeight(camPos.x, camPos.z); } catch (e) { gy = -Infinity; }
-  if (camPos.y < gy + 0.6) camPos.y = gy + 0.6;
+  keepAboveGround(camPos, 0.6);
   placeCamera(camPos, yaw, pitch);
   // Freefall buffeting grows with speed.
   const fall = Math.max(0, -me.vel.y);
@@ -608,6 +623,7 @@ function deadCam(me, dt) {
   camPos.copy(body).addScaledVector(fwd, -Math.max(0.8, Math.min(D.dist, free - 0.2)));
   camPos.y += D.up * 0.3;
   camPos.lerpVectors(deathPos, camPos, k);
+  keepAboveGround(camPos, TUNE.tp.groundClear);
   camObj.position.copy(camPos);
   lookAt.copy(body);
   if (killer && deathT > 1.2) lookAt.lerp(tmp3.set(killer.pos.x, killer.pos.y + 1.2, killer.pos.z), smoothstep(1.2, D.duration, deathT) * 0.5);
@@ -644,6 +660,7 @@ function spectateCam(dt) {
   tmp2.copy(fwd).negate();
   const free = probeDistance(sh, tmp2, dist, TUNE.tp.probe);
   camPos.copy(sh).addScaledVector(fwd, -Math.max(0.6, Math.min(dist, free - TUNE.tp.margin)));
+  keepAboveGround(camPos, TUNE.tp.groundClear);
   placeCamera(camPos, yaw, pitch);
   return baseFov();
 }

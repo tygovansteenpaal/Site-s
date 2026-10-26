@@ -337,6 +337,12 @@ export function update(dt, viewPos) {
 export function getHeight(x, z) { return hf.heightAt(x, z); }
 
 /**
+ * Height of the terrain as drawn (the render grid, which is coarser than getHeight on low and medium quality).
+ * Cameras keep clear of max(getHeight, getVisualHeight) so they never look out from under the visible ground.
+ */
+export function getVisualHeight(x, z) { return terrain.gridHeight(x, z); }
+
+/**
  * Highest walkable surface at (x, z) at or below fromY: terrain, floors, stairs, roofs, props.
  * @returns {{y:number, normal:number[], surface:number}}  normal [x,y,z]; surface is a config.SURFACE id
  */

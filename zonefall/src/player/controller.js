@@ -26,6 +26,9 @@ import * as damage from '../combat/damage.js';
 // ------------------------------------------------------------------------------------------ tunables
 const TUNE = {
   maxSubstep: 1 / 60,
+  slopeFootprint: 0.75,        // m: terrain slope is measured over the feet, not at one point (creases no longer stop you)
+  slopeGraceDeg: 5,            // extra slope allowed while already walking (hysteresis: no grounded/sliding flicker)
+  underTerrainRescue: 0.6,     // m below the terrain that counts as "fell through": put back on top
   coyoteTime: 0.11,            // s after walking off a ledge in which a jump still counts
   jumpBuffer: 0.14,            // s a jump press is remembered before touching down
   crouchHoldTime: 0.28,        // crouch held longer than this acts as "hold to crouch"
@@ -75,6 +78,7 @@ export const GAIT = Object.freeze({
 });
 
 const COS_MAX_SLOPE = Math.cos(PLAYER.maxSlopeDeg * DEG);
+const COS_MAX_SLOPE_GROUNDED = Math.cos((PLAYER.maxSlopeDeg + TUNE.slopeGraceDeg) * DEG);
 const UP = new THREE.Vector3(0, 1, 0);
 
 // ------------------------------------------------------------------------------------------ module state
@@ -94,6 +98,7 @@ const st = {
   gaitPhase: 0, gaitStride: 1.4, gaitSide: 0,
   doorsOpen: false,
   chuteT: 0, autoDeployUsed: false, heading: 0, brake: 0,
+  ffDive: 0, ffGlide: 0,       // freefall stick intent this step (0..1): the avatar leans from these, not from the fall speed
   lastLife: -1,
   spawned: false,
 };
@@ -124,10 +129,9 @@ function ground(x, z, fromY) {
   return gRes;
 }
 
-/** Terrain normal from the analytic height function (finite differences), into out [x, y, z]. */
+/** Terrain normal from the analytic height function (finite differences over the footprint), into tn. */
 const tn = { x: 0, y: 1, z: 0 };
-function terrainNormal(x, z) {
-  const e = 0.35;
+function terrainNormal(x, z, e = TUNE.slopeFootprint) {
   const hx = world.getHeight(x + e, z) - world.getHeight(x - e, z);
   const hz = world.getHeight(x, z + e) - world.getHeight(x, z - e);
   const nx = -hx / (2 * e), nz = -hz / (2 * e);
@@ -366,9 +370,10 @@ export function stanceInfo() {
 }
 
 /** Freefall / chute state for the avatar and camera: {chuteT 0..1 canopy opening, brake 0..1, heading rad}. */
-const airOut = { chuteT: 0, brake: 0, heading: 0 };
+const airOut = { chuteT: 0, brake: 0, heading: 0, dive: 0, glide: 0 };
 export function airInfo() {
   airOut.chuteT = st.chuteT; airOut.brake = st.brake; airOut.heading = st.heading;
+  airOut.dive = st.ffDive; airOut.glide = st.ffGlide;
   return airOut;
 }
 
@@ -460,6 +465,7 @@ function stepFreefall(me, h) {
   const lookDown = -me.pitch / DEG;            // degrees below the horizon
   const dive = ax.y > 0.1 ? smoothstep(T.diveStartDeg, T.diveFullDeg, lookDown) * ax.y : 0;
   const glide = ax.y > 0.1 ? ax.y * (1 - dive) : 0;
+  st.ffDive = dive; st.ffGlide = glide;
   const fwdTarget = ax.y < -0.1 ? 0 : T.idleForward + (F.glideSpeed - T.idleForward) * glide + 6 * dive;
   const termV = F.terminal + (F.diveTerminal - F.terminal) * dive - (ax.y < -0.1 ? 4 : 0);
   // Horizontal: approach the target velocity in the heading frame.
@@ -589,6 +595,17 @@ function updateGround(me, dt) {
     stepGround(me, h, ax, ads);
   }
 
+  // Safety net: nothing walkable exists below the terrain (world.getGround never returns it), so a body that ends up
+  // under it (a hard push from a rock, a long frame stall) is put back on top instead of falling out of the world.
+  const th = world.getHeight(me.pos.x, me.pos.z);
+  if (me.pos.y < th - TUNE.underTerrainRescue) {
+    me.pos.y = th;
+    if (me.vel.y < 0) me.vel.y = 0;
+    st.grounded = true;
+    st.groundY = th;
+    st.apexY = th;
+  }
+
   // ---- stance shape smoothing
   st.height = damp(st.height, stanceHeight(st.stance), TUNE.heightLambda, dt);
   st.eye = damp(st.eye, stanceEye(st.stance), TUNE.eyeLambda, dt);
@@ -686,7 +703,11 @@ function stepGround(me, h, ax, ads) {
   const depth = waterDepthAt(me.pos.x, me.pos.z, g.y);
   const swimming = depth > TUNE.swimDepth + 0.05;
   const floorY = swimming ? -TUNE.swimDepth : g.y;
-  const walkable = swimming || g.ny >= COS_MAX_SLOPE;
+  // Terrain steepness is judged over the feet (a narrow crease past the limit is stepped over), and a player who is
+  // already walking keeps a few degrees of grace so the limit itself does not flicker between walking and sliding.
+  const onTerrain = Math.abs(g.y - world.getHeight(me.pos.x, me.pos.z)) < 0.03;
+  const slopeNY = onTerrain ? Math.max(g.ny, terrainNormal(me.pos.x, me.pos.z).y) : g.ny;
+  const walkable = swimming || slopeNY >= (wasGrounded ? COS_MAX_SLOPE_GROUNDED : COS_MAX_SLOPE);
   const snap = wasGrounded && walkable && st.jumpBuf <= 0 ? P.stepHeight : 0.0005;
   st.groundNX = g.nx; st.groundNY = g.ny; st.groundNZ = g.nz;
 
@@ -743,7 +764,7 @@ function limitTerrain(me) {
   if (th <= me.pos.y + 0.02) return;
   const climb = th - Math.max(prevPos.y, st.groundY);
   const n = terrainNormal(me.pos.x, me.pos.z);
-  if (n.y >= COS_MAX_SLOPE && climb <= PLAYER.stepHeight) return;
+  if (n.y >= (st.grounded ? COS_MAX_SLOPE_GROUNDED : COS_MAX_SLOPE) && climb <= PLAYER.stepHeight) return;
   const nl = Math.hypot(n.x, n.z);
   if (nl < 1e-4) return;
   const nx = n.x / nl, nz = n.z / nl;          // horizontal downhill direction

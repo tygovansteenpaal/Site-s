@@ -65,6 +65,9 @@ const TUNE = {
   pouch: [0.13, 1.08, 0.17],    // model space: left mag pouch on the plate carrier
   chute: { height: 5.4, forward: 0.35, span: 7.6, chord: 2.6, cells: 9, arcRadius: 5.4, thickness: 0.34 },
   freefallFrame: 0.83, freefallFlutter: 0.06,
+  // Freefall lean: dive and glide shares eased at lambda (1/s); the start/full look-down angles and idle forward speed
+  // mirror player/controller's TUNE.ff so remote jumpers lean by the same rule as the local one.
+  ffLean: { lambda: 5, diveDeg: 68, glideDeg: 10, diveStartDeg: 12, diveFullDeg: 70, idleForward: 5 },
   swimLift: 1.25,               // model lift while swimming: feet are 1.3 m under the surface, this puts the head out and the back awash
   swimPitchDeg: 11,             // head up, legs trailing under the surface
   remoteGroundSnap: 0.35,
@@ -973,7 +976,8 @@ function animate(av, dt, isLocal) {
   av.root.rotation.y = rootYaw + Math.PI;
   av.model.rotation.set(0, 0, 0);
   av.model.position.set(0, 0, 0);
-  if (av.lsw[LS.freefall] > 0.01) freefallBody(av, e, av.lsw[LS.freefall]);
+  if (av.lsw[LS.freefall] > 0.01) freefallBody(av, e, av.lsw[LS.freefall], dt, isLocal);
+  else { av.ffDive = 0; av.ffGlide = 0; }
   // Swimming: the entity's feet are PLAYER-controller swimDepth below the surface; lift the horizontal Swim pose so
   // the back rides at the water line and the head breaks the surface, bobbing with the stroke.
   if (av.lsw[LS.swim] > 0.01) {
@@ -1577,13 +1581,28 @@ function updateDebris(dt) {
 }
 
 // ---- freefall body attitude
-function freefallBody(av, e, w) {
-  // Belly to earth: the Swim frame is already horizontal. Diving pitches the head down, strafing banks.
-  const descent = -av.vel.y;
-  const dive = smoothstep(33, 50, descent);
-  const fwd = clamp(av.speed / 26, 0, 1);
-  const pitchDown = (dive * 55 + fwd * 8) * DEG;
-  const bank = clamp(av.vr / 7, -1, 1) * 18 * DEG;
+function freefallBody(av, e, w, dt, isLocal) {
+  // Belly to earth: the Swim frame is already horizontal. Diving pitches the head down, gliding leans forward a little,
+  // strafing banks. The lean follows what the jumper does (W plus looking down dives, W level glides) with its own
+  // short ease. It used to follow the fall speed, which needs about two seconds to reach the dive terminal and as long
+  // to bleed off: the body turned head down well after the dive began and stayed head down long after it ended.
+  const F = TUNE.ffLean;
+  let dive, glide;
+  if (isLocal) {
+    const a = localAir();
+    dive = a.dive; glide = a.glide;
+  } else {
+    // Remote jumpers: the same rule from what the snapshots carry (look pitch and horizontal speed), plus the fall
+    // speed as a backstop for a dive that is already fully built up.
+    const hs = Math.hypot(av.vel.x, av.vel.z);
+    const pushing = clamp((hs - F.idleForward) / 3, 0, 1);
+    dive = Math.max(smoothstep(F.diveStartDeg, F.diveFullDeg, -(e.pitch || 0) / DEG) * pushing, smoothstep(44, 52, -av.vel.y));
+    glide = clamp((hs - F.idleForward) / (PLAYER.freefall.glideSpeed - F.idleForward), 0, 1) * (1 - dive);
+  }
+  av.ffDive = damp(av.ffDive || 0, dive, F.lambda, dt);
+  av.ffGlide = damp(av.ffGlide || 0, glide, F.lambda, dt);
+  const pitchDown = (av.ffDive * F.diveDeg + av.ffGlide * F.glideDeg) * DEG;
+  const bank = clamp(av.vr / 7, -1, 1) * 18 * DEG * (1 - 0.6 * av.ffDive);   // a head-down dive barely banks
   av.model.position.y = 0.9 * w;
   av.model.rotation.set(pitchDown * w, 0, -bank * w, 'YXZ');
 }
