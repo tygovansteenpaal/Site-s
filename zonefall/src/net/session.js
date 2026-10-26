@@ -105,10 +105,11 @@ export async function connect(opts) {
       r = mod.joinLocalRoom(config, opts.roomId, callbacks, self);
       sockets = () => ({ local: { readyState: 1 } });
     } else {
-      const mod = await import('trystero');
+      const [mod, fetched] = await Promise.all([import('trystero'), turnServers()]);
       self = mod.selfId;
       config.relayConfig = { urls: NET.relays };
-      if (NET.turn && NET.turn.length) config.turnConfig = NET.turn;
+      const turn = [...(NET.turn || []), ...fetched];
+      if (turn.length) config.turnConfig = turn;
       r = mod.joinRoom(config, opts.roomId, callbacks);
       sockets = mod.getRelaySockets;
     }
@@ -156,6 +157,32 @@ export async function connect(opts) {
   timers.push(setInterval(refreshDiagnostics, TUNE.diagEveryMs));
   setStatus('online', relayText());
   return { roomId, selfId: mySelf };
+}
+
+/**
+ * ICE servers from NET.turnCredentialsUrl (cached for the session; credentials from such endpoints last hours).
+ * Never throws: without TURN the game still connects every pair that a direct route works for.
+ */
+let turnCache = null;
+async function turnServers() {
+  if (!NET.turnCredentialsUrl) return [];
+  if (turnCache) return turnCache;
+  const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctl ? setTimeout(() => ctl.abort(), NET.turnFetchTimeoutMs) : 0;
+  try {
+    const res = await fetch(NET.turnCredentialsUrl, ctl ? { signal: ctl.signal } : undefined);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    const list = Array.isArray(body) ? body : Array.isArray(body && body.iceServers) ? body.iceServers : [];
+    turnCache = list.filter((s) => s && (typeof s.urls === 'string' || Array.isArray(s.urls)));
+    debug.net = Object.assign(debug.net || {}, { turn: turnCache.length });
+    return turnCache;
+  } catch (err) {
+    console.warn('[NET/session] TURN credentials unavailable, connecting without relay fallback:', err && err.message || err);
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function relayText() {
@@ -209,6 +236,18 @@ function onJoinError(e) {
   } else if (/password/i.test(text)) {
     counters.lastToastAt = now;
     emit(EV.TOAST, { text: 'Lobby code rejected by another player.', kind: 'warn', ms: 4000 });
+  } else if (/could not connect|after exchanging SDP/i.test(text)) {
+    // Both sides found each other through the relays, but no direct route exists between their networks (strict
+    // NAT, school or office wifi, mobile data) and there is no TURN relay to fall back on. Say so instead of
+    // leaving both players looking at an empty lobby.
+    counters.lastToastAt = now;
+    const hasTurn = (NET.turn && NET.turn.length) || (turnCache && turnCache.length);
+    emit(EV.TOAST, {
+      text: hasTurn
+        ? 'Found a player but could not connect through the relay server. Try again in a moment.'
+        : 'Found a player but your networks block a direct connection. Try another network (home wifi instead of school or mobile data).',
+      kind: 'warn', ms: 7000,
+    });
   }
 }
 

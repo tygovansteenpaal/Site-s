@@ -1,7 +1,7 @@
 // ZONEFALL - central tunables. OWNER: LEAD (read-only for builders; see ARCHITECTURE.md section 11).
 // Units: metres, seconds, degrees where a key ends in Deg, milliseconds where a key ends in Ms.
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 export const GAME_NAME = 'ZONEFALL';
 
 // ---------------------------------------------------------------- paths
@@ -297,10 +297,15 @@ export const BOTS = Object.freeze({
 // ---------------------------------------------------------------- networking (Trystero Nostr, see ARCHITECTURE.md section 8)
 export const NET = Object.freeze({
   appId: 'zonefall-v1',
-  protocol: 1,
+  protocol: 2,                            // 2: terrain height changed (road and coast fixes); older builds must not share a match
   relays: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.snort.social', 'wss://nostr.mom',
     'wss://relay.nostr.net', 'wss://nostr.oxtr.dev', 'wss://relay.piazza.today', 'wss://nostr.rblb.it'],
   turn: [],                               // [{urls, username, credential}] when a TURN account exists
+  // Optional URL that returns a JSON array of ICE servers with fresh TURN credentials (for example a Metered
+  // "https://<app>.metered.live/api/v1/turn/credentials?apiKey=<key>" endpoint). Without TURN, two players behind
+  // strict NATs (school or office wifi, many 4G/5G networks) find each other in the lobby but can never connect.
+  turnCredentialsUrl: '',
+  turnFetchTimeoutMs: 4000,
   snapRate: 20, lobbySnapRate: 5, botRate: 15,
   interpDelay: 100, interpMin: 80, interpMax: 200,
   staleMs: 3000, dropMs: 10000,
