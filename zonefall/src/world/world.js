@@ -16,6 +16,7 @@ import * as water from './water.js';
 import * as props from './props.js';
 import * as foliage from './foliage.js';
 import * as collision from './collision.js';
+import * as assets from '../engine/assets.js';
 import { buildLayout, corners } from './layout.js';
 import { buildBuildings } from './buildings.js';
 import { buildArrays, surfaceMaterial } from './materials.js';
@@ -94,6 +95,7 @@ export async function build(opts) {
     mesh.matrixAutoUpdate = false;
     worldRoot.add(mesh);
   }
+  const cityRoot = placeCity();
   await run('props', (p) => props.buildProps(worldRoot, layout, quality, groundForProps, p));
   layout.hedges = buildingsOut.hedges;
   await run('foliage', (p) => foliage.buildFoliage(worldRoot, layout, quality, p));
@@ -109,6 +111,10 @@ export async function build(opts) {
     addBoxes(buildingsOut.boxes);
     for (const t of buildingsOut.tris) set.tri([t.p[0], t.p[1], t.p[2]], [t.p[3], t.p[4], t.p[5]], [t.p[6], t.p[7], t.p[8]], t.s);
     addBoxes(props.propColliders());
+    if (cityRoot) {
+      const collides = (o) => { for (let n = o; n && n !== cityRoot; n = n.parent) if (n.name.startsWith('COL_')) return true; return false; };
+      cityRoot.traverse((o) => { if (o.isMesh && collides(o)) set.geometry(o.geometry, o.matrixWorld, SURFACE.CONCRETE); });
+    }
     foliage.addColliders(set);
     return collision.buildCollision([set]);
   });
@@ -127,6 +133,33 @@ export async function build(opts) {
   });
   installDebug();
   return { stats: { ...stats } };
+}
+
+// ------------------------------------------------------------------------------------------ Downtown
+/** The city block model on its pad (street plane just above the flattened terrain); null when the map has none. */
+function placeCity() {
+  const sp = layout.special.find((q) => q.kind === 'city');
+  if (!sp) return null;
+  const site = ALL_SITES.find((q) => q.id === sp.site);
+  const root = assets.cloneModel('city');
+  root.name = 'city';
+  root.position.set(sp.x, site.h + 0.03, sp.z);
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    o.castShadow = !/lanes|Streets|side_walks|Curb|Decal/i.test(o.name);
+    o.receiveShadow = true;
+    o.matrixAutoUpdate = false;
+    // the source materials are near mirror-smooth (wet-looking streets under the island sky): matte them down
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!m || m.userData.zfMatte || /glass/i.test(m.name)) continue;
+      m.roughness = Math.max(m.roughness ?? 1, 0.78);
+      m.metalness = Math.min(m.metalness ?? 0, 0.25);
+      m.userData.zfMatte = true;
+    }
+  });
+  worldRoot.add(root);
+  root.updateMatrixWorld(true);
+  return root;
 }
 
 // ------------------------------------------------------------------------------------------ ground occlusion

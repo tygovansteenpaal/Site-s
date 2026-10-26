@@ -50,6 +50,16 @@ await MeshoptDecoder.ready;
 const soldier = await load(assetUrl('characters/soldier_a.glb'));
 const clip = soldier.animations.find((c) => c.name === clipName) || soldier.animations[0];
 const cloneSoldier = () => SkeletonUtils.clone(soldier.scene);
+if (Q.has('dump')) {
+  // soldier bind pose for tools/build-models.mjs (auto-rig template): bone positions and bounds in model space
+  const probe = cloneSoldier();
+  probe.traverse((o) => { if (o.isSkinnedMesh) o.skeleton.pose(); });
+  probe.updateMatrixWorld(true);
+  const bones = {};
+  probe.traverse((o) => { if (o.isBone && /^Bip01_/.test(o.name)) bones[o.name.replace(/_/g, ' ')] = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).toArray(); });
+  const b = new THREE.Box3().setFromObject(probe);
+  window.__dump = { bones, lo: b.min.toArray(), hi: b.max.toArray() };
+}
 
 const actors = [];
 const gap = 1.1;

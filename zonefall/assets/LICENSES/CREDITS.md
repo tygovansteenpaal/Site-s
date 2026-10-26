@@ -147,3 +147,17 @@ meshes over 24k triangles simplified, geometry quantised and meshopt-compressed.
 | `skins/lizard.glb` | "Tom Lizard Fortnite Skin" by Fortnite Models (The Realm Geno YT) (https://sketchfab.com/TheRealmGeno) | https://sketchfab.com/3d-models/tom-lizard-fortnite-skin-653ed180eb5842089080300631adfb7c |
 | `skins/huggy.glb` | "Huggy Wuggy/Fortnite" by Elite Big Speakerman (https://sketchfab.com/EvesStudio2008) | https://sketchfab.com/3d-models/huggy-wuggyfortnite-f771667a106749dab4780df426a6d62c |
 | `skins/spongebob.glb` | "Spongebob Squarepants Fortnite" by Guilherme Navarro (https://sketchfab.com/guinavarro.al) | https://sketchfab.com/3d-models/spongebob-squarepants-fortnite-e3828b82d07044b88b52c96fde0d74fd |
+
+## 8. Vehicles, Downtown, Batman and the RPG: Sketchfab
+
+Converted by tools/build-models.mjs (simplified, textures resized to WebP, quantised, meshopt-compressed; Batman was
+rigged onto the game's 20-bone skeleton there; the RPG was rescaled and given weapon sockets; Downtown was scaled to
+0.85). The characters, vehicles and brands shown belong to their respective rights holders.
+
+| Game file | Original model | Licence | Source |
+|---|---|---|---|
+| `vehicles/plane.glb` | "Toon Plane" by Spacca (https://sketchfab.com/Spacca) | CC BY 4.0 | https://sketchfab.com/3d-models/toon-plane-ad5fbeef2fae418789ddba0945b1e03c |
+| `weapons/sketchfab/rpg.glb` | "Fortnite RPG" by Ghozali.Ghozalu (https://sketchfab.com/Ghozali.Ghozalu) | CC BY 4.0 | https://sketchfab.com/3d-models/fortnite-rpg-17dbea91790c48e0a57588ad37d79e80 |
+| `vehicles/p1.glb` | "AC - Mclaren P1 [FREE]" by Meshava (https://sketchfab.com/7093) | Sketchfab Standard | https://sketchfab.com/3d-models/ac-mclaren-p1-free-747cedadc302451db61deafc85941395 |
+| `skins/batman.glb` | "Bruce Wayne Batman Arkham City" by Tigerar1 (https://sketchfab.com/allanromanreyes) | Sketchfab Standard | https://sketchfab.com/3d-models/bruce-wayne-batman-arkham-city-b786e850419b429db10accd4e6052c43 |
+| `props/city/city.glb` | "Procedural City 3" by abhayexe (https://sketchfab.com/abhayexe) | Sketchfab Standard | https://sketchfab.com/3d-models/procedural-city-3-56002f4a388745388911a45cf677a7a2 |

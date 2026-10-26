@@ -7,7 +7,7 @@
 // open, binary goes through the reliable 'bin' action. Host = lexicographically lowest id among self and the non-stale
 // peers (during a match: among the roster's humans), recomputed on every membership or liveness change.
 import { NET } from '../config.js';
-import { emit, on, EV } from '../core/bus.js';
+import { emit, on, EV, registerEvents } from '../core/bus.js';
 import { state, debug, APP } from '../core/state.js';
 import { PROTOCOL_VERSION, ACTIONS, validate, toArrayBuffer } from './protocol.js';
 
@@ -29,9 +29,12 @@ export const TUNE = {
   rttLambda: 0.3,          // EMA weight of a new ping sample
 };
 
+/** Events for actions added after the core set: vehicles (game/vehicles) and rockets (combat/rockets). */
+export const NEV = registerEvents({ NET_VEH: 'net:veh', NET_RKT: 'net:rkt' });   // {from, data}
+
 const ACTION_EVENT = {
   hello: EV.NET_HELLO, lobby: EV.NET_LOBBY, start: EV.NET_START, hit: EV.NET_HIT, death: EV.NET_DEATH,
-  pick: EV.NET_PICK, drop: EV.NET_DROP, nade: EV.NET_NADE,
+  pick: EV.NET_PICK, drop: EV.NET_DROP, nade: EV.NET_NADE, veh: NEV.NET_VEH, rkt: NEV.NET_RKT,
 };
 const ACTION_NAMES = Object.values(ACTIONS);
 

@@ -11,7 +11,7 @@ export const MSG = Object.freeze({ PSNAP: 1, BOTS: 2, SHOT: 3 });
 /** Reliable action ids (<= 32 bytes each). */
 export const ACTIONS = Object.freeze({
   HELLO: 'hello', LOBBY: 'lobby', START: 'start', HIT: 'hit', DEATH: 'death',
-  PICK: 'pick', DROP: 'drop', NADE: 'nade', HOST: 'host', BIN: 'bin',
+  PICK: 'pick', DROP: 'drop', NADE: 'nade', HOST: 'host', BIN: 'bin', VEH: 'veh', RKT: 'rkt',
 });
 
 export const PSNAP_SIZE = 40;
@@ -232,6 +232,23 @@ export const validate = Object.freeze({
     if (!d || typeof d !== 'object') return null;
     const out = { gid: str(d.gid, 48), by: str(d.by, 40), o: vec3(d.o), v: vec3(d.v), fuse: numIn(d.fuse, 0, 10), t: numIn(d.t, -1e9, 1e9) };
     for (const k in out) if (out[k] === null) return null;
+    return out;
+  },
+  // vehicle enter / exit / pose: {id, d: driver id | null, p: [x, y, z], y: yaw, s: speed}
+  veh(d) {
+    if (!d || typeof d !== 'object') return null;
+    const id = str(d.id, 16), p = vec3(d.p), y = numIn(d.y, -10, 10), s = numIn(d.s, -100, 100);
+    if (!id || !p || y === null || s === null) return null;
+    const drv = d.d == null ? null : str(d.d, 40);
+    if (d.d != null && !drv) return null;
+    return { id, d: drv, p, y, s };
+  },
+  // rocket fired: {rid, by, o: origin, v: velocity m/s, t: match time ms}
+  rkt(d) {
+    if (!d || typeof d !== 'object') return null;
+    const out = { rid: str(d.rid, 48), by: str(d.by, 40), o: vec3(d.o), v: vec3(d.v), t: numIn(d.t, -1e9, 1e9) };
+    for (const k in out) if (out[k] === null) return null;
+    if (Math.hypot(...out.v) > 400) return null;
     return out;
   },
   // {ep, id}

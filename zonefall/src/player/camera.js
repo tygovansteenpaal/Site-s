@@ -30,6 +30,7 @@ import * as input from '../engine/input.js';
 import * as controller from './controller.js';
 import * as avatar from './avatar.js';
 import * as plane from '../game/plane.js';
+import * as vehicles from '../game/vehicles.js';
 import * as world from '../world/world.js';
 
 // ------------------------------------------------------------------------------------------ tunables
@@ -228,6 +229,13 @@ export function look(dt) {
   const lim = PLAYER.pitchLimitDeg * DEG;
   const freelook = input.down('freelook') && ads < 0.05;
 
+  if (hasFlag(me, FLAG.DRIVE)) {
+    // driving: the mouse orbits the chase camera; it swings back behind the car once the mouse rests
+    const moving = Math.abs(dYaw) + Math.abs(dPitch) > 1e-5;
+    carYaw = moving ? carYaw + dYaw : damp(carYaw, 0, 1.6, dt);
+    carPitch = clamp(carPitch + dPitch, -0.35, 0.7);
+    return;
+  }
   switch (me.life) {
     case LIFE.DEAD:
     case LIFE.SPECTATE:
@@ -432,11 +440,28 @@ function matchCam(me, dt) {
     case LIFE.PLANE: return planeCam(me, dt);
     case LIFE.FREEFALL:
     case LIFE.CHUTE: return chaseCam(me, dt, me.life === LIFE.CHUTE);
-    case LIFE.GROUND: return groundCam(me, dt);
+    case LIFE.GROUND:
+      if (hasFlag(me, FLAG.DRIVE)) return driveCam(me, dt);
+      carCamInit = false;
+      return groundCam(me, dt);
     case LIFE.DEAD: return deadCam(me, dt);
     default: return spectateCam(dt);
   }
 }
+
+// ------------------------------------------------------------------------------------------ driving
+let carYaw = 0, carPitch = 0;
+const carCamPos = new THREE.Vector3(), carCamLook = new THREE.Vector3();
+let carCamInit = false;
+function driveCam(me, dt) {
+  if (!vehicles.cameraFor(carYaw, carPitch, carCamPos, carCamLook)) return groundCam(me, dt);
+  if (!carCamInit) { camObj.position.copy(carCamPos); carCamInit = true; }
+  else camObj.position.lerp(carCamPos, 1 - Math.exp(-9 * dt));
+  camObj.up.set(0, 1, 0);
+  camObj.lookAt(carCamLook);
+  return baseFov() + Math.min(12, (me.speed || 0) * 0.28);
+}
+on(EV.MATCH_START, () => { carYaw = 0; carPitch = 0; carCamInit = false; });
 
 function tpCameraPosition(me, out) {
   const yaw = me.yaw + freeYaw, pitch = me.pitch + freePitch;

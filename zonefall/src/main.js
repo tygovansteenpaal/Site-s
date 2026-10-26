@@ -28,6 +28,7 @@ import * as weapons from './combat/weapons.js';
 import * as ballistics from './combat/ballistics.js';
 import * as damage from './combat/damage.js';
 import * as grenades from './combat/grenades.js';
+import * as rockets from './combat/rockets.js';
 import * as vfx from './combat/vfx.js';
 import * as viewmodel from './combat/viewmodel.js';
 import * as session from './net/session.js';
@@ -35,6 +36,7 @@ import * as sync from './net/sync.js';
 import * as lobby from './net/lobby.js';
 import * as match from './game/match.js';
 import * as plane from './game/plane.js';
+import * as vehicles from './game/vehicles.js';
 import * as zone from './game/zone.js';
 import * as loot from './game/loot.js';
 import * as bots from './game/bots.js';
@@ -163,11 +165,13 @@ async function boot() {
   damage.init();
   weapons.init();
   grenades.init(gfx.scene);
+  rockets.init(gfx.scene);
   vfx.init(gfx.scene);
   viewmodel.init();
   sync.init();
   lobby.init();
   plane.init(gfx.scene);
+  vehicles.init(gfx.scene);
   zone.init(gfx.scene);
   loot.init(gfx.scene);
   bots.init();
@@ -273,8 +277,10 @@ function frame(dt, now, hidden = false) {
       match.update(dt);      // timeline, phases, win check
       plane.update(dt);
       controller.update(dt); // local movement
+      vehicles.update(dt);   // cars (the local driver after the controller, which stands still while driving)
       weapons.update(dt);    // local firing (uses fresh aim)
       grenades.update(dt);
+      rockets.update(dt);
       bots.update(dt);       // host only
       damage.update(dt);     // regen
       zone.update(dt);

@@ -16,7 +16,7 @@ import { mountSettings } from './settings.js';
 import { mountShop } from './shop.js';
 import * as profile from '../core/profile.js';
 
-export const CREDITS_TEXT = 'Soldiers: Microsoft Rocketbox Avatar Library (MIT). Animations: Quaternius Universal Animation Library (CC0) and Rocketbox. Weapons: Stein Games, 3dmodelscc0, Poly Haven (CC0). Props, textures and skies: Poly Haven (CC0). Gunshot recordings: Vincent Sevedge, CC BY 3.0 (opengameart.org/content/gunshot-sounds), sliced and edited. Reload sounds: SpringySpringo (CC0). Impact and footstep sounds: Kenney (CC0). Character outfits: Sketchfab models by mochi, Neut2000, HarrisonHag1, Jesús Dorado, GatoBugadoBR, TheBuffalo, Desireless, Fortnite Models (The Realm Geno YT), Elite Big Speakerman, Guilherme Navarro, CC BY 4.0, converted for the game.';
+export const CREDITS_TEXT = 'Soldiers: Microsoft Rocketbox Avatar Library (MIT). Animations: Quaternius Universal Animation Library (CC0) and Rocketbox. Weapons: Stein Games, 3dmodelscc0, Poly Haven (CC0). Props, textures and skies: Poly Haven (CC0). Gunshot recordings: Vincent Sevedge, CC BY 3.0 (opengameart.org/content/gunshot-sounds), sliced and edited. Reload sounds: SpringySpringo (CC0). Impact and footstep sounds: Kenney (CC0). Character outfits: Sketchfab models by mochi, Neut2000, HarrisonHag1, Jesús Dorado, GatoBugadoBR, TheBuffalo, Desireless, Fortnite Models (The Realm Geno YT), Elite Big Speakerman, Guilherme Navarro, CC BY 4.0, converted for the game. Drop plane: Toon Plane by Spacca (CC BY 4.0). RPG: Ghozali.Ghozalu (CC BY 4.0). McLaren P1: Meshava; Batman: Tigerar1; Downtown: Procedural City 3 by abhayexe (Sketchfab Standard).';
 
 const TIPS = [
   'Armor plates absorb bullet damage before health. Press [plate] to insert one; it takes just over a second.',
@@ -303,6 +303,7 @@ function buildCredits() {
     ['Animations', 'Quaternius Universal Animation Library 1 and 2, retargeted; Rocketbox', 'CC0 / MIT'],
     ['Weapons', 'Stein Games Classic Weapons Pack, 3dmodelscc0 Guns and Explosives Pack, Poly Haven', 'CC0'],
     ['Props, textures, skies', 'Poly Haven and its artists', 'CC0'],
+    ['Vehicles, RPG, Downtown', 'Sketchfab: Spacca, Ghozali.Ghozalu (CC BY 4.0); Meshava, Tigerar1, abhayexe (Sketchfab Standard)', 'CC BY 4.0 / Standard'],
     ['Outfits', 'Sketchfab: mochi, Neut2000, HarrisonHag1, Jesús Dorado, GatoBugadoBR, TheBuffalo, Desireless, Fortnite Models (The Realm Geno YT), Elite Big Speakerman, Guilherme Navarro', 'CC BY 4.0'],
     ['Gunshot recordings', 'Vincent Sevedge, opengameart.org/content/gunshot-sounds, sliced and edited', 'CC BY 3.0'],
     ['Reload sounds', 'SpringySpringo', 'CC0'],

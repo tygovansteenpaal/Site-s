@@ -811,7 +811,7 @@ function useful(b, it) {
   const inv = b.inv;
   switch (it.type) {
     case 'crate': return true;
-    case 'weapon': return it.ref !== 'm1911' && (!inv.primary || (RANK[it.ref] || 0) > (RANK[inv.primary.weapon] || 0) + 0.1 || (it.ref === inv.primary.weapon && lowAmmo(b)));
+    case 'weapon': return it.ref !== 'm1911' && it.ref !== 'rpg' && (!inv.primary || (RANK[it.ref] || 0) > (RANK[inv.primary.weapon] || 0) + 0.1 || (it.ref === inv.primary.weapon && lowAmmo(b)));
     case 'ammo': {
       const want = new Set([WEAPONS.m1911.ammo]);
       if (inv.primary) want.add(WEAPONS[inv.primary.weapon].ammo);

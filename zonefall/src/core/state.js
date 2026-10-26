@@ -11,6 +11,7 @@ export const LIFE = Object.freeze({ PLANE: 0, FREEFALL: 1, CHUTE: 2, GROUND: 3, 
 export const FLAG = Object.freeze({
   CROUCH: 1 << 0, ADS: 1 << 1, FIRING: 1 << 2, SPRINT: 1 << 3, RELOAD: 1 << 4,
   SLIDE: 1 << 5, AIRBORNE: 1 << 6, THROW: 1 << 7, PLATE: 1 << 8, MANTLE: 1 << 9,
+  DRIVE: 1 << 10,   // in a vehicle (game/vehicles): the avatar is hidden, the car follows the entity
 });
 
 /** App-level screens. */
