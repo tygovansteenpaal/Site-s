@@ -27,9 +27,9 @@ hardware acceleration, plus a mouse and keyboard (a standard gamepad also works)
 
 ## Outfits, coins and the shop
 
-Main menu > **Locker & shop** lists every outfit: the default Operator and 11 character skins in three rarities
-(rare 800, epic 1200, legendary 2000 coins). A new profile starts with 1000 coins. Four outfits are featured each day.
-Buying an outfit equips it; owned outfits can be swapped at any time and are worn from the next match. Coins are
+Main menu > **Locker & shop** lists every outfit: the default Operator and 11 character skins in three rarities.
+All outfits are free for now (price 0 in `config.SKINS`). Four outfits are featured each day. The equipped outfit
+can be swapped at any time and is worn from the next match. Coins are
 paid once per match, when your placement is known (your elimination or the win), and the amount is shown on the
 death and results screens. Coins, owned outfits and the equipped outfit live in this browser only.
 
