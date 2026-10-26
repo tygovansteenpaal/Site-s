@@ -126,3 +126,24 @@ Files: `audio/explosion_*.mp3`, `wind_loop.mp3`, `plane_loop.mp3`, `freefall_loo
 
 ### In-game credits text (must appear on the Credits screen)
 "Soldiers: Microsoft Rocketbox Avatar Library (MIT). Animations: Quaternius Universal Animation Library (CC0) and Rocketbox. Weapons: Stein Games, 3dmodelscc0, Poly Haven (CC0). Props, textures and skies: Poly Haven (CC0). Gunshot recordings: Vincent Sevedge, CC BY 3.0 (opengameart.org/content/gunshot-sounds), sliced and edited. Reload sounds: SpringySpringo (CC0). Impact and footstep sounds: Kenney (CC0)."
+
+## 7. Character outfits: Sketchfab (CC BY 4.0)
+
+Licence: Creative Commons Attribution 4.0, http://creativecommons.org/licenses/by/4.0/. Changes for the game (by
+tools/build-skins.mjs): key bones renamed, animations removed, textures resized to 1024 px and converted to WebP,
+meshes over 24k triangles simplified, geometry quantised and meshopt-compressed. The shop images in
+`skins/thumbs/` are renders of these models. The characters themselves belong to their respective rights holders.
+
+| Game file | Original model | Source |
+|---|---|---|
+| `skins/jonesy.glb` | "Jonesy fortnite" by mochi (https://sketchfab.com/chemi.45) | https://sketchfab.com/3d-models/jonesy-fortnite-f27577cc57a4499ab132210a3c96c2b3 |
+| `skins/deadpool.glb` | "Deadpool Fortnite Skin" by Neut2000 (https://sketchfab.com/Neut2000) | https://sketchfab.com/3d-models/deadpool-fortnite-skin-d1098004d7f5474eb1c5cdd6112376b1 |
+| `skins/stormtrooper.glb` | "PC Computer - Fortnite - Stormtrooper" by HarrisonHag1 (https://sketchfab.com/HarrisonHag1) | https://sketchfab.com/3d-models/pc-computer-fortnite-stormtrooper-6681f4496b074eabadebea0b4cbf7abf |
+| `skins/banana.glb` | "Banana Dancing Fortnite" by Jesús Dorado (https://sketchfab.com/chuchodorado416) | https://sketchfab.com/3d-models/banana-dancing-fortnite-c1db1b10f9b14717ba731d7f49d25443 |
+| `skins/daffy.glb` | "Daffy Duck - Fortnite Skin" by GatoBugadoBR (https://sketchfab.com/GatoBugadoBR) | https://sketchfab.com/3d-models/daffy-duck-fortnite-skin-3b1d72feecf34d5d93ee3733b02fbbc1 |
+| `skins/drake.glb` | "Fortnite - Sgt. Drake" by TheBuffalo (https://sketchfab.com/matiasjonderdiscord) | https://sketchfab.com/3d-models/fortnite-sgt-drake-4fe7a1041b6d42ccb90a26555040c5cc |
+| `skins/bandit.glb` | "Fortnite Psycho Bandit from Borderlands" by Desireless (https://sketchfab.com/mmmarahmad125) | https://sketchfab.com/3d-models/fortnite-psycho-bandit-from-borderlands-47dc37bf07434c48b5d556de9a5a02de |
+| `skins/rigby.glb` | "Rigby - Fortnite Sidekick" by GatoBugadoBR (https://sketchfab.com/GatoBugadoBR) | https://sketchfab.com/3d-models/rigby-fortnite-sidekick-c809262514a14bb78bc645acaafd4a90 |
+| `skins/lizard.glb` | "Tom Lizard Fortnite Skin" by Fortnite Models (The Realm Geno YT) (https://sketchfab.com/TheRealmGeno) | https://sketchfab.com/3d-models/tom-lizard-fortnite-skin-653ed180eb5842089080300631adfb7c |
+| `skins/huggy.glb` | "Huggy Wuggy/Fortnite" by Elite Big Speakerman (https://sketchfab.com/EvesStudio2008) | https://sketchfab.com/3d-models/huggy-wuggyfortnite-f771667a106749dab4780df426a6d62c |
+| `skins/spongebob.glb` | "Spongebob Squarepants Fortnite" by Guilherme Navarro (https://sketchfab.com/guinavarro.al) | https://sketchfab.com/3d-models/spongebob-squarepants-fortnite-e3828b82d07044b88b52c96fde0d74fd |

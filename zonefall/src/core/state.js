@@ -99,10 +99,11 @@ export const state = {
  *  remote humans: net/sync (everything except kills)      bots: game/bots on the host, net/sync elsewhere
  *  kills/damage counters: game/match (from PLAYER_KILLED / PLAYER_DAMAGED events)
  */
-export function createPlayer({ id, name, kind, owner = id, slot = 0 }) {
+export function createPlayer({ id, name, kind, owner = id, slot = 0, skin = 'soldier' }) {
   if (state.players.has(id)) return state.players.get(id);
   const e = {
     id, name: String(name || 'Player').slice(0, 16), kind, owner, slot,
+    skin,                 // config.SKINS id; writer: game/match from the roster (fixed for the match)
     alive: true, life: LIFE.PLANE,
     hp: PLAYER.health, armor: 0,
     pos: new THREE.Vector3(), vel: new THREE.Vector3(), yaw: 0, pitch: 0,

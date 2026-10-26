@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZONEFALL - skins bench</title>
+  <!-- Every skin next to the soldier, all driven by the same soldier clip through player/skin.js.
+       ?clip=Rifle_Aim | Jog | Sprint | ...  ?only=jonesy  ?thumb=jonesy (one skin, transparent, for the shop images) -->
+  <script type="importmap">
+  { "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+  } }
+  </script>
+  <style>html, body { margin: 0; height: 100%; background: #20242a; overflow: hidden; } canvas { display: block; }
+    #lbl { position: fixed; left: 0; right: 0; bottom: 12px; display: flex; justify-content: space-around; color: #ddd; font: 12px monospace; }</style>
+</head>
+<body>
+<div id="lbl"></div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { SKINS, SKIN_DEFAULT, assetUrl, skinUrl } from '../src/config.js';
+import { createSkin, retarget } from '../src/player/skin.js';
+
+const Q = new URLSearchParams(location.search);
+const clipName = Q.get('clip') || 'Rifle_Idle';
+const thumb = Q.get('thumb');
+const ids = thumb ? [thumb] : (Q.get('only') ? Q.get('only').split(',') : Object.keys(SKINS));
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: !!thumb, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+if (!thumb) scene.background = new THREE.Color(0x20242a);
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x3a3328, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 2.6); sun.position.set(-2.5, 5, -6); scene.add(sun);   // camera side (-Z)
+const rim = new THREE.DirectionalLight(0xbfd4ff, 1.2); rim.position.set(3, 3, 5); scene.add(rim);
+if (thumb) document.documentElement.style.background = document.body.style.background = 'transparent';
+const camera = new THREE.PerspectiveCamera(thumb ? 26 : 35, innerWidth / innerHeight, 0.1, 100);
+
+const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+const load = (url) => new Promise((res, rej) => loader.load(url, res, undefined, rej));
+await MeshoptDecoder.ready;
+const soldier = await load(assetUrl('characters/soldier_a.glb'));
+const clip = soldier.animations.find((c) => c.name === clipName) || soldier.animations[0];
+const cloneSoldier = () => SkeletonUtils.clone(soldier.scene);
+
+const actors = [];
+const gap = 1.1;
+for (let i = 0; i < ids.length; i++) {
+  const id = ids[i];
+  const root = new THREE.Group();
+  root.position.x = -(i - (ids.length - 1) / 2) * gap;   // the camera looks along +Z, so +X is screen left
+  root.rotation.y = Math.PI;          // soldier model faces +Z; the avatar root turns it to face -Z, like the game
+  scene.add(root);
+  const model = cloneSoldier();
+  root.add(model);
+  const mixer = new THREE.AnimationMixer(model);
+  mixer.clipAction(clip).play();
+  let skin = null;
+  if (id !== SKIN_DEFAULT) {
+    const g = await load(skinUrl(id));
+    skin = createSkin(g, 'soldier_a', cloneSoldier);
+    root.add(skin.group);
+    model.traverse((o) => { if (o.isMesh) o.material = new THREE.MeshBasicMaterial({ visible: false }); });
+  }
+  actors.push({ id, root, model, mixer, skin });
+  const tag = document.createElement('span'); tag.textContent = thumb ? '' : SKINS[id].name; document.getElementById('lbl').appendChild(tag);
+}
+const span = (ids.length - 1) * gap;
+if (thumb) { camera.position.set(0, 1.1, -5.4); camera.lookAt(0, 0.93, 0); }
+else { camera.position.set(0, 1.4, -(span * 0.9 + 3.5)); camera.lookAt(0, 0.9, 0); }
+const turn = Q.has('turn') ? +Q.get('turn') : 0;
+for (const a of actors) a.root.rotation.y += turn;
+
+const clock = new THREE.Clock();
+window.__ready = false;
+function frame() {
+  const dt = Math.min(0.05, clock.getDelta());
+  for (const a of actors) {
+    a.mixer.update(Q.has('still') ? 0 : dt);
+    a.root.updateMatrixWorld(true);
+    if (a.skin) retarget(a.skin, a.root, a.model);
+  }
+  renderer.render(scene, camera);
+  window.__ready = true;
+  requestAnimationFrame(frame);
+}
+frame();
+</script>
+</body>
+</html>

@@ -13,8 +13,10 @@ import { VERSION, NET, MATCH, assetUrl } from '../config.js';
 import * as lobbyNet from '../net/lobby.js';
 import { h, sfx, GLYPH, esc, keycap } from './dom.js';
 import { mountSettings } from './settings.js';
+import { mountShop } from './shop.js';
+import * as profile from '../core/profile.js';
 
-export const CREDITS_TEXT = 'Soldiers: Microsoft Rocketbox Avatar Library (MIT). Animations: Quaternius Universal Animation Library (CC0) and Rocketbox. Weapons: Stein Games, 3dmodelscc0, Poly Haven (CC0). Props, textures and skies: Poly Haven (CC0). Gunshot recordings: Vincent Sevedge, CC BY 3.0 (opengameart.org/content/gunshot-sounds), sliced and edited. Reload sounds: SpringySpringo (CC0). Impact and footstep sounds: Kenney (CC0).';
+export const CREDITS_TEXT = 'Soldiers: Microsoft Rocketbox Avatar Library (MIT). Animations: Quaternius Universal Animation Library (CC0) and Rocketbox. Weapons: Stein Games, 3dmodelscc0, Poly Haven (CC0). Props, textures and skies: Poly Haven (CC0). Gunshot recordings: Vincent Sevedge, CC BY 3.0 (opengameart.org/content/gunshot-sounds), sliced and edited. Reload sounds: SpringySpringo (CC0). Impact and footstep sounds: Kenney (CC0). Character outfits: Sketchfab models by mochi, Neut2000, HarrisonHag1, Jesús Dorado, GatoBugadoBR, TheBuffalo, Desireless, Fortnite Models (The Realm Geno YT), Elite Big Speakerman, Guilherme Navarro, CC BY 4.0, converted for the game.';
 
 const TIPS = [
   'Armor plates absorb bullet damage before health. Press [plate] to insert one; it takes just over a second.',
@@ -33,6 +35,7 @@ const ITEMS = [
   { id: 'quickplay', label: 'Quick play', sub: `Public lobby for up to ${MATCH.maxHumans} players. Bots fill every empty slot.`, primary: true },
   { id: 'private', label: 'Private match', sub: 'Create a lobby and share the code, or join one.' },
   { id: 'practice', label: 'Practice vs bots', sub: `Offline match against ${MATCH.maxPlayers - 1} bots. Pauses when you open the menu.` },
+  { id: 'shop', label: 'Locker & shop', sub: 'Outfits for you on the island. Buy with coins earned in matches.' },
   { id: 'settings', label: 'Settings', sub: 'Sensitivity, field of view, graphics, audio, controls.' },
   { id: 'credits', label: 'Credits', sub: 'Assets, sounds and licences.' },
 ];
@@ -40,7 +43,7 @@ const ITEMS = [
 let root = null, loadingEl = null, menuEl = null;
 let countEl = null, labelEl = null, barEl = null, tipEl = null, surveyEl = null, stageEls = [];
 let panelEl = null, panelBody = null, panelTitle = null, navEl = null;
-let settingsPanel = null, privateEl = null, creditsEl = null;
+let settingsPanel = null, privateEl = null, creditsEl = null, shopPanel = null;
 let view = 'home';
 let tipTimer = 0, tipIdx = 0;
 let loadingShown = false, loadP = 0;
@@ -139,10 +142,19 @@ function buildMenu() {
   on(EV.SETTINGS_CHANGED, ({ key }) => { if (key === 'muted') paintSound(); });
   paintSound();
 
+  const coinBtn = h('button', { type: 'button', class: 'zf-iconbtn zf-coinbtn', 'aria-label': 'Open the shop' });
+  const paintCoins = () => {
+    coinBtn.textContent = '';
+    coinBtn.append(h('span', { class: 'zf-coin', 'aria-hidden': 'true' }), h('span', { text: profile.coins().toLocaleString('en-US') }));
+  };
+  coinBtn.addEventListener('click', () => { sfx('tick'); setView('shop'); });
+  on(profile.PEV.PROFILE_CHANGED, paintCoins);
+  paintCoins();
+
   const top = h('header', { class: 'zf-menu__top' },
     h('div', { class: 'zf-brand', html: `${GLYPH.mark}<span class="zf-brand__name">ZONEFALL</span>` }),
     h('div', { class: 'zf-menu__crumbs', html: `<span>${esc(MAP.name)}</span><span>Solo battle royale</span><span>${MATCH.maxPlayers} operators</span>` }),
-    h('div', { class: 'zf-menu__tools' }, soundBtn));
+    h('div', { class: 'zf-menu__tools' }, coinBtn, soundBtn));
 
   // callsign
   const nameIn = h('input', { type: 'text', class: 'zf-callsign__input', maxlength: 16, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Callsign' });
@@ -173,7 +185,7 @@ function buildMenu() {
     h('p', { class: 'zf-menu__lede', text: `Drop onto a 1.2 km island with ${MATCH.maxPlayers - 1} others. Loot what you land on, plate up, and stay inside the zone as it closes.` }),
     callsign, navEl, touch);
 
-  // side panel (private / settings / credits)
+  // side panel (private / shop / settings / credits)
   panelTitle = h('h2', { class: 'zf-panel__title' });
   const backBtn = h('button', { type: 'button', class: 'zf-btn zf-btn--ghost zf-btn--sm zf-panel__back', html: `${GLYPH.back}<span>Back</span>` });
   backBtn.addEventListener('click', () => { sfx('back'); setView('home'); });
@@ -234,6 +246,13 @@ function setView(v) {
     panelBody.append(settingsPanel.el);
     settingsPanel.refresh();
   } else if (v === 'credits') { panelTitle.textContent = 'Credits'; panelBody.append(buildCredits()); }
+  else if (v === 'shop') {
+    panelTitle.textContent = 'Locker & shop';
+    if (!shopPanel) shopPanel = mountShop();
+    panelBody.append(shopPanel.el);
+    shopPanel.refresh();
+  }
+  panelEl.classList.toggle('zf-panel--wide', v === 'shop');
   panelEl.classList.remove('is-in');
   void panelEl.offsetWidth;
   panelEl.classList.add('is-in');
@@ -284,6 +303,7 @@ function buildCredits() {
     ['Animations', 'Quaternius Universal Animation Library 1 and 2, retargeted; Rocketbox', 'CC0 / MIT'],
     ['Weapons', 'Stein Games Classic Weapons Pack, 3dmodelscc0 Guns and Explosives Pack, Poly Haven', 'CC0'],
     ['Props, textures, skies', 'Poly Haven and its artists', 'CC0'],
+    ['Outfits', 'Sketchfab: mochi, Neut2000, HarrisonHag1, Jesús Dorado, GatoBugadoBR, TheBuffalo, Desireless, Fortnite Models (The Realm Geno YT), Elite Big Speakerman, Guilherme Navarro', 'CC BY 4.0'],
     ['Gunshot recordings', 'Vincent Sevedge, opengameart.org/content/gunshot-sounds, sliced and edited', 'CC BY 3.0'],
     ['Reload sounds', 'SpringySpringo', 'CC0'],
     ['Impact and footstep sounds', 'Kenney, kenney.nl', 'CC0'],
@@ -300,7 +320,7 @@ function buildCredits() {
   creditsEl = h('div', { class: 'zf-credits' },
     h('blockquote', { class: 'zf-credits__quote', text: CREDITS_TEXT }),
     table, links,
-    h('p', { class: 'zf-credits__fine', text: 'ZONEFALL is an original game. All weapons are generic models without trademarks.' }));
+    h('p', { class: 'zf-credits__fine', text: 'All weapons are generic models without trademarks. The outfit characters belong to their respective rights holders.' }));
   return creditsEl;
 }
 
@@ -357,7 +377,7 @@ export function showCredits() {
   setView('credits');
 }
 
-/** Open a menu panel by id ('private' | 'settings' | 'credits' | 'home'), used by the dev harness. */
+/** Open a menu panel by id ('private' | 'shop' | 'settings' | 'credits' | 'home'), used by the dev harness. */
 export function openPanel(id) { if (menuEl.hidden) show(); setView(id); }
 
 /** Escape hatch for tests: current view id. */

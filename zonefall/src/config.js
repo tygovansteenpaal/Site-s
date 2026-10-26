@@ -348,3 +348,36 @@ export const SETTINGS_LIMITS = Object.freeze({
 
 // ---------------------------------------------------------------- appearance
 export const TEAM_TINTS = Object.freeze([0xffffff, 0x9aa27a, 0xc9b48a, 0x8f9aa6, 0xa39783, 0x7f8c6e]); // by slot % length
+
+// ---------------------------------------------------------------- skins and shop
+// Character skins (assets/skins/<id>.glb, built by tools/build-skins.mjs). 'soldier' is the default outfit (the
+// soldier_a/soldier_b models with team tints) and is always owned. Skins load on demand the first time an entity
+// wearing one appears; until then that entity is drawn as a soldier.
+export const SKIN_DEFAULT = 'soldier';
+export const RARITY = Object.freeze({       // colours: --zf-r-* in src/ui/styles.css
+  rare: { label: 'Rare' },
+  epic: { label: 'Epic' },
+  legendary: { label: 'Legendary' },
+});
+export const SKINS = Object.freeze({
+  soldier: { name: 'Operator', rarity: null, price: 0 },
+  jonesy: { name: 'Jonesy', rarity: 'rare', price: 800 },
+  rigby: { name: 'Rigby', rarity: 'rare', price: 800 },
+  lizard: { name: 'Tom Lizard', rarity: 'rare', price: 800 },
+  huggy: { name: 'Huggy Wuggy', rarity: 'epic', price: 1200 },
+  banana: { name: 'Banana', rarity: 'epic', price: 1200 },
+  daffy: { name: 'Daffy Duck', rarity: 'epic', price: 1200 },
+  bandit: { name: 'Psycho Bandit', rarity: 'epic', price: 1200 },
+  stormtrooper: { name: 'Stormtrooper', rarity: 'legendary', price: 2000 },
+  deadpool: { name: 'Deadpool', rarity: 'legendary', price: 2000 },
+  drake: { name: 'Sgt. Drake', rarity: 'legendary', price: 2000 },
+  spongebob: { name: 'SpongeBob', rarity: 'legendary', price: 2000 },
+});
+export const skinUrl = (id) => assetUrl(`skins/${id}.glb`);
+export const isSkin = (id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(SKINS, id);
+
+export const ECONOMY = Object.freeze({
+  startCoins: 1000,      // a new profile can buy one rare skin straight away
+  shopRotation: 4,       // skins in the daily featured row (seeded by the date)
+  botSkinChance: 0.8,    // share of bots that wear a skin instead of the soldier outfit
+});

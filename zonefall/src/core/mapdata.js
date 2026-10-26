@@ -57,6 +57,21 @@ export const POIS = Object.freeze([
     buildings: [{ kind: 'warehouse', count: 3 }, { kind: 'office', count: 1 }, { kind: 'containers', count: 10 }, { kind: 'fuel_tank', count: 2 }, { kind: 'gantry_crane', count: 1 }, { kind: 'pier', count: 1 }],
     notes: 'Harbour yard on the south coast: corrugated warehouses (one with a mezzanine), two-storey office, stacked shipping containers, fuel tanks, a gantry crane and a timber pier running south from the quay into the sea.',
   },
+  {
+    id: 'pinecrest', name: 'PINECREST', type: 'village', x: 20, z: -255, r: 90, h: 16, tier: 1, lootPoints: 70, crates: 2,
+    buildings: [{ kind: 'house', count: 9 }, { kind: 'shop', count: 2 }],
+    notes: 'Hillside village in the north on road R10, between the two northern forests: houses with yards along the road, a general store and a cafe, a small green.',
+  },
+  {
+    id: 'timber', name: 'TIMBER MILL', type: 'lumber', x: -215, z: -45, r: 70, h: 18, tier: 1, lootPoints: 40, crates: 2,
+    buildings: [{ kind: 'warehouse', count: 1 }, { kind: 'shed', count: 2 }, { kind: 'cabin', count: 3 }],
+    notes: 'Sawmill on the western track R11 at the edge of the big forest: an open saw hall, two sheds, worker cabins, log stacks and a container yard as cover.',
+  },
+  {
+    id: 'motel', name: 'SUNSET MOTEL', type: 'motel', x: 265, z: -40, r: 62, h: 20, tier: 1, lootPoints: 36, crates: 1,
+    buildings: [{ kind: 'cabin', count: 6 }, { kind: 'shop', count: 1 }],
+    notes: 'Roadside motel on R12 east of Mile 9: an L of six room cabins around a parking lot, a diner by the road, parked cars.',
+  },
 ]);
 
 /** Minor sites (named on the big map in small type). tier 0 unless noted. */
@@ -68,7 +83,7 @@ export const LANDMARKS = Object.freeze([
 ]);
 
 /** Roadside houses scattered along roads (tier 0), placed by WORLD with the map seed, at least 60 m from any POI centre. */
-export const ROADSIDE = Object.freeze({ houses: 6, lootPointsEach: 4 });
+export const ROADSIDE = Object.freeze({ houses: 12, lootPointsEach: 4 });
 
 /**
  * Road network: polylines of [x, z] points. 'asphalt' roads are 8 m wide, 'dirt' tracks 5 m.
@@ -84,12 +99,16 @@ export const ROADS = Object.freeze([
   { id: 'R7', type: 'dirt', pts: [[-160, -200], [-200, -215], [-185, -245], [-225, -262], [-250, -290]] },
   { id: 'R8', type: 'dirt', pts: [[-200, 105], [-205, 220], [-185, 320]] },
   { id: 'R9', type: 'dirt', pts: [[385, 0], [415, -30]] },
+  { id: 'R10', type: 'asphalt', pts: [[60, -60], [50, -150], [22, -250], [-50, -300], [-160, -200]] },
+  { id: 'R11', type: 'dirt', pts: [[-70, -80], [-140, -62], [-215, -45], [-300, -32], [-397, -25]] },
+  { id: 'R12', type: 'asphalt', pts: [[128, 12], [200, -22], [265, -48], [330, -38], [385, 0]] },
 ]);
 export const ROAD_WIDTH = Object.freeze({ asphalt: 8, dirt: 5 });
 
 /** Forest regions (dense trees, WORLD scatters with the map seed); elsewhere trees are sparse. Discs [x, z, r]. */
 export const FORESTS = Object.freeze([
   [-300, -150, 120], [-120, -330, 110], [-420, 250, 80], [120, -380, 90], [200, 170, 70], [-120, 220, 70], [430, 120, 60],
+  [-250, 250, 55], [330, 60, 45], [110, -190, 40], [-150, 160, 38],
 ]);
 
 export const ALL_SITES = Object.freeze([...POIS, ...LANDMARKS]);

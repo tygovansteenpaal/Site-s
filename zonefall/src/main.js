@@ -10,6 +10,7 @@ import * as bus from './core/bus.js';
 import { EV } from './core/bus.js';
 import { state, gfx, debug, APP, LIFE, setAppState, localPlayer, getPlayer } from './core/state.js';
 import * as settings from './core/settings.js';
+import * as profile from './core/profile.js';
 import * as mapdata from './core/mapdata.js';
 import { createLoop } from './core/loop.js';
 import * as protocol from './net/protocol.js';
@@ -171,6 +172,7 @@ async function boot() {
   loot.init(gfx.scene);
   bots.init();
   match.init();
+  profile.init();
   audio.setListener(gfx.camera);
 
   progress('shaders', 0.1, 'Compiling shaders');

@@ -1,7 +1,7 @@
 # ZONEFALL
 
 A realistic modern-military battle royale that runs entirely in the browser. Ten operators drop onto Kessler Isle,
-a 1.2 km island with a town, a farm, a walled fort, a quarry, a radio hill and a harbour. Loot weapons, ammo, armor
+a 1.2 km island with two towns, a farm, a walled fort, a quarry, a radio hill, a harbour, a sawmill and a roadside motel. Loot weapons, ammo, armor
 plates and frags, stay inside the closing zone and be the last one standing. Other people join you over a direct
 peer-to-peer connection; bots fill every empty slot.
 
@@ -24,6 +24,18 @@ hardware acceleration, plus a mouse and keyboard (a standard gamepad also works)
 4. **Fight.** Five weapons (AK-47, M4A1, MP5, M700 with a 4x scope, 1911 pistol) plus frag grenades. Recoil follows a fixed, learnable pattern per weapon; pull down to control it. Armor takes up to three plates of 50 points; health regenerates after 5 s without damage.
 5. **Zone.** The safe circle shrinks in six phases. Outside it you take damage every second, more in later phases. The minimap and the compass show the next circle.
 6. **End.** The last player alive wins. After a death you can spectate the remaining players; the results screen offers Play again and Main menu.
+
+## Outfits, coins and the shop
+
+Main menu > **Locker & shop** lists every outfit: the default Operator and 11 character skins in three rarities
+(rare 800, epic 1200, legendary 2000 coins). A new profile starts with 1000 coins. Four outfits are featured each day.
+Buying an outfit equips it; owned outfits can be swapped at any time and are worn from the next match. Coins are
+paid once per match, when your placement is known (your elimination or the win), and the amount is shown on the
+death and results screens. Coins, owned outfits and the equipped outfit live in this browser only.
+
+Your outfit travels with your lobby info, so other players see it. Bots wear a random outfit (80 %) or the soldier
+uniform. Every outfit is driven by the soldier's skeleton, so animations, aiming, reloads and hitboxes are the same
+for everyone. Outfits download the first time someone in your match wears one.
 
 ## Controls
 
@@ -103,15 +115,16 @@ the relays).
 index.html          import map, canvas, UI root, boot and fatal screens
 src/main.js         boot order, frame order, menu intents, automation hooks
 src/config.js       every tunable (weapons, zone, match, loot, bots, network, quality tiers)
-src/core/           event bus, shared state, settings, seeded random, map data, loop
+src/core/           event bus, shared state, settings, profile (coins, outfits), seeded random, map data, loop
 src/engine/         renderer (tiers, post, adaptive resolution), assets, input, audio
 src/world/          terrain, sky, water, buildings, props, foliage, collision (BVH)
-src/player/         controller, camera, avatar animation, inventory
+src/player/         controller, camera, avatar animation, outfit retargeting (skin.js), inventory
 src/combat/         weapons, ballistics, damage, grenades, effects, first-person view model
 src/net/            session (Trystero), snapshot sync, lobby, wire protocol
 src/game/           match flow, plane, zone, loot, bots
 src/ui/ + styles/   menus, lobby, HUD, map, screens, settings
-dev/*.html          standalone test benches per subsystem
+dev/*.html          standalone test benches per subsystem (dev/skins.html: every outfit on one clip)
+tools/              build-skins.mjs: converts character GLBs into assets/skins/ (see the header for usage)
 ```
 
 `ARCHITECTURE.md` is the full design and module contract.
@@ -125,7 +138,8 @@ dev/*.html          standalone test benches per subsystem
 
 ## Credits
 
-ZONEFALL is an original game. All models, animations, textures, skies and sounds are third-party assets under CC0,
-MIT or CC BY 3.0 licences; the full list with authors, sources and required notices is in
+All models, animations, textures, skies and sounds are third-party assets under CC0, MIT, CC BY 3.0 or CC BY 4.0
+licences. The character outfits in `assets/skins/` are Sketchfab models by mochi, Neut2000, HarrisonHag1, Jesús Dorado, GatoBugadoBR, TheBuffalo, Desireless, Fortnite Models (The Realm Geno YT), Elite Big Speakerman, Guilherme Navarro (CC BY 4.0), converted for the game;
+the characters belong to their rights holders. The full list with authors, sources and required notices is in
 [`assets/LICENSES/CREDITS.md`](assets/LICENSES/CREDITS.md), and the same credits are shown in the game under
 Main menu > Credits.
