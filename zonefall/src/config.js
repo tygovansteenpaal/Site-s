@@ -38,6 +38,9 @@ export const ASSETS = Object.freeze({
   models: {
     soldier_a: 'characters/soldier_a.glb',      // 43 clips, WeaponSocket_R
     soldier_b: 'characters/soldier_b.glb',      // same skeleton, no clips
+    skin_dust_devil: 'characters/skin_dust_devil.glb',  // skins: same skeleton and bind pose, built in Blender (no clips)
+    skin_bog_ranger: 'characters/skin_bog_ranger.glb',
+    skin_luremouth: 'characters/skin_luremouth.glb',
     ak47: 'weapons/stein/ak47.glb',
     m4a1: 'weapons/cc0pack/m4a1.glb',
     mp5: 'weapons/stein/mp5.glb',
@@ -353,3 +356,27 @@ export const SETTINGS_LIMITS = Object.freeze({
 
 // ---------------------------------------------------------------- appearance
 export const TEAM_TINTS = Object.freeze([0xffffff, 0x9aa27a, 0xc9b48a, 0x8f9aa6, 0xa39783, 0x7f8c6e]); // by slot % length
+
+// ---------------------------------------------------------------- character skins (shop and locker)
+// model: key in ASSETS.models (null = the classic soldier for the slot); price in coins (0 = owned from the start);
+// card: shop/locker image (assets/ui/skins); bots: relative weight with which bots wear it (0 = never).
+export const SKINS = Object.freeze({
+  classic: Object.freeze({ id: 'classic', name: 'Field Operator', rarity: 'common', price: 0, model: null, card: 'ui/skins/classic.webp', bots: 5,
+    blurb: 'Standard issue camo, plate carrier and helmet. Reliable, forgettable, everywhere.' }),
+  bog_ranger: Object.freeze({ id: 'bog_ranger', name: 'Bog Ranger', rarity: 'rare', price: 0, model: 'skin_bog_ranger', card: 'ui/skins/bog_ranger.webp', bots: 2,
+    blurb: 'A tree frog in a ranger shirt. Bare webbed feet, a field radio and a grin that never quits.' }),
+  luremouth: Object.freeze({ id: 'luremouth', name: 'Luremouth', rarity: 'epic', price: 1200, model: 'skin_luremouth', card: 'ui/skins/luremouth.webp', bots: 1,
+    blurb: 'Deep-sea anglerfish in a trawler\'s slicker. The lure glows; the teeth do the rest.' }),
+  dust_devil: Object.freeze({ id: 'dust_devil', name: 'Dust Devil', rarity: 'legendary', price: 2400, model: 'skin_dust_devil', card: 'ui/skins/dust_devil.webp', bots: 1,
+    blurb: 'Wasteland raider in a scrap pauldron and respirator. Twin filters, amber goggles, a bandolier of shells.' }),
+});
+export const SKIN_RARITY = Object.freeze({
+  common: { label: 'Common', color: '#9aa3a6' }, rare: { label: 'Rare', color: '#3fa7ff' },
+  epic: { label: 'Epic', color: '#b065ff' }, legendary: { label: 'Legendary', color: '#f0a020' },
+});
+export const LOCKER = Object.freeze({ storageKey: 'zf.locker', startCoins: 300, defaultSkin: 'classic' });
+// coins per match: played, per kill, best matching placement bonus; practice pays at a reduced rate
+export const SKIN_REWARDS = Object.freeze({
+  match: 40, kill: 25, practiceMult: 0.5,
+  placement: Object.freeze([{ top: 1, coins: 250 }, { top: 3, coins: 120 }, { top: 5, coins: 60 }]),
+});

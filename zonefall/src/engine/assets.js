@@ -157,6 +157,14 @@ export async function loadCore(onProgress = () => {}) {
 
   const hdrParts = {};
   await pool(jobs, TUNE.concurrency, async (job) => {
+    // character skins are cosmetic: a missing or broken skin file falls back to the classic soldier (avatar.js)
+    if (job.kind === 'model' && job.key.startsWith('skin_')) {
+      try { models.set(job.key, await parseGLB(await fetchBytes(job, () => tick(job.label)), job.url)); }
+      catch (e) { console.warn(`[WORLD/assets] skin '${job.key}' unavailable, using the classic soldier:`, (e && e.message) || e); }
+      job.done = true;
+      tick(job.label);
+      return;
+    }
     const buf = await fetchBytes(job, () => tick(job.label));
     if (job.kind === 'model') {
       models.set(job.key, await parseGLB(buf, job.url));

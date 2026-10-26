@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZONEFALL - Skin viewer</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/",
+      "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.16/build/index.module.js",
+      "trystero": "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm",
+      "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js",
+      "ez-tree": "https://cdn.jsdelivr.net/npm/@dgreenheck/ez-tree@1.1.0/build/ez-tree.es.js"
+    }
+  }
+  </script>
+  <style>
+    html, body { margin: 0; height: 100%; background: #16191a; color: #e9e7e1; font: 13px/1.4 ui-monospace, monospace; overflow: hidden; }
+    canvas { display: block; }
+    #ui { position: fixed; left: 12px; top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; max-width: calc(100vw - 24px); }
+    select, button { font: inherit; background: #222628; color: inherit; border: 1px solid #3a4042; padding: 6px 8px; }
+    #info { position: fixed; left: 12px; bottom: 12px; color: #8f948f; }
+    html.card, html.card body { background: transparent; }
+    html.card #ui, html.card #info { display: none; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <select id="skin" aria-label="Skin"></select>
+    <select id="clip" aria-label="Animation"></select>
+    <button id="spin" type="button">Turntable: on</button>
+  </div>
+  <div id="info"></div>
+  <script type="module">
+    // Skin viewer: any character GLB from config.SKINS (or ?file=path relative to assets/) posed with the soldier_a
+    // clips, exactly as player/avatar plays them (same clips, same skeleton). ?skin=id&clip=Name&yaw=deg&still for
+    // screenshots: still freezes the clip at ?t=seconds. &card renders a shop card: transparent background, no floor or
+    // UI, the body framed head to toe (the PNGs in assets/ui/skins come from this).
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+    import { assetUrl, ASSETS, SKINS } from '../src/config.js';
+
+    const Q = new URLSearchParams(location.search);
+    const CARD = Q.has('card');
+    if (CARD) document.documentElement.classList.add('card');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: CARD, preserveDrawingBuffer: CARD });
+    renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.shadowMap.enabled = true;
+    document.body.prepend(renderer.domElement);
+    const scene = new THREE.Scene();
+    scene.background = CARD ? null : new THREE.Color(0x16191a);
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environmentIntensity = 0.55;
+    const camera = new THREE.PerspectiveCamera(30, innerWidth / innerHeight, 0.05, 50);
+    camera.position.set(0, CARD ? 0.98 : 1.25, CARD ? 4.4 : 4.6);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, CARD ? 0.9 : 0.95, 0);
+    controls.update();
+    const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
+    sun.position.set(2.5, 4, 3);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    Object.assign(sun.shadow.camera, { left: -2, right: 2, top: 2.5, bottom: -0.5 });
+    scene.add(sun);
+    const rim = new THREE.DirectionalLight(0x9fc4ff, 1.2);
+    rim.position.set(-3, 2.5, -3);
+    scene.add(rim);
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(2.2, 64), new THREE.MeshStandardMaterial({ color: 0x2a2f31, roughness: 0.9 }));
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    if (!CARD) scene.add(floor);
+
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    const load = (rel) => new Promise((res, rej) => loader.load(assetUrl(rel), res, undefined, rej));
+    await MeshoptDecoder.ready;
+    const clipsGltf = await load(ASSETS.models.soldier_a);
+    const clips = Object.fromEntries(clipsGltf.animations.map((c) => [c.name, c]));
+
+    const skinSel = document.getElementById('skin'), clipSel = document.getElementById('clip');
+    const entries = [{ id: 'soldier_a', file: ASSETS.models.soldier_a }, { id: 'soldier_b', file: ASSETS.models.soldier_b },
+      ...Object.values(SKINS).filter((s) => s.model).map((s) => ({ id: s.id, file: ASSETS.models[s.model] }))];
+    if (Q.get('file')) entries.unshift({ id: 'file', file: Q.get('file') });
+    for (const e of entries) skinSel.add(new Option(e.id, e.id));
+    for (const n of Object.keys(clips).sort()) clipSel.add(new Option(n, n));
+    skinSel.value = Q.get('skin') || entries[0].id;
+    clipSel.value = Q.get('clip') || 'Rifle_Idle';
+
+    let current = null, mixer = null, spin = !Q.has('still');
+    const yaw0 = (Number(Q.get('yaw')) || 0) * Math.PI / 180;
+    async function show() {
+      const entry = entries.find((e) => e.id === skinSel.value);
+      const g = await load(entry.file);
+      if (current) scene.remove(current);
+      current = g.scene;
+      let tris = 0;
+      current.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; } });
+      current.rotation.y = yaw0;
+      scene.add(current);
+      mixer = new THREE.AnimationMixer(current);
+      const a = mixer.clipAction(clips[clipSel.value]);
+      a.play();
+      if (Q.has('still')) { a.time = Number(Q.get('t')) || 0; a.paused = true; mixer.update(0); }
+      document.getElementById('info').textContent = `${entry.file}  ${Math.round(tris)} tris`;
+      window.__skinReady = true;
+    }
+    skinSel.onchange = show;
+    clipSel.onchange = show;
+    document.getElementById('spin').onclick = (ev) => { spin = !spin; ev.target.textContent = `Turntable: ${spin ? 'on' : 'off'}`; };
+    addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+    await show();
+    const clock = new THREE.Clock();
+    renderer.setAnimationLoop(() => {
+      const dt = clock.getDelta();
+      if (mixer && !Q.has('still')) mixer.update(dt);
+      if (current && spin) current.rotation.y += dt * 0.5;
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>

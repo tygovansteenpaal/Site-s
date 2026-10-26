@@ -33,6 +33,7 @@ import * as session from './net/session.js';
 import * as sync from './net/sync.js';
 import * as lobby from './net/lobby.js';
 import * as match from './game/match.js';
+import * as locker from './game/locker.js';
 import * as plane from './game/plane.js';
 import * as zone from './game/zone.js';
 import * as loot from './game/loot.js';
@@ -171,6 +172,7 @@ async function boot() {
   loot.init(gfx.scene);
   bots.init();
   match.init();
+  locker.init();
   audio.setListener(gfx.camera);
 
   progress('shaders', 0.1, 'Compiling shaders');

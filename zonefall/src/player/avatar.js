@@ -31,7 +31,7 @@
 // Emits FOOTSTEP for remote avatars within 40 m (the local player's steps come from the controller).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { WEAPONS, TEAM_TINTS, QUALITY, PLAYER, SURFACE } from '../config.js';
+import { WEAPONS, TEAM_TINTS, QUALITY, PLAYER, SURFACE, SKINS } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, gfx, LIFE, FLAG, hasFlag, debug } from '../core/state.js';
 import { clamp, damp, dampAngle, angleDelta, wrapAngle, smoothstep, lerp, DEG } from '../core/util.js';
@@ -509,10 +509,19 @@ function makeCanopy() {
 // ------------------------------------------------------------------------------------------ avatar construction
 function modelKeyFor(slot) { return (slot | 0) % 2 === 0 ? 'soldier_a' : 'soldier_b'; }
 
+/** Character model of an entity: its skin's model (config.SKINS, game/locker) or the classic soldier for its slot. */
+function skinModelKey(e) {
+  const s = e.skin && SKINS[e.skin];
+  if (!s || !s.model) return null;
+  try { return assets.model(s.model) ? s.model : null; } catch (err) { return null; }
+}
+
 function createAvatar(e) {
   measure();
-  const modelKey = modelKeyFor(e.slot);
-  const tintIdx = (((e.slot | 0) % TEAM_TINTS.length) + TEAM_TINTS.length) % TEAM_TINTS.length;
+  const skinKey = skinModelKey(e);
+  const modelKey = skinKey || modelKeyFor(e.slot);
+  // skins carry their own colours; only the classic soldiers get the per-slot camo tint
+  const tintIdx = skinKey ? 0 : (((e.slot | 0) % TEAM_TINTS.length) + TEAM_TINTS.length) % TEAM_TINTS.length;
   const model = assets.cloneModel(modelKey);
   const root = new THREE.Group();
   root.name = 'avatar:' + e.id;

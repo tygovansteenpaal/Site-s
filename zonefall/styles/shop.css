@@ -1,0 +1,101 @@
+/* ZONEFALL - shop, locker, coin balance and match reward. OWNER: UI (addition). --rar is the skin's rarity colour. */
+
+.zf-coin { width: 1.15em; height: 1.15em; flex: none; color: var(--zf-accent); vertical-align: -0.2em; }
+
+/* coin chip in the menu top bar */
+.zf-menu__tools { display: flex; align-items: center; gap: calc(22 * var(--u)); }
+.zf-coins {
+  display: inline-flex; align-items: center; gap: 0.5em;
+  font: 600 calc(11.5 * var(--u))/1 var(--zf-display); letter-spacing: 0.22em; text-transform: uppercase; color: var(--zf-ink-dim);
+}
+.zf-coins b { font: 700 calc(15 * var(--u))/1 var(--zf-mono); letter-spacing: 0.02em; color: var(--zf-ink); }
+.zf-coins .zf-coin { width: 1.5em; height: 1.5em; }
+
+/* ---------------------------------------------------------------------------------------- skin art */
+.zf-skin__art {
+  --rar: #9aa3a6;
+  position: relative; overflow: hidden; aspect-ratio: 3 / 4;
+  background:
+    radial-gradient(120% 70% at 50% 100%, color-mix(in srgb, var(--rar) 46%, transparent), transparent 70%),
+    linear-gradient(180deg, rgba(233, 231, 225, 0.04), rgba(233, 231, 225, 0.01));
+  border-bottom: 3px solid var(--rar);
+}
+.zf-skin__art::before {
+  content: ''; position: absolute; inset: 0;
+  background: repeating-linear-gradient(135deg, transparent 0 calc(14 * var(--u)), rgba(233, 231, 225, 0.025) calc(14 * var(--u)) calc(15 * var(--u)));
+}
+.zf-skin__art img {
+  position: absolute; inset: 4% 0 0; width: 100%; height: 96%; object-fit: contain; object-position: 50% 100%;
+  filter: drop-shadow(0 calc(10 * var(--u)) calc(14 * var(--u)) rgba(0, 0, 0, 0.45));
+  transition: transform 380ms var(--zf-ease);
+}
+.zf-skin__rarity {
+  position: absolute; left: calc(10 * var(--u)); top: calc(10 * var(--u));
+  padding: 0.35em 0.6em; background: rgba(10, 12, 11, 0.7);
+  font: 600 calc(10 * var(--u))/1 var(--zf-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--rar);
+}
+
+/* ---------------------------------------------------------------------------------------- shop */
+.zf-shop__bar { display: flex; justify-content: space-between; align-items: flex-start; gap: calc(20 * var(--u)); margin-bottom: calc(18 * var(--u)); }
+.zf-shop__lede { max-width: 46ch; color: var(--zf-ink-dim); }
+.zf-shop__balance { display: inline-flex; align-items: center; gap: 0.4em; padding-top: 0.1em; }
+.zf-shop__balance b { font: 700 calc(24 * var(--u))/1 var(--zf-mono); }
+.zf-shop__balance .zf-coin { width: calc(26 * var(--u)); height: calc(26 * var(--u)); }
+.zf-shop__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(190 * var(--u)), 1fr)); gap: calc(14 * var(--u)); }
+.zf-skin { display: flex; flex-direction: column; background: rgba(233, 231, 225, 0.03); border: 1px solid var(--zf-line); transition: border-color 200ms; }
+.zf-skin:hover { border-color: var(--zf-line-strong, rgba(233, 231, 225, 0.32)); }
+.zf-skin:hover .zf-skin__art img { transform: scale(1.04); }
+.zf-skin.is-equipped { border-color: var(--zf-accent); }
+.zf-skin__info { display: flex; flex-direction: column; gap: calc(6 * var(--u)); padding: calc(12 * var(--u)) calc(14 * var(--u)) calc(14 * var(--u)); flex: 1; }
+.zf-skin__name { font: 700 calc(21 * var(--u))/1 var(--zf-display); letter-spacing: 0.05em; text-transform: uppercase; }
+.zf-skin__blurb { color: var(--zf-ink-dim); font-size: calc(12.5 * var(--u)); flex: 1; }
+.zf-skin__foot { display: flex; align-items: center; justify-content: space-between; gap: calc(8 * var(--u)); margin-top: calc(6 * var(--u)); }
+.zf-skin__price { display: inline-flex; align-items: center; gap: 0.35em; font: 600 calc(13 * var(--u))/1 var(--zf-mono); color: var(--zf-ink-dim); }
+.zf-skin__foot .zf-btn { gap: 0.4em; }
+.zf-skin__foot .zf-btn--primary .zf-coin { color: #0d0f0e; }
+.zf-skin__foot .zf-btn:disabled { opacity: 0.55; cursor: default; }
+.zf-shop__locker { margin-top: calc(18 * var(--u)); }
+
+/* ---------------------------------------------------------------------------------------- locker */
+.zf-locker__hero { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); gap: calc(22 * var(--u)); align-items: end; margin-bottom: calc(22 * var(--u)); }
+.zf-skin__art--big { aspect-ratio: 4 / 5; }
+.zf-locker__meta { display: flex; flex-direction: column; gap: calc(8 * var(--u)); padding-bottom: calc(6 * var(--u)); }
+.zf-locker__name { font: 700 calc(40 * var(--u))/0.95 var(--zf-display); letter-spacing: 0.04em; text-transform: uppercase; }
+.zf-locker__rarity { font: 600 calc(12 * var(--u))/1 var(--zf-display); letter-spacing: 0.24em; text-transform: uppercase; }
+.zf-locker__note { color: var(--zf-ink-faint); font-size: calc(12 * var(--u)); margin-top: calc(6 * var(--u)); }
+.zf-locker__tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(118 * var(--u)), 1fr)); gap: calc(10 * var(--u)); }
+.zf-locker__tile {
+  display: flex; flex-direction: column; align-items: stretch; gap: calc(4 * var(--u)); padding: 0 0 calc(10 * var(--u));
+  color: var(--zf-ink); background: rgba(233, 231, 225, 0.03); border: 1px solid var(--zf-line); cursor: pointer; text-align: left;
+  font: inherit; transition: border-color 200ms, transform 200ms var(--zf-ease);
+}
+.zf-locker__tile:hover { border-color: var(--zf-line-strong, rgba(233, 231, 225, 0.32)); transform: translateY(-2px); }
+.zf-locker__tile.is-equipped { border-color: var(--zf-accent); }
+.zf-locker__tile .zf-skin__rarity { display: none; }
+.zf-locker__tilename { padding: calc(6 * var(--u)) calc(10 * var(--u)) 0; font: 700 calc(14 * var(--u))/1.05 var(--zf-display); letter-spacing: 0.06em; text-transform: uppercase; }
+.zf-locker__tilestate { display: inline-flex; align-items: center; gap: 0.35em; padding: 0 calc(10 * var(--u)); font: 500 calc(11 * var(--u))/1 var(--zf-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--zf-ink-faint); }
+.zf-locker__tile.is-equipped .zf-locker__tilestate { color: var(--zf-accent); }
+.zf-locker__tile.is-locked .zf-skin__art img { filter: grayscale(1) brightness(0.45); }
+.zf-locker__tile.is-locked .zf-locker__tilename { color: var(--zf-ink-dim); }
+
+/* ---------------------------------------------------------------------------------------- results reward */
+.zf-results__reward { margin-top: calc(22 * var(--u)); }
+.zf-reward { display: flex; flex-wrap: wrap; align-items: center; gap: calc(10 * var(--u)) calc(26 * var(--u)); padding: calc(14 * var(--u)) 0; border-top: 1px solid var(--zf-line); border-bottom: 1px solid var(--zf-line); }
+.zf-reward__total { display: inline-flex; align-items: center; gap: 0.4em; }
+.zf-reward__total b { font: 700 calc(30 * var(--u))/1 var(--zf-mono); color: var(--zf-accent); }
+.zf-reward__total span { font: 600 calc(11.5 * var(--u))/1 var(--zf-display); letter-spacing: 0.24em; text-transform: uppercase; color: var(--zf-ink-dim); }
+.zf-reward__total .zf-coin { width: calc(30 * var(--u)); height: calc(30 * var(--u)); }
+.zf-reward__parts { display: flex; flex-wrap: wrap; gap: calc(6 * var(--u)) calc(18 * var(--u)); flex: 1; }
+.zf-reward__parts li { display: inline-flex; gap: 0.5em; font: 500 calc(12 * var(--u))/1 var(--zf-mono); color: var(--zf-ink-dim); }
+.zf-reward__parts b { color: var(--zf-ink); font-weight: 600; }
+.zf-reward__bal { font: 500 calc(11 * var(--u))/1 var(--zf-mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--zf-ink-faint); }
+
+@media (max-width: 1100px) {
+  .zf-locker__hero { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+  .zf-locker__name { font-size: calc(30 * var(--u)); }
+}
+
+/* Locker and Shop share one row of the main menu nav */
+.zf-navrow { display: grid; grid-template-columns: 1fr 1fr; }
+.zf-navrow .zf-navitem + .zf-navitem { border-left: 1px solid var(--zf-line); }
+.zf-navrow .zf-navitem + .zf-navitem .zf-navitem__idx { padding-left: calc(14 * var(--u)); }

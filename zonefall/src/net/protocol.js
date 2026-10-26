@@ -1,7 +1,7 @@
 // ZONEFALL - wire protocol. OWNER: NET (written complete by LEAD as the executable spec; ARCHITECTURE.md section 8).
 // Pure module: no DOM, no Trystero, no THREE. Binary messages travel on the unreliable channel (or the reliable
 // 'bin' fallback action); everything else is a reliable Trystero action with a JSON payload validated here.
-import { NET, WEAPON_ORDER } from '../config.js';
+import { NET, WEAPON_ORDER, SKINS } from '../config.js';
 
 export const PROTOCOL_VERSION = NET.protocol;
 
@@ -149,6 +149,7 @@ const str = (x, max) => (typeof x === 'string' && x.length > 0 && x.length <= ma
 const vec3 = (a) => (Array.isArray(a) && a.length === 3 && finite(a[0], a[1], a[2]) ? [a[0], a[1], a[2]] : null);
 const intIn = (x, lo, hi) => (Number.isInteger(x) && x >= lo && x <= hi ? x : null);
 const numIn = (x, lo, hi) => (finite(x) && x >= lo && x <= hi ? x : null);
+const cleanSkin = (x) => (typeof x === 'string' && Object.prototype.hasOwnProperty.call(SKINS, x) ? x : 'classic');
 const cleanName = (x) => (typeof x === 'string' ? x.replace(/[^\w .\-]/g, '').trim().slice(0, 16) : '') || 'Player';
 const WEAPON_IDS = new Set(WEAPON_ORDER);
 const DEATH_CAUSES = new Set([...WEAPON_ORDER, 'zone', 'fall']);
@@ -159,23 +160,23 @@ const ITEM_TYPES = new Set(['weapon', 'ammo', 'plate', 'frag']);
  * Field glossary is in ARCHITECTURE.md 8.4.
  */
 export const validate = Object.freeze({
-  // {v, name, st: 'lobby'|'live', mid, hum}
+  // {v, name, st: 'lobby'|'live', mid, hum, sk: equipped skin id}
   hello(d) {
     if (!d || typeof d !== 'object') return null;
     const v = intIn(d.v, 0, 1000);
     if (v === null) return null;
-    return { v, name: cleanName(d.name), st: d.st === 'live' ? 'live' : 'lobby', mid: str(d.mid, 24), hum: intIn(d.hum, 0, 64) ?? 0 };
+    return { v, name: cleanName(d.name), st: d.st === 'live' ? 'live' : 'lobby', mid: str(d.mid, 24), hum: intIn(d.hum, 0, 64) ?? 0, sk: cleanSkin(d.sk) };
   },
-  // {ep, cd: ms until start | null, ro: [{id, name}], mode}
+  // {ep, cd: ms until start | null, ro: [{id, name, sk}], mode}
   lobby(d) {
     if (!d || typeof d !== 'object' || !Array.isArray(d.ro) || d.ro.length > 64) return null;
     const ep = intIn(d.ep, 0, 1e9);
     if (ep === null) return null;
     const ro = [];
-    for (const r of d.ro) { const id = str(r && r.id, 40); if (id) ro.push({ id, name: cleanName(r.name) }); }
+    for (const r of d.ro) { const id = str(r && r.id, 40); if (id) ro.push({ id, name: cleanName(r.name), sk: cleanSkin(r.sk) }); }
     return { ep, cd: d.cd == null ? null : numIn(d.cd, 0, 600000), ro, mode: d.mode === 'private' ? 'private' : 'quick' };
   },
-  // {mid, seed, t0h, th, ro: [{id, name, kind: 'h'|'b', slot}], ep}
+  // {mid, seed, t0h, th, ro: [{id, name, kind: 'h'|'b', slot, sk}], ep}
   start(d) {
     if (!d || typeof d !== 'object' || !Array.isArray(d.ro) || d.ro.length < 1 || d.ro.length > 64) return null;
     const mid = str(d.mid, 24), seed = intIn(d.seed, 0, 0xffffffff), t0h = numIn(d.t0h, -1e12, 1e12), th = numIn(d.th, -1e12, 1e12);
@@ -186,7 +187,7 @@ export const validate = Object.freeze({
       const id = str(r && r.id, 40), slot = intIn(r && r.slot, 0, 63);
       if (!id || slot === null || slots.has(slot)) return null;
       slots.add(slot);
-      ro.push({ id, name: cleanName(r.name), kind: r.kind === 'b' ? 'bot' : 'human', slot });
+      ro.push({ id, name: cleanName(r.name), kind: r.kind === 'b' ? 'bot' : 'human', slot, sk: cleanSkin(r.sk) });
     }
     return { mid, seed, t0h, th, ro, ep };
   },

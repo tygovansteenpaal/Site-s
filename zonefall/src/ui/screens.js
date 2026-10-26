@@ -5,11 +5,13 @@
 // STANDING") or placement, kills, damage, headshots, longest kill, time survived; PLAY AGAIN (same mode) / MAIN MENU.
 // Pause (Escape / lost pointer lock): RESUME, SETTINGS, LEAVE MATCH; practice mode freezes the simulation
 // (main.js handles UI_INTENT 'pause'/'resume'; RESUME requests pointer lock from its click).
-import { emit, EV } from '../core/bus.js';
+import { emit, on, EV } from '../core/bus.js';
 import { state, getPlayer } from '../core/state.js';
 import { WEAPONS, MATCH, PLAYER } from '../config.js';
 import { h, sfx, GLYPH, keycap, setText, setVar, clock } from './dom.js';
 import { mountSettings } from './settings.js';
+import { rewardBlock } from './shop.js';
+import { LEV as LOCKER_EV } from '../game/locker.js';
 
 let root = null;
 let deathEl, specEl, resultsEl, pauseEl;
@@ -192,6 +194,16 @@ export function updateSpectate(targetId) {
   setVar(specArmor, '--f', p ? Math.max(0, p.armor) / (PLAYER.armor.perPlate * PLAYER.armor.slots) : 0);
 }
 
+let rewardSlot = null;
+function paintReward() {
+  if (!rewardSlot) return;
+  const block = state.match && state.match.id ? rewardBlock(state.match.id) : null;
+  rewardSlot.textContent = '';
+  if (block) rewardSlot.append(block);
+  rewardSlot.hidden = !block;
+}
+on(LOCKER_EV.REWARD, () => { if (open.results) paintReward(); });
+
 /**
  * info: {winnerId, winnerName, placement, total, mode, stats: {kills, damage, headshots, survived, longest}}
  */
@@ -205,6 +217,9 @@ export function showResults(info = {}) {
   const mode = info.mode || state.match.mode;
   resultsEl.textContent = '';
   resultsEl.classList.toggle('is-win', !!won);
+  // coins are paid in a microtask after MATCH_END / local death, so the slot fills now or on LOCKER_EV.REWARD
+  rewardSlot = h('div', { class: 'zf-results__reward' });
+  paintReward();
   const again = btn('Play again', 'zf-btn--primary', () => { sfx('confirm'); emit(EV.UI_INTENT, { type: 'play_again' }); }, '');
   const menuBtn = btn('Main menu', 'zf-btn--ghost', () => { sfx('back'); emit(EV.UI_INTENT, { type: 'main_menu' }); }, GLYPH.back);
   resultsEl.append(
@@ -221,6 +236,7 @@ export function showResults(info = {}) {
         stat('Headshots', String(s.headshots || 0)),
         stat('Longest kill', s.longest ? `${Math.round(s.longest)} m` : '-'),
         stat('Time survived', clock(s.survived || 0))),
+      rewardSlot,
       h('div', { class: 'zf-results__actions' }, again, menuBtn)));
   resultsEl.hidden = false;
   resultsEl.classList.remove('is-in'); void resultsEl.offsetWidth; resultsEl.classList.add('is-in');

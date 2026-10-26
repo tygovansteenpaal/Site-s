@@ -13,6 +13,7 @@ import { VERSION, NET, MATCH, assetUrl } from '../config.js';
 import * as lobbyNet from '../net/lobby.js';
 import { h, sfx, GLYPH, esc, keycap } from './dom.js';
 import { mountSettings } from './settings.js';
+import { buildShop, buildLocker, coinChip } from './shop.js';
 
 export const CREDITS_TEXT = 'Soldiers: Microsoft Rocketbox Avatar Library (MIT). Animations: Quaternius Universal Animation Library (CC0) and Rocketbox. Weapons: Stein Games, 3dmodelscc0, Poly Haven (CC0). Props, textures and skies: Poly Haven (CC0). Gunshot recordings: Vincent Sevedge, CC BY 3.0 (opengameart.org/content/gunshot-sounds), sliced and edited. Reload sounds: SpringySpringo (CC0). Impact and footstep sounds: Kenney (CC0).';
 
@@ -33,6 +34,8 @@ const ITEMS = [
   { id: 'quickplay', label: 'Quick play', sub: `Public lobby for up to ${MATCH.maxHumans} players. Bots fill every empty slot.`, primary: true },
   { id: 'private', label: 'Private match', sub: 'Create a lobby and share the code, or join one.' },
   { id: 'practice', label: 'Practice vs bots', sub: `Offline match against ${MATCH.maxPlayers - 1} bots. Pauses when you open the menu.` },
+  { id: 'locker', label: 'Locker', sub: 'Equip a skin.', half: true },
+  { id: 'shop', label: 'Shop', sub: 'Spend your coins.', half: true },
   { id: 'settings', label: 'Settings', sub: 'Sensitivity, field of view, graphics, audio, controls.' },
   { id: 'credits', label: 'Credits', sub: 'Assets, sounds and licences.' },
 ];
@@ -40,7 +43,7 @@ const ITEMS = [
 let root = null, loadingEl = null, menuEl = null;
 let countEl = null, labelEl = null, barEl = null, tipEl = null, surveyEl = null, stageEls = [];
 let panelEl = null, panelBody = null, panelTitle = null, navEl = null;
-let settingsPanel = null, privateEl = null, creditsEl = null;
+let settingsPanel = null, privateEl = null, creditsEl = null, shopPanel = null, lockerPanel = null;
 let view = 'home';
 let tipTimer = 0, tipIdx = 0;
 let loadingShown = false, loadP = 0;
@@ -142,7 +145,7 @@ function buildMenu() {
   const top = h('header', { class: 'zf-menu__top' },
     h('div', { class: 'zf-brand', html: `${GLYPH.mark}<span class="zf-brand__name">ZONEFALL</span>` }),
     h('div', { class: 'zf-menu__crumbs', html: `<span>${esc(MAP.name)}</span><span>Solo battle royale</span><span>${MATCH.maxPlayers} operators</span>` }),
-    h('div', { class: 'zf-menu__tools' }, soundBtn));
+    h('div', { class: 'zf-menu__tools' }, coinChip(), soundBtn));
 
   // callsign
   const nameIn = h('input', { type: 'text', class: 'zf-callsign__input', maxlength: 16, spellcheck: 'false', autocomplete: 'off', 'aria-label': 'Callsign' });
@@ -155,13 +158,16 @@ function buildMenu() {
     h('span', { class: 'zf-callsign__hint', text: 'Shown to other players' }));
 
   navEl = h('nav', { class: 'zf-menu__nav', 'aria-label': 'Game modes' });
+  let halfRow = null;   // consecutive `half` items share one row
   ITEMS.forEach((it, i) => {
-    const b = h('button', { type: 'button', class: 'zf-navitem' + (it.primary ? ' zf-navitem--primary' : ''), data: { id: it.id } },
+    const b = h('button', { type: 'button', class: 'zf-navitem' + (it.primary ? ' zf-navitem--primary' : '') + (it.half ? ' zf-navitem--half' : ''), data: { id: it.id } },
       h('span', { class: 'zf-navitem__idx', text: String(i + 1).padStart(2, '0') }),
       h('span', { class: 'zf-navitem__text' }, h('span', { class: 'zf-navitem__label', text: it.label }), h('span', { class: 'zf-navitem__sub', text: it.sub })),
       h('span', { class: 'zf-navitem__go', html: GLYPH.chevron }));
     b.addEventListener('click', () => activate(it.id));
-    navEl.append(b);
+    if (!it.half) { halfRow = null; navEl.append(b); return; }
+    if (!halfRow || halfRow.children.length >= 2) { halfRow = h('div', { class: 'zf-navrow' }); navEl.append(halfRow); }
+    halfRow.append(b);
   });
 
   const touch = h('p', { class: 'zf-menu__touch', hidden: true, text: 'ZONEFALL needs a keyboard and mouse. On this device you can still watch the island or start a practice match.' });
@@ -221,7 +227,7 @@ function setView(v) {
   const open = v !== 'home';
   panelEl.hidden = !open;
   menuEl.classList.toggle('has-panel', open);
-  for (const b of navEl.children) b.classList.toggle('is-current', b.dataset.id === v);
+  for (const b of navEl.querySelectorAll('.zf-navitem')) b.classList.toggle('is-current', b.dataset.id === v);
   if (!open) {
     if (menuEl.contains(document.activeElement) && document.activeElement !== document.body) navEl.querySelector('[data-id="quickplay"]')?.focus({ preventScroll: true });
     return;
@@ -234,6 +240,17 @@ function setView(v) {
     panelBody.append(settingsPanel.el);
     settingsPanel.refresh();
   } else if (v === 'credits') { panelTitle.textContent = 'Credits'; panelBody.append(buildCredits()); }
+  else if (v === 'shop') {
+    panelTitle.textContent = 'Shop';
+    if (!shopPanel) shopPanel = buildShop(() => setView('locker'));
+    panelBody.append(shopPanel.el);
+    shopPanel.refresh();
+  } else if (v === 'locker') {
+    panelTitle.textContent = 'Locker';
+    if (!lockerPanel) lockerPanel = buildLocker(() => setView('shop'));
+    panelBody.append(lockerPanel.el);
+    lockerPanel.refresh();
+  }
   panelEl.classList.remove('is-in');
   void panelEl.offsetWidth;
   panelEl.classList.add('is-in');
@@ -357,7 +374,7 @@ export function showCredits() {
   setView('credits');
 }
 
-/** Open a menu panel by id ('private' | 'settings' | 'credits' | 'home'), used by the dev harness. */
+/** Open a menu panel by id ('private' | 'settings' | 'credits' | 'shop' | 'locker' | 'home'), used by the dev harness. */
 export function openPanel(id) { if (menuEl.hidden) show(); setView(id); }
 
 /** Escape hatch for tests: current view id. */
