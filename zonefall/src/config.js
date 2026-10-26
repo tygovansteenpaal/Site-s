@@ -359,19 +359,20 @@ export const RARITY = Object.freeze({       // colours: --zf-r-* in src/ui/style
   epic: { label: 'Epic' },
   legendary: { label: 'Legendary' },
 });
+// All outfits are free for now (price 0 = owned by every profile); set a price to sell one in the shop again.
 export const SKINS = Object.freeze({
   soldier: { name: 'Operator', rarity: null, price: 0 },
-  jonesy: { name: 'Jonesy', rarity: 'rare', price: 800 },
-  rigby: { name: 'Rigby', rarity: 'rare', price: 800 },
-  lizard: { name: 'Tom Lizard', rarity: 'rare', price: 800 },
-  huggy: { name: 'Huggy Wuggy', rarity: 'epic', price: 1200 },
-  banana: { name: 'Banana', rarity: 'epic', price: 1200 },
-  daffy: { name: 'Daffy Duck', rarity: 'epic', price: 1200 },
-  bandit: { name: 'Psycho Bandit', rarity: 'epic', price: 1200 },
-  stormtrooper: { name: 'Stormtrooper', rarity: 'legendary', price: 2000 },
-  deadpool: { name: 'Deadpool', rarity: 'legendary', price: 2000 },
-  drake: { name: 'Sgt. Drake', rarity: 'legendary', price: 2000 },
-  spongebob: { name: 'SpongeBob', rarity: 'legendary', price: 2000 },
+  jonesy: { name: 'Jonesy', rarity: 'rare', price: 0 },
+  rigby: { name: 'Rigby', rarity: 'rare', price: 0 },
+  lizard: { name: 'Tom Lizard', rarity: 'rare', price: 0 },
+  huggy: { name: 'Huggy Wuggy', rarity: 'epic', price: 0 },
+  banana: { name: 'Banana', rarity: 'epic', price: 0 },
+  daffy: { name: 'Daffy Duck', rarity: 'epic', price: 0 },
+  bandit: { name: 'Psycho Bandit', rarity: 'epic', price: 0 },
+  stormtrooper: { name: 'Stormtrooper', rarity: 'legendary', price: 0 },
+  deadpool: { name: 'Deadpool', rarity: 'legendary', price: 0 },
+  drake: { name: 'Sgt. Drake', rarity: 'legendary', price: 0 },
+  spongebob: { name: 'SpongeBob', rarity: 'legendary', price: 0 },
 });
 export const skinUrl = (id) => assetUrl(`skins/${id}.glb`);
 export const isSkin = (id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(SKINS, id);

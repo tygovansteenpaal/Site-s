@@ -18,6 +18,7 @@ function load() {
   if (data) return data;
   const raw = storage.get(KEY, null) || {};
   const owned = new Set([SKIN_DEFAULT, ...(Array.isArray(raw.owned) ? raw.owned.filter(isSkin) : [])]);
+  for (const [id, sk] of Object.entries(SKINS)) if (sk.price === 0) owned.add(id);   // free outfits
   data = {
     coins: Number.isFinite(raw.coins) ? Math.max(0, Math.floor(raw.coins)) : ECONOMY.startCoins,
     owned,
