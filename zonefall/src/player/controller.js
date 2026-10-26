@@ -276,6 +276,7 @@ export function update(dt) {
   if (!me || !st.spawned) return;
   if (!(dt > 0)) return;
   if (me.life !== st.lastLife) onLifeChanged(me, st.lastLife);
+  if (hasFlag(me, FLAG.DRIVE)) { st.lastLife = me.life; return; }   // game/vehicles moves the entity
 
   switch (me.life) {
     case LIFE.PLANE: updatePlane(me); break;

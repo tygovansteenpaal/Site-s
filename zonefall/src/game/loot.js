@@ -15,7 +15,7 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { LOOT, WEAPONS, PLAYER, AMMO } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
-import { state, gfx, debug, localPlayer, getPlayer, isBotId, LIFE } from '../core/state.js';
+import { state, gfx, debug, localPlayer, getPlayer, isBotId, LIFE, FLAG, hasFlag } from '../core/state.js';
 import { stream, hashString } from '../core/rng.js';
 import { clamp } from '../core/util.js';
 import * as world from '../world/world.js';
@@ -48,7 +48,7 @@ const TUNE = {
 export const RARITY = Object.freeze({
   common: 0xd8d4c8, uncommon: 0x6fcf6a, rare: 0x4fa3ff, epic: 0xb27cff, legendary: 0xf2b636,
 });
-const WEAPON_RARITY = { m1911: 'common', mp5: 'uncommon', ak47: 'rare', m4a1: 'rare', m700: 'epic' };
+const WEAPON_RARITY = { m1911: 'common', mp5: 'uncommon', ak47: 'rare', m4a1: 'rare', m700: 'epic', rpg: 'legendary' };
 const AMMO_TINT = { ar: 0xb8b48a, light: 0xd2c29a, sniper: 0x9a8f86 };
 
 let scene = null;
@@ -416,7 +416,7 @@ export function update(dt) {
   ringTime += dt;
   const me = localPlayer();
   let near = null;
-  if (me && me.alive && me.life === LIFE.GROUND && state.match.phase !== 'idle') near = findNearby(me);
+  if (me && me.alive && me.life === LIFE.GROUND && !hasFlag(me, FLAG.DRIVE) && state.match.phase !== 'idle') near = findNearby(me);
   const uid = near ? near.uid : null;
   if (uid !== nearbyUid) {
     nearbyUid = uid;

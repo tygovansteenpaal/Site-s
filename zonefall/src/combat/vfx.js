@@ -612,6 +612,14 @@ export function textures() { return tex; }
 
 // ------------------------------------------------------------------------------------------ public effects
 /** @param {number[]} pos @param {number[]} dir @param {number} [scale] */
+/** Rocket exhaust at p (array): a hot flame core and a puff of grey smoke that lingers (combat/rockets.js). */
+export function rocketTrail(p, dir) {
+  if (!inited) return;
+  addSys.spawn(p[0], p[1], p[2], -dir[0] * 3, -dir[1] * 3, -dir[2] * 3, rnd(0.05, 0.09), 0.22, 0.08, 3.2, 2.0, 0.9, 1, 4, 0, 0, 0);
+  alphaSys.spawn(p[0] + rnd(-0.05, 0.05), p[1] + rnd(-0.05, 0.05), p[2] + rnd(-0.05, 0.05), rnd(-0.25, 0.25), 0.3 + rnd(0, 0.3), rnd(-0.25, 0.25),
+    rnd(1.6, 2.6), 0.16, 1.2, 0.8, 0.79, 0.77, 0.42, 1.4, -0.12, 0, 0.04);
+}
+
 export function muzzleFlash(pos, dir, scale = 1) {
   if (!inited) return;
   const f = flashes.list.find((x) => !x.alive) || flashes.list[0];
@@ -806,8 +814,8 @@ function onFire(e) {
       rnd(0.7, 1.2), 0.05 * scale, 0.32 * scale, 0.78, 0.77, 0.75, 0.13, 2.2, -0.2, 0, 0.03);
   }
   // Tracers: every remote shot, every 3rd local one (never from inside the scope).
-  let draw = !e.local;
-  if (e.local) { localShots++; draw = localShots % TUNE.localTracerEvery === 1 && !state.local.scoped; }
+  let draw = !e.local && W.class !== 'launcher';
+  if (e.local && W.class !== 'launcher') { localShots++; draw = localShots % TUNE.localTracerEvery === 1 && !state.local.scoped; }
   if (draw) {
     vA.fromArray(e.dir);
     // start the streak a little ahead of the muzzle so it never covers the barrel
@@ -815,7 +823,7 @@ function onFire(e) {
     spawnTracer(from, e.end, W.class === 'sniper' ? 1.4 : 1);
   }
   // Brass for third-person / remote rifles and pistols nearby.
-  if (!fp && W.mode !== 'bolt' && nearCam < TUNE.casingRange) ejectCasing(muzzle, e.dir, W.class === 'pistol');
+  if (!fp && W.mode !== 'bolt' && W.class !== 'launcher' && nearCam < TUNE.casingRange) ejectCasing(muzzle, e.dir, W.class === 'pistol');
   const h = e.hit;
   if (e.pen) { impact(e.pen.point, e.pen.normal, e.pen.surface); impact(e.pen.exit, [e.dir[0], e.dir[1], e.dir[2]], e.pen.surface); }
   if (!h) return;

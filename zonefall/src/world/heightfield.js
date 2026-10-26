@@ -233,15 +233,24 @@ function signalHill(x, z, h) {
   return Math.max(h, mix(h, top, p) + spur * 16 * p * (1 - p));
 }
 
+// Rectangular pads held flat at a site's height: Fort Kessler's yard (TUNE.kesslerPad) and every site with a
+// `pad` {w, d, blend} centred on it (Downtown). Inside: exactly the pad height; out to `blend`: an eased ramp back
+// to the land; beyond that a wide, noisy pull (4x blend) so the pad sits in the hills instead of on a plinth.
+const PADS = (() => {
+  const k = TUNE.kesslerPad, out = [{ ...k, h: siteById('kessler').h }];
+  for (const s of ALL_SITES) if (s.pad) out.push({ x0: s.x - s.pad.w / 2, x1: s.x + s.pad.w / 2, z0: s.z - s.pad.d / 2, z1: s.z + s.pad.d / 2, blend: s.pad.blend, h: s.h });
+  return out;
+})();
 function rectFlatten(x, z, h) {
-  const P = TUNE.kesslerPad;
-  const dx = Math.max(P.x0 - x, 0, x - P.x1), dz = Math.max(P.z0 - z, 0, z - P.z1);
-  const d = Math.sqrt(dx * dx + dz * dz);
-  const kh = siteById('kessler').h;
-  const wide = P.blend * 4 * (1 + 0.25 * NC(x / 70, z / 70));
-  if (d < wide) h = mix(h, kh, 0.75 * smoother01(1 - d / wide));
-  if (d >= P.blend) return h;
-  return mix(kh, h, smoother01(d / P.blend));
+  for (const P of PADS) {
+    const dx = Math.max(P.x0 - x, 0, x - P.x1), dz = Math.max(P.z0 - z, 0, z - P.z1);
+    const d = Math.sqrt(dx * dx + dz * dz);
+    const wide = P.blend * 4 * (1 + 0.25 * NC(x / 70, z / 70));
+    if (d >= wide) continue;
+    h = mix(h, P.h, 0.75 * smoother01(1 - d / wide));
+    if (d < P.blend) h = mix(P.h, h, smoother01(d / P.blend));
+  }
+  return h;
 }
 
 // Wide, irregular attraction toward each site's height so the flattened discs sit in the land instead of on a ring.

@@ -565,7 +565,7 @@ function updateCrosshair(me, alive, life) {
   const slot = L.inv && L.inv.slots ? L.inv.slots[L.inv.active] : null;
   const sprint = hasFlag(me, FLAG.SPRINT);
   const busy = L.action === 'plate' || L.action === 'throw';
-  const on = alive && life === LIFE.GROUND && !!slot && !L.scoped && !busy;
+  const on = alive && life === LIFE.GROUND && !!slot && !L.scoped && !busy && !hasFlag(me, FLAG.DRIVE);
   const op = on ? Math.max(0, 1 - L.ads * 2.2) * (sprint ? 0.25 : 1) : 0;
   setVar($.cross, '--o', op);
   if (op > 0) {
@@ -605,6 +605,17 @@ function updateCenter(me, alive, life, inv, dt) {
     else if (nb.type === 'crate') sub = 'Three items';
     setText($.pSub, sub);
     $.prompt.dataset.rarity = nb.rarity || 'common';
+  }
+  // vehicle prompt (game/vehicles writes state.local.vehicle): enter a car, or exit and the speed while driving
+  const veh = !nb && alive && life === LIFE.GROUND ? L.vehicle : null;
+  if (veh) {
+    vis($.prompt, true);
+    const key = keyOf('interact');
+    if ($.pKey.__k !== key) { $.pKey.__k = key; $.pKey.textContent = ''; $.pKey.append(h('span', { class: 'zf-key', data: { action: 'interact' }, text: key })); }
+    setText($.pVerb, veh.driving ? 'Exit' : 'Enter');
+    setText($.pItem, veh.label);
+    setText($.pSub, veh.driving ? `${veh.kmh} km/h` : 'Drive');
+    $.prompt.dataset.rarity = 'legendary';
   }
 
   // contextual callouts: plane, freefall, chute, reload

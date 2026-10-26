@@ -666,10 +666,11 @@ export function init(sc) {
     if (av) { disposeAvatar(av); avatars.delete(id); }
   });
   on(EV.QUALITY_CHANGED, () => { qual = currentQuality(); });
-  on(EV.WEAPON_FIRE, ({ id }) => {
+  on(EV.WEAPON_FIRE, ({ id, weapon }) => {
     const av = avatars.get(id);
     if (!av) return;
     av.shootT = 0;
+    if (WEAPONS[weapon] && WEAPONS[weapon].class === 'launcher') av.rocketGone = true;
     const W = WEAPONS[av.entity.weapon];
     const r = W && W.recoil;
     av.kickZv += (r ? r.viewKickZ : 0.04) * 9;
@@ -729,7 +730,7 @@ export function update(dt) {
   for (const av of avatars.values()) {
     const e = av.entity;
     av.dist = cam ? cam.position.distanceTo(e.pos) : 0;
-    const hiddenLife = e.life === LIFE.PLANE || e.life === LIFE.SPECTATE;
+    const hiddenLife = e.life === LIFE.PLANE || e.life === LIFE.SPECTATE || hasFlag(e, FLAG.DRIVE);
     const isLocal = e.id === state.selfId;
     av.root.visible = !hiddenLife && av.dist < TUNE.hideDistance;
     if (av.canopy && av.canopy.detached) updateDetachedCanopy(av, dt);
@@ -1429,6 +1430,12 @@ function animateParts(av, W, rl) {
   inst.mag.position.copy(p.magPos);
   inst.mag.rotation.set(0, 0, 0);
   if (inst.bolt) inst.bolt.position.copy(p.boltPos);
+  if (W.class === 'launcher') {
+    // the warhead leaves with the rocket and is slid back on during the reload's insert phase
+    if (rl.u >= 0 && rl.phase === 'insert') av.rocketGone = false;
+    inst.mag.visible = !av.rocketGone;
+    return;
+  }
   if (rl.u < 0) return;
   const cue = W.reloadCues;
   if (rl.phase === 'pull') {

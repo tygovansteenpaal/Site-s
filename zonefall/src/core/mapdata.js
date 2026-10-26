@@ -72,12 +72,20 @@ export const POIS = Object.freeze([
     buildings: [{ kind: 'cabin', count: 6 }, { kind: 'shop', count: 1 }],
     notes: 'Roadside motel on R12 east of Mile 9: an L of six room cabins around a parking lot, a diner by the road, parked cars.',
   },
+  {
+    id: 'city', name: 'DOWNTOWN', type: 'city', x: -160, z: 290, r: 96, h: 16, tier: 2, lootPoints: 60, crates: 3,
+    // the Procedural City 3 block (assets/props/city/city.glb, 0.85 scale, street plane at local y = 0): the terrain
+    // is held at h across the pad and blends into the hills over `blend` metres (heightfield rectFlatten)
+    pad: { w: 131.27, d: 140.06, blend: 34 },
+    blocks: [[-27.75, 25.88, -23.43, 53.04, 20.43], [-48.59, -52.97, -32.44, -42.15, 20.43], [-48.59, -0.56, -27.29, 25.92, 28.08], [-9.57, -0.56, 4.96, 52.97, 28.08], [26.21, -0.56, 48.59, 52.97, 28.09], [26.21, -52.97, 48.59, -21.83, 17.89]],           // building footprints [x0, z0, x1, z1, height], city-local (city.json)
+    buildings: [],
+    notes: 'A block of brick apartment towers and offices on a street grid in the south-west hills: solid buildings, parked cars and street furniture as cover, high-tier loot in the streets.',
+  },
 ]);
 
 /** Minor sites (named on the big map in small type). tier 0 unless noted. */
 export const LANDMARKS = Object.freeze([
   { id: 'fuel', name: 'MILE 9 FUEL', type: 'fuel_station', x: 150, z: 10, r: 30, h: 16, tier: 0, lootPoints: 10, crates: 1, buildings: [{ kind: 'fuel_canopy', count: 1 }, { kind: 'shop', count: 1 }] },
-  { id: 'cabins', name: 'PINE CABINS', type: 'cabins', x: -185, z: 330, r: 40, h: 12, tier: 0, lootPoints: 12, crates: 1, buildings: [{ kind: 'cabin', count: 3 }] },
   { id: 'lighthouse', name: 'CAPE LIGHT', type: 'lighthouse', x: 415, z: -30, r: 28, h: 18, tier: 0, lootPoints: 8, crates: 1, buildings: [{ kind: 'lighthouse', count: 1 }, { kind: 'cabin', count: 1 }] },
   { id: 'bunker', name: 'NORTH BUNKER', type: 'bunker', x: -395, z: -70, r: 30, h: 16, tier: 1, lootPoints: 10, crates: 1, buildings: [{ kind: 'bunker', count: 1 }] },
 ]);
@@ -97,7 +105,7 @@ export const ROADS = Object.freeze([
   { id: 'R5', type: 'dirt', pts: [[110, 370], [220, 300], [280, 250]] },
   { id: 'R6', type: 'dirt', pts: [[-330, 150], [-400, 40], [-395, -70], [-360, -190], [-300, -270]] },
   { id: 'R7', type: 'dirt', pts: [[-160, -200], [-200, -215], [-185, -245], [-225, -262], [-250, -290]] },
-  { id: 'R8', type: 'dirt', pts: [[-200, 105], [-205, 220], [-185, 320]] },
+  { id: 'R8', type: 'asphalt', pts: [[-200, 105], [-204, 170], [-195, 228]] },
   { id: 'R9', type: 'dirt', pts: [[385, 0], [415, -30]] },
   { id: 'R10', type: 'asphalt', pts: [[60, -60], [50, -150], [22, -250], [-50, -300], [-160, -200]] },
   { id: 'R11', type: 'dirt', pts: [[-70, -80], [-140, -62], [-215, -45], [-300, -32], [-397, -25]] },
@@ -107,8 +115,8 @@ export const ROAD_WIDTH = Object.freeze({ asphalt: 8, dirt: 5 });
 
 /** Forest regions (dense trees, WORLD scatters with the map seed); elsewhere trees are sparse. Discs [x, z, r]. */
 export const FORESTS = Object.freeze([
-  [-300, -150, 120], [-120, -330, 110], [-420, 250, 80], [120, -380, 90], [200, 170, 70], [-120, 220, 70], [430, 120, 60],
-  [-250, 250, 55], [330, 60, 45], [110, -190, 40], [-150, 160, 38],
+  [-300, -150, 120], [-120, -330, 110], [-420, 250, 80], [120, -380, 90], [200, 170, 70], [-70, 190, 45], [430, 120, 60],
+  [-300, 250, 42], [330, 60, 45], [110, -190, 40], [-140, 150, 30],
 ]);
 
 export const ALL_SITES = Object.freeze([...POIS, ...LANDMARKS]);

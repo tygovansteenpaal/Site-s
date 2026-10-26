@@ -26,6 +26,7 @@ import * as inventory from '../player/inventory.js';
 import * as camera from '../player/camera.js';
 import * as controller from '../player/controller.js';
 import * as ballistics from './ballistics.js';
+import * as rockets from './rockets.js';
 import * as damage from './damage.js';
 import * as grenades from './grenades.js';
 import * as viewmodel from './viewmodel.js';
@@ -215,7 +216,8 @@ function shoot(me, slot, W) {
     qb.setFromAxisAngle(tmpR, vs.sway.pitch * DEG);
     aimD.applyQuaternion(qb).applyQuaternion(qa).normalize();
   }
-  ballistics.fire(me.id, slot.weapon, aimO, aimD, { spreadDeg: L.spread, seq: (vs.shots + 1) & 0xffff });
+  if (W.class === 'launcher') rockets.fire(me.id, aimO, aimD);
+  else ballistics.fire(me.id, slot.weapon, aimO, aimD, { spreadDeg: L.spread, seq: (vs.shots + 1) & 0xffff });
   const [rp, ry] = recoilFor(W, shotIndex, L.ads);
   camera.addRecoil(rp, ry);
   camera.addShake(W.recoil.shake * 0.3, 0.16);
@@ -235,6 +237,7 @@ export function update(dt) {
   const me = localPlayer();
   const L = state.local;
   if (!me) return;
+  if (hasFlag(me, FLAG.DRIVE)) return;            // no shooting from the driver's seat
   const inv = state.local.inv;
   const slot = inv ? inv.slots[inv.active] || null : null;
   const activeId = slot ? slot.weapon : null;

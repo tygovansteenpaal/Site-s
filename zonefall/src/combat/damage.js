@@ -221,6 +221,7 @@ export function kill(victimId, killerId, weapon, headshot, sid = null) {
 /** Splash damage of an explosion at pos [x,y,z] to the local player (and bots when authority), LOS-checked. */
 export function explosionAt(pos, ownerId, weapon = 'frag') {
   const F = WEAPONS.frag;
+  const B = (WEAPONS[weapon] && WEAPONS[weapon].blast) || F;   // rockets carry their own blast numbers
   const blast = tmpA.set(pos[0], pos[1] + TUNE.explosionProbeUp, pos[2]);
   const results = [];
   const authority = state.isHost || !state.online;
@@ -229,7 +230,7 @@ export function explosionAt(pos, ownerId, weapon = 'frag') {
     const isSelf = e.id === state.selfId;
     if (!isSelf && !(authority && isBotId(e.id))) continue;
     if (!F.selfDamage && e.id === ownerId) continue;
-    const dmg = splash(e, blast);
+    const dmg = splash(e, blast, B);
     if (dmg <= 0) continue;
     const dir = dirOf(pos, [e.pos.x, e.pos.y + 0.9, e.pos.z]);
     const info = { from: ownerId || null, weapon, zone: 'body', dir, kind: 'explosion' };
@@ -244,8 +245,7 @@ export function explosionAt(pos, ownerId, weapon = 'frag') {
 }
 
 /** Frag damage to one entity: full inside innerRadius, falling to damageMin at outerRadius, LOS to chest or head. */
-function splash(e, blast) {
-  const F = WEAPONS.frag;
+function splash(e, blast, F = WEAPONS.frag) {
   let best = 0;
   // Nearest of feet/chest/head so a grenade under a crouched player still counts as close.
   for (const h of [0.25, 0.95, 1.5]) {

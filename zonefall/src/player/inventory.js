@@ -12,7 +12,7 @@ const undo = new Map();               // item uid -> undo record of the last add
 const UNDO_KEEP = 48;
 
 function fresh() {
-  return { slots: [null, null], active: 0, ammo: { ar: 0, light: 0, sniper: 0 }, plates: 0, frags: 0 };
+  return { slots: [null, null], active: 0, ammo: { ar: 0, light: 0, sniper: 0, rocket: 0 }, plates: 0, frags: 0 };
 }
 
 function inv() {

@@ -423,7 +423,7 @@ export function gunshot(weaponId, pos = null) {
     // Close environment slap: a darker repeat 60-110 ms later (open ground reflects little, so it is subtle).
     const slap = sendNode(0.12 * (sniper ? 1.5 : 1), reverbIn);
     noise(slap, t + 0.07, 'lowpass', 1400, 0.5, 0.005, sniper ? 0.5 : 0.28, 0.5);
-    if (W.mode !== 'bolt' && W.class !== 'smg') play('casing', { volume: L.casing * (pistol ? 0.8 : 1), delay: 0.38 + Math.random() * 0.12, rate: pistol ? 1.15 : 1 });
+    if (W.class === 'launcher') { /* no brass */ } else if (W.mode !== 'bolt' && W.class !== 'smg') play('casing', { volume: L.casing * (pistol ? 0.8 : 1), delay: 0.38 + Math.random() * 0.12, rate: pistol ? 1.15 : 1 });
     else if (smg) play('casing', { volume: L.casing * 0.6, delay: 0.32 + Math.random() * 0.15, rate: 1.2 });
     return;
   }

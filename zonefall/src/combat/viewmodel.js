@@ -764,6 +764,12 @@ function animateParts(vs, boltU) {
     cur.mag.position.copy(cur.magPos);
     cur.mag.quaternion.copy(cur.magQuat);
     cur.mag.visible = true;
+    // launcher: the warhead is gone once fired and comes back with the reload's insert
+    const inv = state.local.inv, slot = inv && inv.slots ? inv.slots[inv.active] : null;
+    if (W.class === 'launcher' && slot && slot.mag === 0) {
+      const r = vs.reload && vs.reload.weapon === cur.id ? reloadPhase(W, vs.reload.u, vs.reload.empty) : null;
+      cur.mag.visible = !!r && (r.phase === 'insert' || r.phase === 'charge' || r.phase === 'return');
+    }
     if (vs.reload && vs.reload.weapon === cur.id) {
       const r = reloadPhase(W, vs.reload.u, vs.reload.empty);
       if (r.phase === 'pull') { cur.mag.position.y -= 0.24 * r.k * r.k; cur.mag.position.z += 0.03 * r.k; cur.mag.rotateX(-0.35 * r.k); }

@@ -38,6 +38,9 @@ export const ASSETS = Object.freeze({
   models: {
     soldier_a: 'characters/soldier_a.glb',      // 43 clips, WeaponSocket_R
     soldier_b: 'characters/soldier_b.glb',      // same skeleton, no clips
+    city: 'props/city/city.glb',                // Downtown block (tools/build-models.mjs); COL_* meshes collide
+    plane: 'vehicles/plane.glb',                // drop plane (Toon Plane); ZF_prop spins
+    p1: 'vehicles/p1.glb',                      // drivable car; ZF_body + ZF_wheel_lf|rf|lr|rr
     ak47: 'weapons/stein/ak47.glb',
     m4a1: 'weapons/cc0pack/m4a1.glb',
     mp5: 'weapons/stein/mp5.glb',
@@ -45,6 +48,7 @@ export const ASSETS = Object.freeze({
     sniper_scope: 'weapons/cc0pack/sniper.glb', // only its 'Scope' node is used, mounted on the M700
     m1911: 'weapons/stein/1911.glb',
     frag: 'weapons/cc0pack/frag_grenade.glb',
+    rpg: 'weapons/sketchfab/rpg.glb',           // Fortnite RPG (tools/build-models.mjs); MAGAZINE = the warhead
     crate_military: 'props/polyhaven/wooden_military_crate.glb',
     crate_old: 'props/polyhaven/old_military_crate.glb',
     ammo_box: 'props/polyhaven/ammo_box.glb',
@@ -154,10 +158,11 @@ export const AMMO = Object.freeze({
   ar: { name: '5.56/7.62', max: 240 },
   light: { name: '9MM/.45', max: 240 },
   sniper: { name: '.308', max: 40 },
+  rocket: { name: 'Rockets', max: 6 },
 });
 
 // Index order used on the wire (u8). Never reorder without bumping NET.protocol.
-export const WEAPON_ORDER = Object.freeze(['ak47', 'm4a1', 'mp5', 'm700', 'm1911', 'frag']);
+export const WEAPON_ORDER = Object.freeze(['ak47', 'm4a1', 'mp5', 'm700', 'm1911', 'frag', 'rpg']);   // append only
 
 // damage: piecewise-constant steps by distance [{d, dmg}] (body damage); head/limb are multipliers.
 // recoil: degrees. Pattern for shot i (0-based) in a burst (see ARCHITECTURE.md 6.3):
@@ -217,6 +222,20 @@ export const WEAPONS = Object.freeze({
     sound: { shot: 'gun_pistol', rate: 0.92, mech: 'pistol' },
     model: { key: 'm1911', muzzle: 'SOCKET_FX_FIRE', casing: 'SOCKET_FX_CASING', mag: 'MAGAZINE', bolt: 'SLIDE', sight: 'SOCKET_IRONSIGHT', rear: 'SOCKET_ATTACH_SCOPE', eye: [0, 0.088, 0.2] },
   },
+  // Rocket launcher: one rocket per load, a projectile (combat/rockets.js) instead of a hitscan round; the impact uses
+  // the explosion code with `blast` instead of the frag's numbers. Players only (bots never pick it up).
+  rpg: {
+    name: 'RPG', class: 'launcher', ammo: 'rocket', mode: 'semi', rpm: 50, mag: 1,
+    damage: [{ d: 0, dmg: 0 }], head: 1, limb: 1, range: 600,
+    reload: 2.9, reloadEmpty: 2.9, reloadCues: { magout: 0.12, magin: 0.62, charge: 0.9 },
+    ads: 0.42, sprintToFire: 0.4, raise: 0.75, mobility: 0.9, adsFovMult: 0.72,
+    spread: { hip: 2.4, move: 1.6, ads: 0.15, bloom: 0, max: 3, recover: 8, air: 5 },
+    recoil: { vKick: 3.2, vRamp: 0, rampShots: 1, hKick: 0, hFreq: 0, hBias: 0, hJitter: 0.4, firstShot: 1, hipMult: 1.2, recover: 5, autoRecover: 0.8, viewKickZ: 0.11, viewKickRotDeg: 6, shake: 1.0 },
+    sound: { shot: 'gun_sniper', rate: 0.55, mech: 'bolt' },
+    rocket: { speed: 72, gravity: 2.5, life: 6, armTime: 0.06 },
+    blast: { damageMax: 150, damageMin: 20, innerRadius: 2.6, outerRadius: 9.5 },
+    model: { key: 'rpg', muzzle: 'SOCKET_FX_FIRE', casing: 'SOCKET_FX_CASING', mag: 'MAGAZINE', bolt: 'SLIDE', sight: 'SOCKET_IRONSIGHT', rear: 'SOCKET_ATTACH_SCOPE', eye: [0, 0.268, 0.2] },
+  },
   frag: {
     name: 'FRAG', class: 'lethal', fuse: 4.0, throwSpeed: 19, upBoost: 3.5, gravity: 9.81, restitution: 0.38, friction: 0.6,
     damageMax: 160, damageMin: 12, innerRadius: 2.0, outerRadius: 8.0, maxCarry: 2, throwTime: 0.55, selfDamage: true,
@@ -267,10 +286,10 @@ export const LOOT = Object.freeze({
     { type: 'frag', w: [10, 10, 10] },
   ],
   weapons: {                              // weights per tier [t0, t1, t2]
-    m1911: [35, 15, 0], mp5: [35, 30, 15], ak47: [15, 25, 30], m4a1: [15, 25, 35], m700: [0, 5, 20],
+    m1911: [35, 15, 0], mp5: [35, 30, 15], ak47: [15, 25, 30], m4a1: [15, 25, 35], m700: [0, 5, 20], rpg: [0, 3, 9],
   },
-  ammoTypes: { ar: 45, light: 40, sniper: 15 },  // weights for loose ammo items
-  ammoQty: { ar: 60, light: 60, sniper: 10 },
+  ammoTypes: { ar: 45, light: 40, sniper: 15, rocket: 4 },  // weights for loose ammo items
+  ammoQty: { ar: 60, light: 60, sniper: 10, rocket: 2 },
   plateQty: [1, 1, 2],
   fragQty: 1,
   weaponSpawnsAmmo: true,                 // a weapon item also spawns one ammo item of its type beside it
@@ -373,6 +392,7 @@ export const SKINS = Object.freeze({
   deadpool: { name: 'Deadpool', rarity: 'legendary', price: 0 },
   drake: { name: 'Sgt. Drake', rarity: 'legendary', price: 0 },
   spongebob: { name: 'SpongeBob', rarity: 'legendary', price: 0 },
+  batman: { name: 'Batman', rarity: 'legendary', price: 0 },
 });
 export const skinUrl = (id) => assetUrl(`skins/${id}.glb`);
 export const isSkin = (id) => typeof id === 'string' && Object.prototype.hasOwnProperty.call(SKINS, id);

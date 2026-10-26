@@ -484,16 +484,23 @@ function fuel(L) {
   crateSpots(L, s, 1, rngFor('fuel'));
 }
 
-function cabins(L) {
-  const s = siteById('cabins');
-  for (const [dx, dz] of [[-24, 4], [6, 22], [24, -2]]) {
-    const x = s.x + dx, z = s.z + dz;
-    addBuilding(L, { site: s.id, kind: 'cabin', x, z, yaw: yawFacing(s.x - x, s.z - z), w: 6, d: 8, storeys: 1 });
+function city(L) {
+  const s = siteById('city');
+  const rng = rngFor('city');
+  const P = s.pad;
+  // the street plane (map image, and no grass or trees through the asphalt), then the buildings on top
+  L.footprints.push({ x: s.x, z: s.z, w: P.w, d: P.d, rot: 0, fill: 'rgba(62,62,60,0.95)' });
+  for (const [x0, z0, x1, z1] of s.blocks) L.footprints.push({ x: s.x + (x0 + x1) / 2, z: s.z + (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, rot: 0, fill: 'rgba(96,74,62,0.95)' });
+  L.special.push({ kind: 'city', site: s.id, x: s.x, z: s.z });
+  // street points between the blocks: loot, crates and cover candidates
+  const inBlock = (x, z, m) => s.blocks.some(([x0, z0, x1, z1]) => x > x0 - m && x < x1 + m && z > z0 - m && z < z1 + m);
+  for (let lx = -P.w / 2 + 6; lx < P.w / 2 - 4; lx += 11) {
+    for (let lz = -P.d / 2 + 6; lz < P.d / 2 - 4; lz += 11) {
+      const x = lx + rng.range(-2, 2), z = lz + rng.range(-2, 2);
+      if (!inBlock(x, z, 2.5)) L.outdoor.push({ x: s.x + x, z: s.z + z, site: s.id });
+    }
   }
-  addPaint({ shape: 'disc', ch: 0, x: s.x, z: s.z + 4, r: 9, edge: 5, w: 0.5, noise: 0.9 });
-  L.special.push({ kind: 'firepit', site: s.id, x: s.x, z: s.z + 6 });
-  L.outdoor.push({ x: s.x + 2, z: s.z + 2, site: s.id });
-  crateSpots(L, s, 1, rngFor('cabins'));
+  crateSpots(L, s, s.crates, rng);
 }
 
 function lighthouse(L) {
@@ -693,7 +700,7 @@ function powerLines(L) {
 export function buildLayout() {
   const L = createLayout();
   harrow(L); millbrook(L); kessler(L); greystone(L); signal(L); southport(L);
-  fuel(L); cabins(L); lighthouse(L); bunkerSite(L);
+  fuel(L); city(L); lighthouse(L); bunkerSite(L);
   pinecrest(L); timber(L); motel(L);
   roadside(L);
   powerLines(L);
