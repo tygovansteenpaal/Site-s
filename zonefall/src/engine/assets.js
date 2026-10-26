@@ -8,7 +8,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { HDRLoader } from 'three/addons/loaders/HDRLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
-import { ASSETS, RENDER, QUALITY, assetUrl, textureUrl } from '../config.js';
+import { ASSETS, RENDER, QUALITY, assetUrl, textureUrl, skinUrl, isSkin, SKIN_DEFAULT } from '../config.js';
 import { on, EV } from '../core/bus.js';
 import { state } from '../core/state.js';
 
@@ -222,6 +222,29 @@ export function cloneModel(key) {
   let skinned = false;
   g.scene.traverse((o) => { if (o.isSkinnedMesh) skinned = true; });
   return skinned ? SkeletonUtils.clone(g.scene) : g.scene.clone(true);
+}
+
+const skins = new Map();     // id -> Promise<gltf>
+/**
+ * Character skin GLB (config.SKINS), fetched on first use and cached. Resolves to the shared gltf (clone it with
+ * SkeletonUtils before use); rejects for unknown ids and the default outfit, which is soldier_a/soldier_b.
+ */
+export function loadSkin(id) {
+  if (!isSkin(id) || id === SKIN_DEFAULT) return Promise.reject(err(`'${id}' is not a skin model`));
+  let p = skins.get(id);
+  if (!p) {
+    const url = skinUrl(id);
+    p = MeshoptDecoder.ready
+      .then(() => fetchBytes({ url, total: 0, loaded: 0 }, () => {}))
+      .then((buf) => parseGLB(buf, url))
+      .then((gltf) => {
+        gltf.scene.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+        return gltf;
+      });
+    p.catch(() => skins.delete(id));   // a failed download is retried next time
+    skins.set(id, p);
+  }
+  return p;
 }
 
 /** Animation clips of soldier_a by name ({Idle, Walk, Rifle_Aim, ...}); they also play on soldier_b. */

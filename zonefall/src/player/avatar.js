@@ -37,6 +37,8 @@ import { state, gfx, LIFE, FLAG, hasFlag, debug } from '../core/state.js';
 import { clamp, damp, dampAngle, angleDelta, wrapAngle, smoothstep, lerp, DEG } from '../core/util.js';
 import * as assets from '../engine/assets.js';
 import * as world from '../world/world.js';
+import { SKIN_DEFAULT } from '../config.js';
+import { createSkin, retarget } from './skin.js';
 import { GAIT, gaitRate, gaitClipRate, gait as localGait, stanceInfo as localStance, airInfo as localAir } from './controller.js';
 
 // ------------------------------------------------------------------------------------------ tunables
@@ -98,6 +100,7 @@ let qual = QUALITY.medium;
 const clipCache = new Map();        // name -> {lower, upper, duration}
 const tintCache = new Map();        // 'model|tint' -> Map(srcMaterial -> tinted)
 const ghostCache = new Map();
+const HIDDEN = new THREE.MeshBasicMaterial({ visible: false });
 const protos = new Map();           // weapon id -> prototype
 let probe = null;                   // reference measurements from a posed probe skeleton
 let canopyGeo = null, canopyLines = null, canopyMat = null, lineMat = null;
@@ -199,13 +202,13 @@ function shadowOnly(m) {
  * still receives the whole body because shadows use the depth material, not this one.
  */
 const armsCache = new Map();
-function armsOnly(m, skeleton) {
+function armsOnly(m, skeleton, isArm = null) {
   const key = m.uuid + '|' + skeleton.bones.length;
   let a = armsCache.get(key);
   if (a) return a;
   const n = skeleton.bones.length;
   const mask = new Float32Array(n);
-  for (let i = 0; i < n; i++) mask[i] = TUNE.adsArmBones.test(skeleton.bones[i].name) ? 1 : 0;
+  for (let i = 0; i < n; i++) mask[i] = (isArm ? isArm(skeleton.bones[i]) : TUNE.adsArmBones.test(skeleton.bones[i].name)) ? 1 : 0;
   a = m.clone();
   a.name = m.name + '#arms';
   a.onBeforeCompile = (shader) => {
@@ -578,11 +581,30 @@ function createAvatar(e) {
     adsEye: new THREE.Vector3(), adsValid: false, muzzleValid: false,
     groundY: e.pos.y, lastFallSpeed: 0, swimT: 0, pouchLocal: null,
     handle: { root, muzzle: null, head: bones.head },
+    skin: null,
   };
   scene.add(root);
   applyLocalMode(av);
   placeRoot(av, 0);
+  if (e.skin && e.skin !== SKIN_DEFAULT) {
+    assets.loadSkin(e.skin).then((gltf) => { if (avatars.get(av.id) === av) wearSkin(av, gltf); },
+      (x) => console.warn(`[PLAYER/avatar] skin '${e.skin}' unavailable, ${av.id} stays a soldier`, x));
+  }
   return av;
+}
+
+/** Swap the soldier's meshes for a loaded skin; the soldier skeleton keeps animating underneath. */
+function wearSkin(av, gltf) {
+  const skin = createSkin(gltf, av.modelKey, (key) => assets.cloneModel(key));
+  // The soldier's bones (and the weapon on WeaponSocket_R) hang under its mesh, so the mesh stays in the graph and only
+  // stops drawing: an invisible material, no shadow.
+  for (const m of av.meshes) { m.mesh.material = HIDDEN; m.mesh.castShadow = false; }
+  av.meshes = skin.meshes.map((mesh) => ({ mesh, kind: 'body', base: mesh.material, shadow: null, isArm: skin.isArm }));
+  av.root.add(skin.group);
+  av.skin = skin;
+  applyLocalMode(av);
+  setCastShadow(av, av.castShadow);
+  retarget(skin, av.root, av.model);
 }
 
 function disposeAvatar(av) {
@@ -820,7 +842,7 @@ function applyLocalMode(av) {
       if (!m.shadow) m.shadow = shadowOnly(m.base);
       m.mesh.material = m.shadow;
     } else if (mode === 'ads') {
-      m.mesh.material = armsOnly(m.base, m.mesh.skeleton);
+      m.mesh.material = armsOnly(m.base, m.mesh.skeleton, m.isArm);
     } else {
       m.mesh.material = av.ghost ? ghostOf(m.base) : m.base;
     }
@@ -984,6 +1006,7 @@ function animate(av, dt, isLocal) {
   av.root.updateMatrixWorld(true);
 
   procedural(av, e, dt, isLocal, ls, pistol);
+  if (av.skin) retarget(av.skin, av.root, av.model);
 }
 
 function enterLower(av, ls, prev) {

@@ -264,7 +264,7 @@ export function fatal(title, detail) {
 function exposeDebug() {
   debug.ui = Object.assign(debug.ui || {}, {
     /**
-     * Show one screen for tests: 'loading' | 'menu' | 'private' | 'settings' | 'credits' | 'lobby' | 'hud' | 'map' |
+     * Show one screen for tests: 'loading' | 'menu' | 'private' | 'shop' | 'settings' | 'credits' | 'lobby' | 'hud' | 'map' |
      * 'death' | 'spectate' | 'results' | 'pause' | 'pause-settings'. mock: data for the screen (lobby object, death or
      * results info, loading {p, label}). Does not change state.app.
      */
@@ -275,7 +275,7 @@ function exposeDebug() {
       switch (name) {
         case 'loading': menu.showLoading(mock.p ?? 0.42, mock.label || 'Models and textures'); break;
         case 'menu': menu.show(); break;
-        case 'private': case 'settings': case 'credits': menu.openPanel(name); break;
+        case 'private': case 'shop': case 'settings': case 'credits': menu.openPanel(name); break;
         case 'lobby': lobby.show(); lobby.render(mock.lobby || mock); break;
         case 'hud': hud.show(); break;
         case 'map': hud.show(); ensureMapImage(); map.setBigOpen(true); break;

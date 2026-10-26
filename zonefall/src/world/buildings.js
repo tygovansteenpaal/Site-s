@@ -1727,6 +1727,26 @@ function special(ctx, sp) {
       g.aoFn = null;
       break;
     }
+    case 'logpile': {
+      // sawmill log stack: rows of octagonal logs (two square prisms 45 degrees apart), one collider for the pile
+      const y = heightAt(sp.x, sp.z);
+      g.frame(sp.x, y, sp.z, sp.yaw);
+      const r = 0.3, len = sp.len || 7, rows = sp.rows || 3, d = r * 2.02;
+      const hl = len / 2, s45 = Math.SQRT1_2;
+      for (let row = 0; row < rows; row++) {
+        const n = rows + 1 - row;
+        for (let i = 0; i < n; i++) {
+          const z = (i - (n - 1) / 2) * d, yy = r + row * r * 1.74;
+          const jit = (((i * 37 + row * 11) % 7) / 7 - 0.5) * 0.5;
+          g.boxB(jit, yy, z, [1, 0, 0], [0, 1, 0], [0, 0, 1], hl, r * 0.92, r * 0.92, MAT.planksDark, { col: false, mats: { px: MAT.planks, nx: MAT.planks } });
+          g.boxB(jit, yy, z, [1, 0, 0], [0, s45, s45], null, hl - 0.02, r * 0.92, r * 0.92, MAT.planksDark, { col: false, skip: PX | NX });
+        }
+      }
+      const top = r * 2 + (rows - 1) * r * 1.74;
+      g.colBox(0, top / 2, 0, hl, top / 2, (rows + 1) * d / 2, SURFACE.WOOD);
+      ctx.covers.push([g.wx(0, (rows + 1) * d / 2 + 0.8), y, g.wz(0, (rows + 1) * d / 2 + 0.8)]);
+      break;
+    }
     case 'firepit': {
       const y = heightAt(sp.x, sp.z);
       g.frame(sp.x, y, sp.z, 0);

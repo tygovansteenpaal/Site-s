@@ -9,7 +9,8 @@
 // Host migration: HOST_CHANGED to self during a match -> bots.takeOver(). A peer that leaves mid-match counts as dead
 // (PLAYER_KILLED {weapon: 'left'}, no drop, no credit).
 import * as THREE from 'three';
-import { MATCH, BOTS, DEV, SPAWN_LOADOUT, PLAYER } from '../config.js';
+import { MATCH, BOTS, DEV, SPAWN_LOADOUT, PLAYER, SKINS, SKIN_DEFAULT, ECONOMY } from '../config.js';
+import * as profile from '../core/profile.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, debug, createPlayer, resetMatchState, getPlayer, localPlayer, botId, randomId, LIFE, APP } from '../core/state.js';
 import { stream, randomSeed } from '../core/rng.js';
@@ -82,12 +83,15 @@ export function planePosAt(t, out) {
 
 // ------------------------------------------------------------------------------------------ begin
 function buildBots(seed, humans, count) {
-  const ro = humans.slice(0, MATCH.maxHumans).map((h, i) => ({ id: h.id, name: h.name, kind: 'human', slot: i }));
+  const ro = humans.slice(0, MATCH.maxHumans).map((h, i) => ({ id: h.id, name: h.name, kind: 'human', slot: i, sk: h.sk || SKIN_DEFAULT }));
   const names = stream(seed, 'bots').shuffle(BOTS.names.slice());
+  const looks = stream(seed, 'bot-skins');
+  const pool = Object.keys(SKINS).filter((k) => k !== SKIN_DEFAULT);
   const want = Math.max(0, Math.min(MATCH.maxPlayers - ro.length, count));
   for (let i = 0; i < want; i++) {
     const slot = ro.length;
-    ro.push({ id: botId(slot), name: names[i % names.length], kind: 'bot', slot });
+    const sk = looks.chance(ECONOMY.botSkinChance) ? looks.pick(pool) : SKIN_DEFAULT;
+    ro.push({ id: botId(slot), name: names[i % names.length], kind: 'bot', slot, sk });
   }
   return ro;
 }
@@ -101,7 +105,7 @@ function botCount(requested) {
 /** Offline match: self + bots (MATCH.maxPlayers - 1, or DEV.bots). seed: DEV.seed or random. */
 export function startPractice(opts = {}) {
   const seed = (Number.isFinite(opts.seed) ? opts.seed : Number.isFinite(DEV.seed) ? DEV.seed : randomSeed()) >>> 0;
-  const humans = [{ id: state.selfId, name: state.name || 'Operator' }];
+  const humans = [{ id: state.selfId, name: state.name || 'Operator', sk: profile.equipped() }];
   const roster = buildBots(seed, humans, botCount(opts.bots));
   begin({ mid: randomId(8), seed, ro: roster }, performance.now() + (opts.leadMs ?? TUNE.practiceLeadMs), 'practice');
 }
@@ -117,7 +121,7 @@ export function hostBegin(humans) {
   const roster = buildBots(seed, humans, botCount());
   const th = performance.now();
   const mid = randomId(8);
-  const msg = { mid, seed, t0h: th + MATCH.startLeadMs, th, ro: roster.map((r) => ({ id: r.id, name: r.name, kind: r.kind === 'bot' ? 'b' : 'h', slot: r.slot })), ep: safe(() => session.epoch(), 0) };
+  const msg = { mid, seed, t0h: th + MATCH.startLeadMs, th, ro: roster.map((r) => ({ id: r.id, name: r.name, kind: r.kind === 'bot' ? 'b' : 'h', slot: r.slot, sk: r.sk })), ep: safe(() => session.epoch(), 0) };
   if (state.online) session.send('start', msg);
   let mode = 'quick';
   try { mode = state.online ? (lobby.get().mode || 'quick') : 'practice'; } catch (e) { mode = state.online ? 'quick' : 'practice'; }
@@ -146,7 +150,7 @@ function begin(start, t0, mode) {
   const host = state.online ? (safe(() => session.hostId(), null) || state.selfId) : state.selfId;
   for (const r of start.ro) {
     const kind = r.id === state.selfId ? 'local' : r.kind === 'bot' ? 'bot' : 'remote';
-    const e = createPlayer({ id: r.id, name: r.name, kind, owner: kind === 'bot' ? host : r.id, slot: r.slot });
+    const e = createPlayer({ id: r.id, name: r.name, kind, owner: kind === 'bot' ? host : r.id, slot: r.slot, skin: r.sk || SKIN_DEFAULT });
     e.life = LIFE.PLANE;
     e.alive = true;
     e.hp = PLAYER.health;
@@ -158,7 +162,7 @@ function begin(start, t0, mode) {
   m.mode = mode;
   m.t0 = t0;
   m.time = (performance.now() - t0) / 1000;
-  m.roster = start.ro.map((r) => ({ id: r.id, name: r.name, kind: r.kind === 'bot' ? 'bot' : 'human', slot: r.slot }));
+  m.roster = start.ro.map((r) => ({ id: r.id, name: r.name, kind: r.kind === 'bot' ? 'bot' : 'human', slot: r.slot, sk: r.sk || SKIN_DEFAULT }));
   m.alive = start.ro.length;
   m.winnerId = null;
   m.placement = 0;

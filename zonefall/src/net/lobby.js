@@ -6,7 +6,8 @@
 // (MATCH.lobbyCountdown at >= 2 humans, MATCH.lobbyCountdownFull at >= 6, quick play alone: bots after
 // MATCH.aloneStartAfter), broadcasts 'lobby' every second and calls game/match.hostBegin(humans) at zero.
 // Non-hosts mirror the countdown from 'lobby'.
-import { NET, MATCH } from '../config.js';
+import { NET, MATCH, SKIN_DEFAULT } from '../config.js';
+import * as profile from '../core/profile.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, debug, APP } from '../core/state.js';
 import { PROTOCOL_VERSION, ACTIONS } from './protocol.js';
@@ -88,7 +89,7 @@ function now() { return performance.now(); }
 
 function helloPayload() {
   const live = (state.app === APP.MATCH || state.app === APP.RESULTS) && state.match.phase !== 'idle' && state.match.phase !== 'ended';
-  return { v: PROTOCOL_VERSION, name: state.name || 'Operator', st: live ? 'live' : 'lobby', mid: state.match.id || null, hum: session.peers().length + 1 };
+  return { v: PROTOCOL_VERSION, name: state.name || 'Operator', st: live ? 'live' : 'lobby', mid: state.match.id || null, hum: session.peers().length + 1, sk: profile.equipped() };
 }
 
 function sayHello(target = null) {
@@ -101,7 +102,7 @@ export function init() {
   inited = true;
   on(EV.NET_HELLO, ({ from, data }) => {
     const prev = infos.get(from);
-    infos.set(from, { name: data.name, st: data.st, mid: data.mid, hum: data.hum, at: now() });
+    infos.set(from, { name: data.name, st: data.st, mid: data.mid, hum: data.hum, sk: data.sk, at: now() });
     if (!prev && state.app === APP.LOBBY) refresh(true);
   });
   on(EV.PEER_JOIN, ({ id }) => {
@@ -201,6 +202,7 @@ function buildRoster() {
   return list.slice(0, TUNE.maxHumans).map((id) => ({
     id,
     name: id === self ? (state.name || 'Operator') : (infos.get(id)?.name || lastHostLobby?.ro.find((r) => r.id === id)?.name || 'Joining'),
+    sk: id === self ? profile.equipped() : (infos.get(id)?.sk || lastHostLobby?.ro.find((r) => r.id === id)?.sk || SKIN_DEFAULT),
     self: id === self,
     host: id === host,
   }));
@@ -425,7 +427,7 @@ function hostTick(t, humans, live) {
     nextLobbyAt = t + TUNE.lobbyEveryMs;
     session.send(ACTIONS.LOBBY, {
       ep: session.epoch(), cd: L.countdownEndsAt == null ? null : Math.max(0, L.countdownEndsAt - t),
-      ro: humans.map((h) => ({ id: h.id, name: h.name })), mode: L.mode,
+      ro: humans.map((h) => ({ id: h.id, name: h.name, sk: h.sk })), mode: L.mode,
     });
   }
 
@@ -434,10 +436,10 @@ function hostTick(t, humans, live) {
 
 function begin(humans) {
   started = true;
-  session.send(ACTIONS.LOBBY, { ep: session.epoch(), cd: 0, ro: humans.map((h) => ({ id: h.id, name: h.name })), mode: L.mode });
+  session.send(ACTIONS.LOBBY, { ep: session.epoch(), cd: 0, ro: humans.map((h) => ({ id: h.id, name: h.name, sk: h.sk })), mode: L.mode });
   setStatus('starting', 'Deploying');
   try {
-    match.hostBegin(humans.map((h) => ({ id: h.id, name: h.name })));
+    match.hostBegin(humans.map((h) => ({ id: h.id, name: h.name, sk: h.sk })));
   } catch (err) {
     started = false;
     forced = false;

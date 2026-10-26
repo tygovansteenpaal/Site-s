@@ -5,7 +5,8 @@
 // STANDING") or placement, kills, damage, headshots, longest kill, time survived; PLAY AGAIN (same mode) / MAIN MENU.
 // Pause (Escape / lost pointer lock): RESUME, SETTINGS, LEAVE MATCH; practice mode freezes the simulation
 // (main.js handles UI_INTENT 'pause'/'resume'; RESUME requests pointer lock from its click).
-import { emit, EV } from '../core/bus.js';
+import { emit, on, EV } from '../core/bus.js';
+import * as profile from '../core/profile.js';
 import { state, getPlayer } from '../core/state.js';
 import { WEAPONS, MATCH, PLAYER } from '../config.js';
 import { h, sfx, GLYPH, keycap, setText, setVar, clock } from './dom.js';
@@ -133,6 +134,7 @@ export function showDeath(info = {}) {
   const damage = Math.round(info.damage ?? state.match.stats.damage);
   const self = !k.id || k.id === state.selfId;
   deathEl.textContent = '';
+  rewardEls.clear();
   const killerLine = h('div', { class: 'zf-death__killer' });
   if (k.weapon === 'zone' || k.weapon === 'fall') {
     killerLine.append(h('span', { class: 'zf-label', text: 'Cause' }), h('b', { text: k.weapon === 'zone' ? 'Caught in the zone' : 'Fall damage' }));
@@ -157,6 +159,7 @@ export function showDeath(info = {}) {
       killerLine,
       h('dl', { class: 'zf-stats zf-stats--row' },
         stat('Placement', `#${placement}`), stat('Kills', String(kills)), stat('Damage', String(damage))),
+      rewardLine(),
       h('div', { class: 'zf-death__actions' }, alive > 0 ? spectate : null, leave),
       h('p', { class: 'zf-death__hint' }, keycap('pause'), ' opens the menu')));
   deathEl.hidden = false;
@@ -164,6 +167,23 @@ export function showDeath(info = {}) {
   open.death = true;
   sfx('back');
 }
+
+/** "+N coins" for this match; fills in when core/profile pays out (right after the death or match end event). */
+function rewardLine() {
+  const el = h('p', { class: 'zf-reward', hidden: true });
+  const paint = () => {
+    const r = profile.lastReward();
+    if (!r || r.mid !== state.match.id) return;
+    el.textContent = '';
+    el.append(h('span', { class: 'zf-coin', 'aria-hidden': 'true' }), `+${r.coins.toLocaleString('en-US')} coins`);
+    el.hidden = false;
+  };
+  rewardEls.add(paint);
+  paint();
+  return el;
+}
+const rewardEls = new Set();
+on(profile.PEV.PROFILE_CHANGED, () => { for (const f of rewardEls) f(); });
 
 function stat(label, value, sub) {
   return h('div', { class: 'zf-stat' }, h('dt', { text: label }), h('dd', { text: value }), sub ? h('small', { text: sub }) : null);
@@ -204,6 +224,7 @@ export function showResults(info = {}) {
   const winnerName = info.winnerName || (winnerId ? (getPlayer(winnerId)?.name || (state.match.roster.find((r) => r.id === winnerId) || {}).name) : null);
   const mode = info.mode || state.match.mode;
   resultsEl.textContent = '';
+  rewardEls.clear();
   resultsEl.classList.toggle('is-win', !!won);
   const again = btn('Play again', 'zf-btn--primary', () => { sfx('confirm'); emit(EV.UI_INTENT, { type: 'play_again' }); }, '');
   const menuBtn = btn('Main menu', 'zf-btn--ghost', () => { sfx('back'); emit(EV.UI_INTENT, { type: 'main_menu' }); }, GLYPH.back);
@@ -221,6 +242,7 @@ export function showResults(info = {}) {
         stat('Headshots', String(s.headshots || 0)),
         stat('Longest kill', s.longest ? `${Math.round(s.longest)} m` : '-'),
         stat('Time survived', clock(s.survived || 0))),
+      rewardLine(),
       h('div', { class: 'zf-results__actions' }, again, menuBtn)));
   resultsEl.hidden = false;
   resultsEl.classList.remove('is-in'); void resultsEl.offsetWidth; resultsEl.classList.add('is-in');

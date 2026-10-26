@@ -517,6 +517,111 @@ function bunkerSite(L) {
   crateSpots(L, s, 1, rngFor('bunker'));
 }
 
+// ------------------------------------------------------------------------------------------ added sites
+/** Road point nearest a site with its unit tangent and the normal pointing to `side` (+1 left of travel, -1 right). */
+function roadFrame(id, site, side = 1) {
+  const r = roads.find((q) => q.id === id);
+  const p = roadPoint(r, closestS(r, site.x, site.z).s);
+  return { r, x: p.x, z: p.z, tx: p.tx, tz: p.tz, nx: -p.tz * side, nz: p.tx * side };
+}
+
+/** Place a building at road-frame offsets (along, across), facing the road; nudged outward until it fits. */
+function putOff(L, site, F, kind, along, across, w, d, extra = {}) {
+  for (let k = 0; k < 14; k++) {
+    const a = across + Math.sign(across || 1) * k * 1.5;
+    const x = F.x + F.tx * along + F.nx * a, z = F.z + F.tz * along + F.nz * a;
+    const yaw = extra.yaw ?? yawFacing(-F.nx * Math.sign(a), -F.nz * Math.sign(a));
+    const b = { site: site.id, kind, x, z, w, d, storeys: 1, ...extra, yaw };
+    if (fits(L, b, 2) && clearOfRoads(x, z, w, d, yaw, 1)) return addBuilding(L, b);
+  }
+  return null;
+}
+const at = (F, along, across) => [F.x + F.tx * along + F.nx * across, F.z + F.tz * along + F.nz * across];
+
+function pinecrest(L) {
+  const s = siteById('pinecrest');
+  const rng = rngFor('pinecrest');
+  const F = roadFrame('R10', s, 1);
+  // village green by the road (no pavement: R10 climbs through the village and stepped kerbs float on the slope)
+  const [gx, gz] = at(F, 4, 16);
+  addPaint({ shape: 'disc', ch: 1, x: gx, z: gz, r: 9, edge: 4, w: 0.5, noise: 0.5 });
+  L.gardenTrees.push({ x: gx + F.nx * 7, z: gz + F.nz * 7, s: 1.0, site: s.id }, { x: gx + F.tx * 7, z: gz + F.tz * 7, s: 0.85, site: s.id });
+  placeStreet(L, s, 'shop', SHOP, 2, ['R10'], rng, { near: true, spacing: 6 });
+  placeStreet(L, s, 'house', HOUSE, 9, ['R10'], rng, { spacing: 6 });
+  for (let a = 0; a < 200 && L.buildings.filter((b) => b.site === s.id && b.kind === 'house').length < 9; a++) {
+    const [x, z] = rng.inDisc(s.x, s.z, s.r * 0.7);
+    const sz = HOUSE(rng);
+    const yaw = yawFacing(F.x - x, F.z - z);
+    const b = { site: s.id, kind: 'house', x, z, yaw, ...sz };
+    if (fits(L, b, 5) && clearOfRoads(x, z, b.w, b.d, yaw, 4)) addBuilding(L, b);
+  }
+  for (const b of L.buildings.filter((q) => q.site === s.id)) {
+    const fx = Math.sin(b.yaw), fz = Math.cos(b.yaw);
+    if (b.kind === 'house' && rng.chance(0.5)) {
+      const ox = Math.cos(b.yaw), oz = -Math.sin(b.yaw);
+      L.props.push({ key: 'covered_car', x: b.x + fx * (b.d / 2 + 2.2) + ox * (b.w / 2 + 2.6), z: b.z + fz * (b.d / 2 + 2.2) + oz * (b.w / 2 + 2.6), yaw: b.yaw + Math.PI / 2, site: s.id });
+    }
+    if (b.kind === 'shop') L.props.push({ key: 'cardboard_box', x: b.x - fx * (b.d / 2 + 1.0), z: b.z - fz * (b.d / 2 + 1.0), yaw: rng.range(0, 6), site: s.id });
+    L.outdoor.push({ x: b.x + fx * (b.d / 2 + 1.6), z: b.z + fz * (b.d / 2 + 1.6), site: s.id });
+  }
+  for (const b of L.buildings.filter((q) => q.site === s.id && q.kind === 'house')) yard(L, b, rng);
+  crateSpots(L, s, s.crates, rng);
+}
+
+function timber(L) {
+  const s = siteById('timber');
+  const rng = rngFor('timber');
+  const F = roadFrame('R11', s, 1);
+  const N = F.nz < 0 ? 1 : -1;               // across sign that points north (-Z): the mill side
+  putOff(L, s, F, 'warehouse', -4, N * 24, 28, 14, { variant: 1 });
+  putOff(L, s, F, 'shed', 24, N * 20, 7, 9, { variant: 1 });
+  putOff(L, s, F, 'shed', -30, N * 19, 6, 8, { variant: 2 });
+  putOff(L, s, F, 'cabin', -14, -N * 17, 6, 8);
+  putOff(L, s, F, 'cabin', 2, -N * 19, 6, 8);
+  putOff(L, s, F, 'cabin', 18, -N * 17, 6, 8);
+  // log yard between the hall and the track
+  const yaw = yawFacing(F.nx, F.nz) + Math.PI / 2;
+  for (const [a, c, rows, len] of [[-18, 11, 3, 8], [-6, 10, 2, 7], [8, 11, 3, 8], [20, 9, 2, 6]]) {
+    const [x, z] = at(F, a, N * c);
+    L.special.push({ kind: 'logpile', site: s.id, x, z, yaw, rows, len });
+    L.footprints.push({ x, z, w: len, d: 2.6, rot: yaw, fill: 'rgba(110,84,58,0.9)' });
+  }
+  const [px, pz] = at(F, -4, N * 12);
+  addPaint({ shape: 'rect', ch: 0, x: px, z: pz, hw: 30, hd: 9, rot: yaw, edge: 4, w: 0.6, noise: 0.9 });
+  const [cx, cz] = at(F, 34, N * 9);
+  L.special.push({ kind: 'containers', site: s.id, x: cx, z: cz, yaw, layout: 'L', seed: 1201 });
+  L.footprints.push({ x: cx, z: cz, w: 7, d: 6, rot: yaw });
+  for (const [a, c, key] of [[-26, 8, 'generator'], [14, 7, 'barrel_red'], [15, 7.9, 'barrel_red'], [-2, -8, 'tyre'], [28, 6, 'crate_wood'], [28.8, 6.1, 'crate_wood']]) {
+    const [x, z] = at(F, a, N * c);
+    L.props.push({ key, x, z, yaw: rng.range(0, 6), site: s.id });
+  }
+  for (const [a, c] of [[-12, 12], [14, 13], [-2, -12], [30, 12]]) { const [x, z] = at(F, a, N * c); L.outdoor.push({ x, z, site: s.id }); }
+  crateSpots(L, s, s.crates, rng);
+}
+
+function motel(L) {
+  const s = siteById('motel');
+  const rng = rngFor('motel');
+  const F = roadFrame('R12', s, 1);
+  const N = F.nz < 0 ? 1 : -1;               // the north side of the road
+  const lotYaw = yawFacing(F.tx, F.tz);
+  const [lx, lz] = at(F, -6, N * 17);
+  L.slabs.push({ site: s.id, kind: 'panels', x: lx, z: lz, w: 34, d: 15, yaw: lotYaw + Math.PI / 2, panel: 5, block: true });
+  // six room cabins: four in a row behind the lot, two on its west end, all facing the lot
+  for (const a of [-19, -9, 1, 11]) putOff(L, s, F, 'cabin', a, N * 31, 6, 8);
+  const face = yawFacing(F.tx, F.tz);
+  for (const c of [14, 23]) putOff(L, s, F, 'cabin', -29, N * c, 6, 8, { yaw: face });
+  putOff(L, s, F, 'shop', 22, N * 13, 11, 9, { variant: 2 });
+  for (const [a, c, rot] of [[-14, 14, 0], [-4, 15, 0.1], [6, 14, -0.08]]) {
+    const [x, z] = at(F, a, N * c);
+    L.props.push({ key: 'covered_car', x, z, yaw: lotYaw + rot, site: s.id });
+  }
+  const [ux, uz] = at(F, 16, N * 8);
+  L.props.push({ key: 'utility_box', x: ux, z: uz, yaw: lotYaw, site: s.id }, { key: 'jerrycan', x: ux + 1.2, z: uz, yaw: 0.4, site: s.id });
+  for (const [a, c] of [[-10, 20], [8, 21], [22, 6]]) { const [x, z] = at(F, a, N * c); L.outdoor.push({ x, z, site: s.id }); }
+  crateSpots(L, s, s.crates, rng);
+}
+
 function roadside(L) {
   const rng = rngFor('roadside');
   const allRoads = roads.filter((r) => r.id !== 'RQ');
@@ -589,6 +694,7 @@ export function buildLayout() {
   const L = createLayout();
   harrow(L); millbrook(L); kessler(L); greystone(L); signal(L); southport(L);
   fuel(L); cabins(L); lighthouse(L); bunkerSite(L);
+  pinecrest(L); timber(L); motel(L);
   roadside(L);
   powerLines(L);
   // scattered props along roads and in the countryside
