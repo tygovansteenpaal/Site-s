@@ -25,6 +25,17 @@ hardware acceleration, plus a mouse and keyboard (a standard gamepad also works)
 5. **Zone.** The safe circle shrinks in six phases. Outside it you take damage every second, more in later phases. The minimap and the compass show the next circle.
 6. **End.** The last player alive wins. After a death you can spectate the remaining players; the results screen offers Play again and Main menu.
 
+## Vehicles, RPG and Downtown
+
+- **McLaren P1.** Eight cars park along the roads (Harrow, Pinecrest, Sunset Motel, Southport, Downtown, Fort
+  Kessler road, the west track, Timber Mill). Walk up and press F to get in or out. W/S drive and brake, A/D steer,
+  Space handbrake, Shift boost; the mouse swings the chase camera. Faster on asphalt; no shooting while driving.
+- **RPG.** Legendary floor and crate loot (more of it in high-tier areas). One rocket per load, 6 carried; the
+  rocket flies, falls a little and explodes on impact (9.5 m blast, full damage within 2.6 m, hurts you too).
+- **Downtown.** A block of apartment towers and offices in the south-west hills, blended into the terrain, with
+  high-tier loot in the streets. **Batman** joins the outfits, and the drop plane is now a cartoon shark plane.
+- **Your own server.** `server/` hosts the game on your computer for LAN or internet play (see server/README.md).
+
 ## Outfits, coins and the shop
 
 Main menu > **Locker & shop** lists every outfit: the default Operator and 11 character skins in three rarities.
