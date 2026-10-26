@@ -680,6 +680,13 @@ when we elect it. A client that hears nobody at all does not take the bots until
   relay with the lowest total round trip, and counts a player still connecting through a relay in the lobby host
   election. A direct connection that delivers nothing (not even a pong) for 3.5 s is bypassed through a relay; pings
   keep running on it and bring it back when it works. `bye` (sent when leaving the room) makes relays stop at once.
+- **Handshake repair:** Trystero 0.25.4 still runs its own ready/ready exchange (10 s timeout). When one side's `ready`
+  is lost, that side times out while the other activates it and never offers again: a connected pair that can never
+  talk. session.js closes the orphan connection on that timeout (a connected RTCPeerConnection no peer owns, its
+  Trystero channel open 8 s or more), and closes and forgets a peer Trystero connected that never says hello within
+  12 s. Trystero announces only on joining a room and then once a minute, so after such a repair the client re-joins
+  the Trystero room under the same id (lobby only, session state kept; peers keep a verified player through a 4 s
+  gap), which announces at once: the pair has a fresh connection within seconds instead of up to a minute.
 
 ### 8.3 Binary layouts (little-endian; `src/net/protocol.js` is the reference)
 Protocol 4 (`NET.protocol`; bump it on every wire change, a hello of another version is refused):
@@ -691,9 +698,11 @@ FWD 3+n+m: u8 type=4 | u8 dir (0: pass to id, 1: comes from id) | u8 n | n B id 
 ```
 The match tag is FNV-1a of the match id (never 0); 0 means the sender is in the menu, lobby or results. A snapshot only
 feeds an entity when its tag is our match's.
-`t` is the sender's `performance.now()` in ms. `weapon` is an index into `WEAPON_ORDER` (255 = none). `flags` uses the
+`t` is the sender's `performance.now()` in ms of the frame that produced the pose (PSNAP, BOTS: `sync.capture` runs right
+after the simulation step), not the send time; a timer send between two frames repeats the pose with the same `t`, which
+receivers count as liveness only. `weapon` is an index into `WEAPON_ORDER` (255 = none). `flags` uses the
 `FLAG` bits, and `life` the `LIFE` values. Rates: PSNAP 20 Hz in a match and 5 Hz in the lobby (for liveness and clock offset);
-BOTS 15 Hz from the host; SHOT immediately per shot.
+BOTS 20 Hz from the host (only with a new frame); SHOT immediately per shot.
 
 ### 8.4 Reliable payloads
 | Action | Payload | Sender, when |
@@ -760,10 +769,16 @@ Liveness (silence is measured with this page's own stalls removed: a tick gap ov
 - No evidence (probe failed, browser offline, no relay socket) while hearing nobody: this client is the one cut off ->
   NET_LINK 'lost' ('link'). A page that itself stalled for about `NET.dropMs` (sleep, frozen tab) forfeits on resume
   ('stall'), and a dropped peer that keeps sending live snapshots is told with `kick` ('kicked').
+- A match cut in two with no path left between the halves (a pair without a direct connection whose relay player left:
+  `session.pathLost`, we had no direct link when the silence began and everyone who could relay him is gone too) is
+  settled by a rule both halves apply without a message: the half holding the lowest player id keeps the match, the
+  other half forfeits ('split': "Disconnected / Connection lost"). A silent player that someone still with us had a
+  direct link to is the usual drop.
 - While every other player is silent for 3 s the HUD shows "Connection interrupted".
 - Nobody is dropped and no stall forfeits before match time 15 s (match start is the heaviest moment on a slow machine).
 - Players on the results screen belong to the lobby context (the next round pulls them in) but never host the lobby
-  (hello `rs`), since only the lobby screen runs the countdown.
+  (hello `rs`), since only the lobby screen runs the countdown; their results screen shows the lobby host's countdown
+  ("Next round in 0:40 ... Main menu sits it out", `lobby.nextRound`).
 Browsers stop `requestAnimationFrame` in hidden tabs. While online, `core/loop.js` then drives the frame from a worker
 timer at 20 Hz without rendering, so a hidden host keeps simulating bots and every hidden player keeps sending snapshots.
 
@@ -771,7 +786,7 @@ timer at 20 Hz without rendering, so a hidden host keeps simulating bots and eve
 - **Quick play:** rooms `zf1-qp-v<protocol>-gl-<n>`, shared by every region, probed in order (`bucketProbeMs`, 3.5 s each)
   so searchers converge (per-region buckets split searchers who arrived a few seconds apart). Players waiting in a
   lobby are joined at once; full buckets are skipped; a bucket whose match is live is remembered. At the first empty
-  bucket the searcher waits (bots after 20 s alone), or, when humans are playing in a live bucket, joins that bucket's
+  bucket the searcher waits (bots after 20 s alone, held up to 15 s more while a player is still connecting), or, when humans are playing in a live bucket, joins that bucket's
   lobby and is told how many play and how long the round can last: he deploys with them next round, or presses
   "Play now with bots" (START NOW). Two or more waiting humans count down as usual; the live players join the round
   after. The lobby lists the players of the room who are in a match ("In match").
@@ -795,7 +810,7 @@ than ~57 s with rollback + restartIce + createOffer({iceRestart}), and in Chrome
 such offers can never connect. session.js passes `rtcPolyfill` (a subclass that skips the offerer's rollback and makes
 restartIce a no-op) and closes connections it considers dead, so late joiners and reconnects work after the first minute.
 Nostr relays only exchange about one message a minute per room once peers are connected, so reconnecting after a drop
-takes up to about a minute.
+takes up to about a minute (the handshake repair in 8.2 re-joins the room to announce at once, in the lobby only).
 
 ---
 

@@ -13,6 +13,7 @@ import { mountSettings } from './settings.js';
 
 let root = null;
 let deathEl, specEl, resultsEl, pauseEl;
+let resultsNext = null, nextCount = null, nextSecond = -1;   // results: the next round's countdown (updateResultsNext)
 let specName, specHp, specArmor, specTargetId = null;
 let pauseSettings = null, pauseSide, pauseRef, leaveArmed = 0, leaveBtn;
 const open = { death: false, spectate: false, results: false, pause: false };
@@ -137,7 +138,9 @@ export function showDeath(info = {}) {
   const killerLine = h('div', { class: 'zf-death__killer' });
   if (lost) {
     const why = state.match.netLost === 'stall' ? 'This tab stopped running for too long (sleep or a frozen window)'
-      : state.match.netLost === 'kicked' ? 'The other players stopped hearing from you' : 'Your connection to the other players dropped';
+      : state.match.netLost === 'kicked' ? 'The other players stopped hearing from you'
+        : state.match.netLost === 'split' ? 'The player who relayed your connection left, and your network cannot reach the others directly. The other side keeps the match, so everyone gets one result'
+          : 'Your connection to the other players dropped';
     killerLine.append(h('span', { class: 'zf-label', text: 'Cause' }), h('b', { text: 'Connection lost' }),
       h('span', { class: 'zf-death__how' }, h('span', { text: `${why}. You were removed from the match.` })));
   } else if (k.weapon === 'zone' || k.weapon === 'fall') {
@@ -227,13 +230,38 @@ export function showResults(info = {}) {
         stat('Headshots', String(s.headshots || 0)),
         stat('Longest kill', s.longest ? `${Math.round(s.longest)} m` : '-'),
         stat('Time survived', clock(s.survived || 0))),
+      resultsNext = h('div', { class: 'zf-results__next', hidden: true, role: 'status', 'aria-live': 'polite' },
+        h('span', { class: 'zf-label', text: 'Next round in' }),
+        nextCount = h('b', { class: 'zf-results__count', text: '0:00' }),
+        h('p', { text: 'You deploy with the players in this lobby automatically. Main menu sits it out.' })),
       h('div', { class: 'zf-results__actions' }, again, menuBtn)));
+  nextSecond = -1;
   resultsEl.hidden = false;
   resultsEl.classList.remove('is-in'); void resultsEl.offsetWidth; resultsEl.classList.add('is-in');
   open.results = true;
   deathEl.hidden = true; open.death = false;
   showSpectate(null);
   showPause(false);
+}
+
+/**
+ * Per frame on the results screen: the lobby's countdown to the next round this player will be deployed into
+ * (net/lobby.nextRound: {endsAt}), or null to hide it. Ticks through the last ten seconds like the lobby countdown.
+ */
+export function updateResultsNext(next) {
+  if (!open.results || !resultsNext) return;
+  const on = !!next;
+  if (resultsNext.hidden === on) resultsNext.hidden = !on;
+  if (!on) { nextSecond = -1; return; }
+  const s = Math.max(0, (next.endsAt - performance.now()) / 1000);
+  setText(nextCount, clock(s));
+  const whole = Math.ceil(s);
+  if (whole !== nextSecond) {
+    if (nextSecond === -1) sfx('confirm');
+    else if (whole <= 10 && whole > 0) sfx('tick');
+    nextSecond = whole;
+    resultsNext.classList.toggle('is-final', whole <= 10);
+  }
 }
 
 /**

@@ -46,6 +46,9 @@ export const TUNE = {
   nobodyAfterMs: 10000,      // private join: no player seen this long after settling -> "nobody is in this lobby" (a
                              // busy room's connections can take several seconds to form, longer than the join probe)
   blockedAfterMs: 12000,     // after settling: nobody connected but players tried -> "your network blocks direct connections"
+  blockedHoldMs: 90000,      // ... and that explanation stays this long after the last failed attempt while nobody connects
+  joinHoldMaxMs: 15000,      // quick play alone: a player still connecting to us (handshake settling or being repaired)
+                             // holds the bot countdown this long at most, so he is not left behind in a solo match
   globalNs: 'gl',            // quick play: the bucket namespace every region shares
 };
 
@@ -113,6 +116,7 @@ let token = 0;                 // bumps on leave / new search, cancels pending a
 let phase = 'idle';            // 'idle' | 'connecting' | 'probing' | 'settled'
 let settledAt = 0;
 let aloneSince = 0;
+let joinHold = 0, holdTickAt = 0;  // quick play alone: ms the bot countdown was held for a player still connecting
 let started = false;
 let forced = false;
 let nextHelloAt = 0, nextLobbyAt = 0, nextEmitAt = 0;
@@ -125,6 +129,7 @@ let unseatedSince = 0;
 let everSeen = false;          // some player of this room connected (or said hello) since we joined it
 let nobodyToasted = false;
 let blockedToasted = false;
+let blockedAt = 0;             // last time the blocked-network evidence held in this room (blockedText keeps it a while)
 
 function now() { return performance.now(); }
 
@@ -214,7 +219,7 @@ export function init() {
     if (from === APP.MATCH || from === APP.RESULTS) {
       // Back from a round: a fresh countdown, everyone re-announces.
       started = false; forced = false; L.countdownEndsAt = null; lastHostLobby = null;
-      aloneSince = now(); settledAt = now() - TUNE.settleMs;
+      aloneSince = now(); settledAt = now() - TUNE.settleMs; joinHold = 0; holdTickAt = 0;
       nextHelloAt = 0;
       sayHello();
       refresh(true);
@@ -350,7 +355,8 @@ function refresh(force) {
   L.live = L.matchInProgress ? liveHere() : null;
   L.inMatch = state.online ? playersInMatch().map((p) => ({ id: p.id, name: p.name })) : [];
   L.canStart = L.isHost && startAllowed();
-  L.startLabel = L.mode === 'quick' && L.matchInProgress && L.humans <= 1 ? 'Play now with bots' : 'Start now';
+  // alone with players we cannot reach (blocked network), or beside a live match: START NOW means a match with bots
+  L.startLabel = L.humans <= 1 && ((L.mode === 'quick' && L.matchInProgress) || (L.status === 'blocked' && blockedAt)) ? 'Play now with bots' : 'Start now';
   L.note = state.online ? noteText() : null;
   const key = `${L.status}|${L.text}|${L.hostId}|${L.countdownEndsAt}|${L.roster.map((r) => r.id + r.name + (r.via || '')).join(',')}|${L.matchInProgress}|${L.retryAt}|${L.seated}|${L.inMatch.map((r) => r.id).join(',')}|${L.canStart}|${L.startLabel}|${L.note}|${L.live ? L.live.humans + ':' + L.live.minLeft : ''}`;
   const t = now();
@@ -403,6 +409,7 @@ function settle() {
   retries = 0;
   settledAt = now();
   aloneSince = now();
+  joinHold = 0; holdTickAt = 0;
   started = false; forced = false;
   L.countdownEndsAt = null;
   nextHelloAt = 0; nextLobbyAt = 0;
@@ -457,7 +464,7 @@ function resetFor(mode, code) {
   lastHostLobby = null;
   started = false; forced = false;
   unseatedSince = 0;
-  everSeen = false; nobodyToasted = false; blockedToasted = false;
+  everSeen = false; nobodyToasted = false; blockedToasted = false; blockedAt = 0;
   L.mode = mode; L.code = code; L.link = code ? shareLink(code) : null; L.countdownEndsAt = null; L.created = false; L.seated = true;
   setRoomParam(code);
   phase = 'connecting';
@@ -622,8 +629,11 @@ function waitingText() {
  * through a relay: our network blocks direct connections (a strict firewall, some mobile or campus networks).
  */
 function blockedText() {
-  if (phase !== 'settled' || now() - settledAt < TUNE.blockedAfterMs || session.peers().length > 0) return null;
-  if (!session.unreachable().length) return null;
+  if (phase !== 'settled' || now() - settledAt < TUNE.blockedAfterMs || session.peers().length > 0) { blockedAt = 0; return null; }
+  // The evidence (a failed attempt) lasts 30 s, but Trystero tries again only about once a minute: once shown, the
+  // explanation stays while nobody connects, instead of flipping back to "Share the code" between the attempts.
+  if (session.unreachable().length) blockedAt = now();
+  else if (!blockedAt || now() - blockedAt > TUNE.blockedHoldMs) return null;
   return 'Players are in this lobby, but your network blocks direct connections to them. Try another network, such as mobile data, or play practice.';
 }
 
@@ -728,6 +738,9 @@ export function update(dt) {
 
 function hostTick(t, humans, live) {
   const n = humans.length;
+  const tickGap = holdTickAt;
+  holdTickAt = t;
+  if (n > 1 || L.mode !== 'quick') joinHold = 0;
   if (forced) {
     // START NOW: countdownEndsAt already set to now
   } else if (waitForLive(live, n)) {
@@ -738,7 +751,10 @@ function hostTick(t, humans, live) {
     if (L.countdownEndsAt == null || L.countdownEndsAt - t > want) L.countdownEndsAt = t + want;
     aloneSince = t;
   } else if (L.mode === 'quick') {
-    L.countdownEndsAt = aloneSince + MATCH.aloneStartAfter * 1000;
+    // a player is connecting to us right now (a handshake settling, or a broken one being repaired): the bot countdown
+    // waits for him, up to TUNE.joinHoldMaxMs in total, so the two do not end up in separate matches
+    if (session.pendingAttempts() > 0 && joinHold < TUNE.joinHoldMaxMs) joinHold = Math.min(TUNE.joinHoldMaxMs, joinHold + Math.min(250, Math.max(0, t - (tickGap || t))));
+    L.countdownEndsAt = aloneSince + MATCH.aloneStartAfter * 1000 + joinHold;
   } else {
     L.countdownEndsAt = null;
     aloneSince = t;
@@ -769,6 +785,19 @@ function begin(humans) {
     emit(EV.TOAST, { text: 'The match could not start. Try START NOW again.', kind: 'danger', ms: 5000 });
     setStatus('waiting', waitingText());
   }
+}
+
+/**
+ * The next round that will deploy this player straight from the results screen (results players belong to the lobby
+ * and the lobby host's countdown pulls them in): {endsAt (local performance.now() ms), humans} while the host's latest
+ * 'lobby' message lists us with a countdown running, else null. The results screen shows it, so nobody reading his
+ * stats is dropped into a plane without notice.
+ */
+export function nextRound() {
+  const hl = lastHostLobby;
+  if (!state.online || state.app !== APP.RESULTS || !hl || hl.cd == null || hl.from !== session.hostId() || now() - hl.at > 3500) return null;
+  if (!hl.ro.some((r) => r.id === state.selfId)) return null;
+  return { endsAt: hl.at + hl.cd - session.rtt(hl.from) / 2, humans: hl.ro.length };
 }
 
 /**

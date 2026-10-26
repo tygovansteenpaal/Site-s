@@ -420,7 +420,9 @@ function onLifeChange(me, prev) {
   if (me.life === LIFE.GROUND) { pivotInit = false; }
   if (me.life === LIFE.DEAD && deathT < 0) startDeathCam();
   if (me.life !== LIFE.DEAD && me.life !== LIFE.SPECTATE) deathT = -1;
-  if (me.life === LIFE.SPECTATE && !spectating) setSpectate(null);
+  // a player who left from the air has no body to look at: spectate, unless he lost his place in the match (the
+  // Disconnected screen stays, with no spectating behind it)
+  if (me.life === LIFE.SPECTATE && !spectating && !state.match.netLost) setSpectate(null);
 }
 
 function startDeathCam() {
@@ -438,7 +440,8 @@ function matchCam(me, dt) {
     case LIFE.CHUTE: return chaseCam(me, dt, me.life === LIFE.CHUTE);
     case LIFE.GROUND: return groundCam(me, dt);
     case LIFE.DEAD: return deadCam(me, dt);
-    default: return spectateCam(dt);
+    // left from the air (no body): spectate, except after losing the place in the match (Disconnected screen)
+    default: return state.match.netLost ? deadCam(me, dt) : spectateCam(dt);
   }
 }
 

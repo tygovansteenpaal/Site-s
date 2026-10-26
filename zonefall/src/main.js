@@ -58,7 +58,7 @@ const CONTRACT = {
   viewmodel: [viewmodel, 'combat/viewmodel.js', 'COMBAT', ['init', 'update', 'kick', 'getMuzzle', 'setVisible']],
   audio: [audio, 'engine/audio.js', 'COMBAT', ['init', 'unlock', 'isUnlocked', 'loadAll', 'play', 'playAt', 'gunshot', 'footstep', 'impact', 'explosion', 'ui', 'loop', 'setListener', 'update']],
   session: [session, 'net/session.js', 'NET', ['connect', 'leave', 'online', 'selfId', 'peers', 'hostId', 'isHost', 'epoch', 'send', 'sendBinary', 'setBinaryHandler', 'setStale', 'ping', 'rtt', 'diagnostics']],
-  sync: [sync, 'net/sync.js', 'NET', ['init', 'update', 'sendShot', 'clockOffset', 'toLocalTime', 'selfPoseAt', 'botPoseAt', 'interpDelay']],
+  sync: [sync, 'net/sync.js', 'NET', ['init', 'update', 'capture', 'sendShot', 'clockOffset', 'toLocalTime', 'selfPoseAt', 'botPoseAt', 'interpDelay']],
   lobby: [lobby, 'net/lobby.js', 'NET', ['init', 'quickPlay', 'createPrivate', 'joinPrivate', 'leave', 'requestStart', 'update', 'get']],
   match: [match, 'game/match.js', 'GAME', ['init', 'startPractice', 'hostBegin', 'beginFromNetwork', 'update', 'leave', 'planePath', 'planePosAt']],
   plane: [plane, 'game/plane.js', 'GAME', ['init', 'update', 'getTransform', 'setVisible']],
@@ -295,6 +295,8 @@ function frame(dt, now, hidden = false) {
       zone.update(dt);
       loot.update(dt);
     }
+    // the pose this frame produced, stamped with the frame's time, and the snapshots due now (net/sync.capture)
+    if (state.online) sync.capture(now);
 
     avatar.update(dt);
     camera.update(dt);       // final camera transform (all apps: menu flyover, match, results)

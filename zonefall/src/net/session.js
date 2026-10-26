@@ -72,6 +72,14 @@ export const TUNE = {
   maxPeers: 40,
   failedShowMs: 30000,     // "could not connect" evidence about a player counts this long (lobby connectivity hints)
   attemptStuckMs: 15000,   // a connection attempt (offer/answer exchanged) still not connected after this has failed
+  helloWaitMs: 12000,      // a peer Trystero connected that has not said hello this long (greeted 3+ times) is a
+                           // one-sided handshake: its connection is closed so both sides negotiate a fresh one
+  orphanMinMs: 8000,       // a connected peer connection nobody owns, whose Trystero channel has been open this long,
+                           // is the leftover of a handshake that failed on our side (closed on that handshake error)
+  rejoinEveryMs: 8000,     // soft room re-join after closing a broken connection (lobby only): at most this often ...
+  rejoinBurst: 5,          // ... and this many times in two minutes
+  lostGraceMs: 4000,       // a verified peer whose direct connection Trystero dropped (no relay either) is kept this
+                           // long: a player re-joining the room (softRejoin) comes back within about a second
 };
 
 const ACTION_EVENT = {
@@ -121,6 +129,10 @@ const counters = {
 let mismatch = null;               // {theirs, ours, at, room, peer, first}: the last peer whose hello had another game version
 let greeter = null;                // (peerId) => void: says hello to one peer (net/lobby), the moment a peer connects
 const failed = new Map();          // peer id -> performance.now() of its last "SDP exchanged but could not connect" error
+const directRxAt = new Map();      // peer id -> last time anything arrived from it over its own direct connection (kept
+                                   // after the peer is gone: pathLost() asks how a silent player was reached)
+const linkSeen = new Map();        // peer id -> Map(neighbour id -> last time that neighbour's hello listed a direct link
+                                   // to it): who could relay it (pathLost)
 
 function makePeer(id, direct) {
   const now = performance.now();
@@ -130,8 +142,9 @@ function makePeer(id, direct) {
     rtt: 0, rttMin: Infinity, pings: 0, pingAt: 0, channel: null, chTimer: null, pc: null, pair: '?',
     win: { t: 0, rel: 0, bin: 0 }, mutedUntil: 0,
     rx: { rel: 0, unrel: 0, fallback: 0, invalid: 0, bytes: 0, relayed: 0 }, tx: { rel: 0, unrel: 0, fallback: 0, dropped: 0, bytes: 0, relayed: 0 },
-    // version check (protocol 4): ok once a hello with our version arrived; incompatible after one with another
-    ok: false, incompatible: false, greetAt: 0, bye: false,
+    // version check (protocol 4): ok once a hello with our version arrived; incompatible after one with another.
+    // directAt: when Trystero connected it directly; greets: hellos sent to it since (a one-sided handshake check)
+    ok: false, incompatible: false, greetAt: 0, bye: false, directAt: direct ? now : 0, greets: 0,
     // routing: a direct Trystero connection and/or a relay player (via) that reaches it directly
     direct: !!direct, via: null, lastDirectRx: now, lastRelayRx: 0, noRouteSince: 0,
     links: null, linkRtt: null, linksAt: 0, hears: null, hearsAt: 0,
@@ -202,6 +215,7 @@ export async function connect(opts) {
       if (PC) config.rtcPolyfill = PC;
       r = mod.joinRoom(config, opts.roomId, callbacks);
       sockets = mod.getRelaySockets;
+      joinArgs = { mod, config, callbacks };
     }
   } catch (err) {
     if (token === connectToken) setStatus('error', "Can't reach matchmaking servers");
@@ -212,14 +226,7 @@ export async function connect(opts) {
   room = r; roomId = opts.roomId; transport = kind; mySelf = self; relaySockets = sockets;
   roomAt = performance.now();
   mySince = Date.now() + (opts.joiner ? TUNE.joinerBiasMs : 0);
-  acts = {};
-  for (const name of ACTION_NAMES) {
-    const a = room.makeAction(name);
-    a.onMessage = (data, meta) => onAction(name, data, meta && typeof meta === 'object' ? meta.peerId : meta);
-    acts[name] = a;
-  }
-  room.onPeerJoin = (id) => addPeer(id);
-  room.onPeerLeave = (id) => directLost(id);
+  bindRoom(room);
 
   // Wait for a relay that works: an open socket that has also spoken since we joined (Nostr relays answer the room
   // subscription with EOSE and the announce with OK within a round trip). A socket that opens and drops at once, or
@@ -274,6 +281,70 @@ export async function connect(opts) {
   return { roomId, selfId: mySelf };
 }
 
+/** Our actions and peer callbacks on a (new) Trystero room object. */
+function bindRoom(r) {
+  acts = {};
+  for (const name of ACTION_NAMES) {
+    const a = r.makeAction(name);
+    a.onMessage = (data, meta) => onAction(name, data, meta && typeof meta === 'object' ? meta.peerId : meta);
+    acts[name] = a;
+  }
+  r.onPeerJoin = (id) => addPeer(id);
+  r.onPeerLeave = (id) => directLost(id);
+}
+
+/**
+ * Re-join the Trystero room under the same id, keeping every session state (peers, routes, host, join time). Trystero
+ * 0.25.4 announces itself on the relays only when it joins a room and then once a minute; it does not announce again
+ * when an established connection dies. So after we close a broken connection (a one-sided handshake), the two players
+ * would only find each other at the next minute's announce. A fresh room instance announces at once (and greets the
+ * players it still has a working connection to over that connection, which Trystero keeps for 2 minutes), so the pair
+ * negotiates a new connection within a few seconds. Those players see our room leave and come back within about a
+ * second; directLost() keeps a verified peer through such a gap, so their rosters do not flicker. Lobby only (a match
+ * must not lose reliable messages for that moment). At most every TUNE.rejoinEveryMs (a request inside that time runs
+ * when it is over, so a repair that needs a second round still gets its announce) and TUNE.rejoinBurst times in 2 min.
+ */
+let joinArgs = null;               // {mod, config, callbacks} of the current Trystero room (soft re-join)
+let rejoining = false, rejoinAt = -1e9, rejoinTimer = 0;
+const rejoinTimes = [];
+function softRejoin(why) {
+  const now = performance.now();
+  if (rejoinTimer) return false;                       // one already scheduled
+  while (rejoinTimes.length && now - rejoinTimes[0] > 120000) rejoinTimes.shift();
+  if (rejoinTimes.length >= TUNE.rejoinBurst) return false;
+  const wait = rejoinAt + TUNE.rejoinEveryMs - now;
+  if (wait > 0 || rejoining) {
+    const tok = connectToken;
+    rejoinTimer = setTimeout(() => { rejoinTimer = 0; if (tok === connectToken) softRejoin(why); }, Math.max(wait, 500));
+    return false;
+  }
+  doRejoin(why);
+  return true;
+}
+async function doRejoin(why) {
+  const now = performance.now();
+  refreshMyCtx();
+  if (!room || !state.online || transport !== 'nostr' || !joinArgs || rejoining || myCtx !== 0) return false;
+  rejoining = true;
+  rejoinTimes.push(now);
+  rejoinAt = now;
+  const old = room, id = roomId, tok = connectToken;
+  counters.rejoins = (counters.rejoins || 0) + 1;
+  counters.lastRejoin = { why, at: Math.round(now) };
+  try { old.onPeerJoin = null; old.onPeerLeave = null; } catch { /* closing */ }
+  try { await old.leave(); } catch { /* already gone */ }
+  if (room !== old || roomId !== id || connectToken !== tok) { rejoining = false; return false; }
+  // players that never said hello are nobody's business yet: forget them, the new room meets them afresh
+  for (const p of [...peerMap.values()]) if (!p.ok && !p.incompatible) removePeer(p.id, 'left', true);
+  let r = null;
+  try { r = joinArgs.mod.joinRoom(joinArgs.config, id, joinArgs.callbacks); } catch (err) { console.warn('[NET/session] re-join failed', err); }
+  rejoining = false;
+  if (!r) { teardown(); setStatus('error', "Can't reach matchmaking servers"); return false; }
+  room = r;
+  bindRoom(r);
+  return true;
+}
+
 function relayText() {
   return transport === 'local' ? 'Connected (local test transport)' : `Connected to ${relaysOpen} relay${relaysOpen === 1 ? '' : 's'}`;
 }
@@ -294,6 +365,8 @@ function teardown() {
   room = null;
   for (const t of timers) clearInterval(t);
   timers = [];
+  clearTimeout(rejoinTimer);
+  rejoinTimer = 0;
   const ids = [...peerMap.keys()];
   for (const id of ids) {
     const p = peerMap.get(id);
@@ -315,6 +388,8 @@ function teardown() {
   outIds.clear();
   outMid = null;
   failed.clear();
+  directRxAt.clear();
+  linkSeen.clear();
 }
 
 // ------------------------------------------------------------------------------------------------ version, join errors
@@ -340,6 +415,7 @@ export function helloNow() {
 function greet(p) {
   if (!greeter || !room) return;
   p.greetAt = performance.now();
+  if (state.online) p.greets++;              // a hello actually sent (before connect() resolves, sends are refused)
   try { greeter(p.id); } catch (err) { console.warn('[NET/session] greeting failed', err); }
 }
 
@@ -390,12 +466,19 @@ function onJoinError(e) {
     // next attempt (Trystero re-announces every few seconds) negotiates a fresh one.
     const n = (repairs.get(peerId) || 0) + 1;
     repairs.set(peerId, n);
-    resetConnection(peerId, 'handshake-failed');
-    // A player we still reach through a relay is not lost; the direct path keeps being retried quietly.
+    // Trystero's own ready/ready exchange still runs without a password (10 s timeout). When it times out here but the
+    // other side got our 'ready', that side activated us and treats the connection as live: it never offers again, and
+    // Trystero here keeps re-attaching the same connection to a handshake whose answer never comes. That connection
+    // belongs to no peer we know (Trystero never activated it), so it is found as the orphan and closed: the other side
+    // sees the close and both negotiate a fresh connection.
+    if (!resetConnection(peerId, 'handshake-failed') && /timed out|handshake/i.test(text) && closeOrphans('handshake-orphan')) softRejoin('handshake-orphan');
+    // A player we still reach through a relay is not lost; the direct path keeps being retried quietly. Nor is a player
+    // already out of our match (his connection is being rebuilt for the next round).
     const p = peerMap.get(peerId);
     const relayed = !!(p && p.ok && p.via);
     const versionPeer = mismatch && mismatch.peer === peerId && mismatch.room === roomId;
-    if (!relayed && !versionPeer && n >= TUNE.repairToastAfter && now - counters.lastToastAt >= TUNE.joinErrorToastMs) {
+    const gone = selfOut || outIds.has(peerId) || !!(p && p.dropped);
+    if (!relayed && !versionPeer && !gone && n >= TUNE.repairToastAfter && now - counters.lastToastAt >= TUNE.joinErrorToastMs) {
       counters.lastToastAt = now;
       emit(EV.TOAST, { text: 'Reconnecting to a player. This can take a few seconds.', kind: 'warn', ms: 4000 });
     }
@@ -429,10 +512,18 @@ export function unreachable() {
   return out;
 }
 
-/** Connection attempts of this room under way (a remote description, not connected yet), stuck or not. */
+/**
+ * Connection attempts of this room under way, stuck or not: a remote description that has not connected yet, and a
+ * peer Trystero connected (or a neighbour introduced) whose hello has not arrived yet (a handshake still settling).
+ */
 export function pendingAttempts() {
   let n = 0;
   for (const pc of attempts) if (pc.zfAttemptAt >= roomAt && pc.connectionState !== 'connected' && pc.connectionState !== 'closed') n++;
+  for (const p of peerMap.values()) if (!p.ok && !p.incompatible && !p.bye) n++;
+  // connected in this room but not activated by Trystero yet: its handshake is still running (or failed and is about to
+  // be repaired)
+  const owned = ownedPcs(), now = performance.now();
+  for (const pc of livePcs) if (pc.zfAttemptAt >= roomAt && pc.connectionState === 'connected' && !owned.has(pc) && pc.zfDataAt && now - pc.zfDataAt < 25000) n++;
   return n;
 }
 
@@ -450,18 +541,31 @@ export function pendingAttempts() {
  */
 let PCClass = null;
 const attempts = new Set();        // peer connections with a remote description that have not connected (yet)
+const livePcs = new Set();         // every peer connection Trystero made through PCClass that is not closed
 let roomAt = 0;                    // performance.now() this client joined the current room
+/** Remember when Trystero's own 'data' channel of a connection opened (its handshake starts then). */
+function noteDataChannel(pc, ch) {
+  if (!ch || ch.label !== 'data') return;
+  if (ch.readyState === 'open') pc.zfDataAt = performance.now();
+  else ch.addEventListener('open', () => { pc.zfDataAt = performance.now(); }, { once: true });
+}
 function peerConnectionClass() {
   if (PCClass || typeof RTCPeerConnection !== 'function') return PCClass;
   PCClass = class ZonefallPeerConnection extends RTCPeerConnection {
     constructor(...args) {
       super(...args);
-      // ?netsim: wrap channels the remote side opens before Trystero's ondatachannel handler sees them
-      if (SIM) this.addEventListener('datachannel', (e) => simChannel(e.channel));
+      livePcs.add(this);
+      this.addEventListener('datachannel', (e) => {
+        noteDataChannel(this, e.channel);
+        // ?netsim: wrap channels the remote side opens before Trystero's ondatachannel handler sees them
+        if (SIM) simChannel(e.channel);
+      });
       this.addEventListener('connectionstatechange', () => {
         if (this.connectionState === 'connected' || this.connectionState === 'closed') attempts.delete(this);
+        if (this.connectionState === 'closed') livePcs.delete(this);
       });
     }
+    close() { livePcs.delete(this); attempts.delete(this); return super.close(); }
     // A remote description means another player's offer or answer reached us: a connection attempt is under way. One
     // that never connects is the earliest sign of a network that blocks direct connections (ICE gives up only after
     // about 30 s), so net/lobby can say so instead of "nobody is here".
@@ -471,7 +575,9 @@ function peerConnectionClass() {
     }
     createDataChannel(label, opts) {
       if (label === 'data' && !(opts && opts.negotiated)) this.zfOfferer = true;
-      return simChannel(super.createDataChannel(label, opts));
+      const ch = super.createDataChannel(label, opts);
+      noteDataChannel(this, ch);
+      return simChannel(ch);
     }
     setLocalDescription(desc) {
       if (this.zfOfferer && desc && desc.type === 'rollback' && this.signalingState === 'have-local-offer' && !this.remoteDescription) {
@@ -647,6 +753,35 @@ function resetConnection(peerId, why) {
   return true;
 }
 
+/**
+ * Close connected peer connections that belong to no peer: not active in the room (room.getPeers), not any known peer's,
+ * and with Trystero's channel open for TUNE.orphanMinMs (so a handshake that is still running on a fresh connection is
+ * left alone). Only called on a handshake failure Trystero could not tie to a connection we know: what is left is the
+ * connection of that failed handshake (or an idle one from a room we left, which Trystero would rebuild if needed).
+ */
+function ownedPcs() {
+  const owned = new Set();
+  if (room) { try { for (const pc of Object.values(room.getPeers() || {})) owned.add(pc); } catch { /* room closing */ } }
+  for (const p of peerMap.values()) if (p.pc) owned.add(p.pc);
+  for (const [id, pc] of lastPc) if (peerMap.has(id)) owned.add(pc);
+  return owned;
+}
+function closeOrphans(why) {
+  const owned = ownedPcs();
+  const now = performance.now();
+  let n = 0;
+  for (const pc of [...livePcs]) {
+    if (owned.has(pc) || pc.connectionState !== 'connected' || !pc.zfDataAt || now - pc.zfDataAt < TUNE.orphanMinMs) continue;
+    try { pc.close(); n++; } catch { /* already closing */ }
+  }
+  if (n) {
+    counters.resets += n;
+    counters.orphans = (counters.orphans || 0) + n;
+    counters.lastReset = { id: null, why, at: Math.round(now) };
+  }
+  return n;
+}
+
 /** Remember the connection of each peer (Trystero keeps it across rooms, so must we, to be able to close it). */
 function notePc(id) {
   if (!room) return null;
@@ -662,11 +797,26 @@ function addPeer(id) {
   if (!room || !id || id === mySelf) return;
   let p = peerMap.get(id);
   if (p) {
+    if (p.direct) {
+      // Trystero activated it again (after a room re-join, or on a new connection): follow its current connection
+      const pc = notePc(id);
+      if (pc && p.pc && pc !== p.pc) {
+        clearTimeout(p.chTimer);
+        if (p.channel) { const ch = p.channel; p.channel = null; ch.onmessage = null; ch.onclose = null; }
+        p.pc = null;
+        openChannel(p, 0);
+      }
+      if (!p.ok) greet(p);
+      return;
+    }
     // a peer we reached through a relay now has a direct connection too: the direct path takes over
-    if (p.direct) return;
     p.direct = true;
     p.lastDirectRx = performance.now();
+    p.directAt = p.lastDirectRx;
+    p.greets = 0;
     p.via = null;
+    p.lostGrace = false;
+    p.noRouteSince = 0;
     repairs.delete(id);
     failed.delete(id);
     notePc(id);
@@ -701,10 +851,12 @@ function directLost(id) {
   if (!p) return;
   if (p.bye || !p.ok) { removePeer(id, 'left'); return; }
   const via = bestRoute(id);
-  if (!via) { removePeer(id, 'left'); return; }
+  // No relay either: a verified peer that did not say 'bye' is kept for TUNE.lostGraceMs (maintain() removes it then).
+  // A player leaving says 'bye' first; one re-joining the room (softRejoin) reconnects within about a second.
   p.direct = false;
   p.via = via;
-  p.noRouteSince = 0;
+  p.noRouteSince = via ? 0 : performance.now();
+  if (!via) p.lostGrace = true;
   clearTimeout(p.chTimer);
   if (p.channel) { const ch = p.channel; p.channel = null; ch.onmessage = null; ch.onclose = null; }
   p.pc = null;
@@ -816,12 +968,24 @@ function maintain() {
   for (const p of [...peerMap.values()]) {
     if (p.bye) { removePeer(p.id, 'left'); continue; }
     if (!p.ok && !p.incompatible && now - p.greetAt > TUNE.greetEveryMs) greet(p);
+    if (p.direct && !p.ok && !p.incompatible && p.directAt && now - p.directAt > TUNE.helloWaitMs && p.greets >= 3) {
+      // Trystero connected this peer here, but in all this time (greeted again and again) it never said hello: its
+      // Trystero handshake failed on its side (it never activated us, so it drops what we send). Neither side would
+      // ever try again on its own; closing the connection makes both negotiate a fresh one.
+      p.directAt = now;
+      p.greets = 0;
+      counters.noHello = (counters.noHello || 0) + 1;
+      resetConnection(p.id, 'no-hello');
+      removePeer(p.id, 'left');               // never verified: nobody saw it, nothing to announce
+      softRejoin('no-hello');
+      continue;
+    }
     if (p.direct) { p.via = directHealthy(p, now) ? null : bestRoute(p.id, now); continue; }
     const via = bestRoute(p.id, now);
-    if (via) { p.via = via; p.noRouteSince = 0; continue; }
+    if (via) { p.via = via; p.noRouteSince = 0; p.lostGrace = false; continue; }
     if (!p.noRouteSince) p.noRouteSince = now;
     const quiet = now - Math.max(p.noRouteSince, p.lastRelayRx);
-    if (quiet > TUNE.routeLossMs || (!p.ok && now - p.joinedAt > TUNE.pendingMaxMs)) removePeer(p.id, 'left');
+    if (quiet > (p.lostGrace ? TUNE.lostGraceMs : TUNE.routeLossMs) || (!p.ok && now - p.joinedAt > TUNE.pendingMaxMs)) removePeer(p.id, 'left');
   }
 }
 
@@ -924,6 +1088,29 @@ export function silenceConfirmed(peerId, heardAt) {
   return n > 0;
 }
 
+/**
+ * Is the silence of a player that began at `since` explained by losing our only path to him, rather than by him going
+ * away? True when we had no working direct connection to him at that moment (he was reached through a relay), and
+ * every player whose hellos listed a direct link to him around then is gone from us too (left, or silent itself). That
+ * is a pair without a direct path (no TURN, symmetric NAT) whose relay closed or reloaded his page: both sides are
+ * still playing, neither can reach the other, and neither can tell the other anything. net/sync then applies a rule
+ * both sides reach on their own (the side with the lowest player id keeps the match), instead of both dropping each
+ * other and both winning separate copies. False when a player still with us had a direct link to him: then he is the
+ * one who went silent (crash, sleep, lost network), and the usual drop applies.
+ */
+export function pathLost(peerId, since) {
+  if ((directRxAt.get(peerId) ?? -Infinity) >= since - TUNE.directHealthyMs) return false;
+  const seen = linkSeen.get(peerId);
+  if (seen) {
+    for (const [n, at] of seen) {
+      if (at < since - TUNE.linksFreshMs) continue;
+      const q = peerMap.get(n);
+      if (q && q.ok && !q.bye && !q.stale && !q.dead && !q.dropped) return false;
+    }
+  }
+  return true;
+}
+
 /** Close a peer's connection so Trystero negotiates a new one, without dropping it (net/sync's link repair). */
 export function repairConnection(peerId) { return resetConnection(peerId, 'repair'); }
 
@@ -945,11 +1132,14 @@ export function noteLocalStall(ms) {
   lastRelayMsgAt = Math.min(now, lastRelayMsgAt + d);
   for (const p of peerMap.values()) {
     p.lastDirectRx = Math.min(now, p.lastDirectRx + d);
+    if (p.directAt) p.directAt = Math.min(now, p.directAt + d);
     if (p.lastRelayRx) p.lastRelayRx = Math.min(now, p.lastRelayRx + d);
     if (p.hearsAt) p.hearsAt = Math.min(now, p.hearsAt + d);
     if (p.linksAt) p.linksAt = Math.min(now, p.linksAt + d);
     if (p.noRouteSince) p.noRouteSince = Math.min(now, p.noRouteSince + d);
   }
+  for (const [id, at] of directRxAt) directRxAt.set(id, Math.min(now, at + d));
+  for (const m of linkSeen.values()) for (const [n, at] of m) m.set(n, Math.min(now, at + d));
 }
 
 /**
@@ -1190,7 +1380,7 @@ function sendTo(p, action, data, now) {
  */
 export function send(action, data, target = null) {
   if (!room || !state.online) return false;
-  if (blackhole) return true;
+  if (blackhole || rejoining) return true;
   const a = acts[action];
   if (!a) throw new Error(`[NET/session] unknown action '${action}'`);
   const now = performance.now();
@@ -1253,7 +1443,7 @@ function onForward(relay, v) {
 function onAction(name, data, from, relayed = false) {
   const p = peerMap.get(from);
   if (!p || blackhole) return;
-  if (!relayed) p.lastDirectRx = performance.now();
+  if (!relayed) { p.lastDirectRx = performance.now(); directRxAt.set(from, p.lastDirectRx); }
   if (name === ACTIONS.BIN) { onBinaryIn(p, data, false); return; }
   if (!rateOk(p, false)) return;
   p.rx.rel++;
@@ -1272,6 +1462,12 @@ function onAction(name, data, from, relayed = false) {
     p.links = v.ln;
     p.linkRtt = v.lr;
     p.linksAt = now;
+    for (const id of v.ln) {
+      if (id === mySelf) continue;
+      let m = linkSeen.get(id);
+      if (!m) { if (linkSeen.size >= TUNE.maxPeers * 2) continue; m = new Map(); linkSeen.set(id, m); }
+      m.set(from, now);
+    }
     // players this peer reaches that we are still connecting to (through it): their lobby join time counts already
     for (let i = 0; i < v.ln.length; i++) {
       const q = peerMap.get(v.ln[i]);
@@ -1330,7 +1526,7 @@ export function setBinaryHandler(fn) { binHandler = typeof fn === 'function' ? f
 function onBinaryIn(p, data, unreliable, relayed = false) {
   // Dropped peers still reach net/sync (liveness, and a kick if they still think they are in our match).
   if (!p || blackhole) return;
-  if (!relayed) p.lastDirectRx = performance.now();
+  if (!relayed) { p.lastDirectRx = performance.now(); directRxAt.set(p.id, p.lastDirectRx); }
   const buf = toArrayBuffer(data);
   if (!buf || buf.byteLength > NET.maxReceiveBytes) { p.rx.invalid++; return; }
   if (!relayed && buf.byteLength > 0 && new Uint8Array(buf, 0, 1)[0] === MSG.FWD) { onFwdFrame(p, buf); return; }
@@ -1464,6 +1660,7 @@ async function pingPeer(p) {
     p.pingAt = 0;
     if (!Number.isFinite(ms)) return 0;
     p.lastDirectRx = performance.now();
+    directRxAt.set(p.id, p.lastDirectRx);
     p.rtt = p.pings === 0 ? ms : p.rtt + (ms - p.rtt) * TUNE.rttLambda;
     p.rttMin = Math.min(p.rttMin, ms);
     p.pings++;
@@ -1544,6 +1741,7 @@ export function diagnostics() {
     status, text: statusText, transport, roomId, selfId: selfId(), hostId: curHost, epoch: curEpoch, isHost: isHost(), relaysOpen,
     joinErrors: counters.joinErrors, lastJoinError: counters.lastJoinError, invalid: counters.invalid, muted: counters.muted,
     hostConflicts: counters.hostConflicts, resets: counters.resets, lastReset: counters.lastReset || null, wrongMatch: counters.wrongMatch,
+    noHello: counters.noHello || 0, orphans: counters.orphans || 0, rejoins: counters.rejoins || 0, lastRejoin: counters.lastRejoin || null,
     relay: { out: counters.relayedOut, in: counters.relayedIn, passed: counters.relayPassed, noRoute: counters.relayNoRoute, dropped: counters.relayDropped, lastDowngrade: counters.lastDowngrade || null },
     drops: { declared: counters.declared, accepted: counters.declAccepted, rejected: counters.declRejected },
     unreachable: unreachable().map((u) => u.id), mismatch: versionMismatch(),

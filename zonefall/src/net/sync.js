@@ -16,7 +16,9 @@
 // own-link probe (session.probeLink) succeeded after the silence began. A failed probe (or the browser offline) means
 // this client is the one cut off: NET_LINK {state:'lost'} and game/match forfeits. Relays down alone decide nothing.
 // A page that stalled for about NET.dropMs itself also forfeits (everyone else has dropped it by then), and a peer we
-// dropped that still sends live snapshots of our match is told so with a 'kick'.
+// dropped that still sends live snapshots of our match is told so with a 'kick'. A match cut in two with no path left
+// between the halves (a relayed pair whose relay player left: session.pathLost) is settled by a rule both halves apply
+// on their own: the half with the lowest player id keeps the match, the other forfeits ('split', splitYields).
 import { NET, WEAPONS } from '../config.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, debug, APP, LIFE, FLAG, botId, isBotId, getPlayer } from '../core/state.js';
@@ -252,9 +254,15 @@ let linkState = 'ok';          // NET_LINK state during a match: 'ok' | 'interru
 const kickAt = new Map();      // peer id -> last 'kick' sent (ms)
 const cueState = new Map();    // remote entity id -> {flags, weapon, reloadAt, fired} for reload/switch/plate sounds
 const tmp = { x: 0, y: 0, z: 0, yaw: 0, pitch: 0, vx: 0, vy: 0, vz: 0, src: null };
-const counters = { psnapIn: 0, botsIn: 0, shotsIn: 0, psnapOut: 0, botsOut: 0, shotsOut: 0, rejected: 0, foreign: 0, stalls: 0, maxStallMs: 0, kicks: 0, repairs: 0 };
+const counters = { psnapIn: 0, botsIn: 0, shotsIn: 0, psnapOut: 0, botsOut: 0, shotsOut: 0, rejected: 0, foreign: 0, stalls: 0, maxStallMs: 0, kicks: 0, repairs: 0, splits: 0, dupPoses: 0 };
 const snapScratch = { weapon: null, seq: 0, t: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, flags: 0, hp: 0, armor: 0, life: 0, tag: 0 };
 const botScratch = [];
+// The pose a snapshot carries is stamped with the time of the frame that produced it (capture(), right after the
+// simulation step), not the time it is sent: the send runs before the frame moves anyone, and the 20 Hz timer sends
+// between frames, so a send-time stamp was 0 to 1+ frame late by a varying amount, and two snapshots a few ms apart
+// carrying 50 ms of motion made a speed spike that the receiver drew as a lurch ahead and a slide back.
+const pose = { t: 0, mid: null, weapon: null, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, flags: 0, hp: 0, armor: 0, life: 0 };
+const botCap = { t: 0, mid: null, n: 0, sentT: -1 };
 const CTX_ONLY = Object.freeze({ contextOnly: true });   // bot batches and shots only go to players in our match
 
 function trackFor(id) {
@@ -351,6 +359,8 @@ function onBinary(from, buf) {
     if (tr.dead) { tr.dead = false; session.setUnresponsive(from, false); }
     if (myTag && s.tag !== myTag) { counters.foreign++; return; }   // lobby, results or another match: not in ours
     if (myTag && (tr.dropped || session.isOut(from))) { kickIfLive(from, s, now); return; }
+    // the same captured pose sent again by the sender's timer between two of its frames: liveness only
+    if (tr.newest && s.t === tr.newest.t && seqNewer(s.seq, tr.newest.seq)) { tr.newest.seq = s.seq; counters.dupPoses++; return; }
     pushSample(tr, s, now);
   } else if (type === MSG.BOTS) {
     if (from !== session.hostId() || session.isHost()) { counters.rejected++; return; }
@@ -508,6 +518,15 @@ function liveness(now, inMatch) {
       if (now - (tr.repairAt || 0) > TUNE.repairEveryMs) { tr.repairAt = now; session.repairConnection(id); counters.repairs++; }
       continue;
     }
+    if ((evidence || silent > NET.dropMs + TUNE.decideMaxMs) && session.pathLost(id, tr.heardAt) && splitYields(id, now)) {
+      // Our only path to him (and to whoever went quiet with him) was a relay player who is gone, and no direct path
+      // exists: both sides still play and neither can tell the other anything. Dropping each other made two copies of
+      // the match that both ended in VICTORY. Both sides instead apply the same rule on their own: the side holding the
+      // lowest player id keeps the match; the other side (this one) gives way with "Connection lost".
+      counters.splits++;
+      setLink('lost', 'split');
+      return;
+    }
     if (heard > 0 && !session.isHost() && silent <= NET.dropMs + TUNE.decideMaxMs) {
       // We still hear other players: dropping him is the match host's call ('left' death for everyone at once), so all
       // clients agree. Only if no decision ever comes do we decide on our own.
@@ -527,6 +546,24 @@ function liveness(now, inMatch) {
   }
 }
 
+/**
+ * Split rule for a match cut in two without any path between the halves (session.pathLost). This side gives way when
+ * the lowest player id among the silent, unreachable players of the match (the other side as seen from here) is lower
+ * than the lowest id among the players this client still hears, itself included. Both sides see the same two groups
+ * (players of the match not out before the split), so exactly one side keeps the match, without exchanging a message.
+ */
+function splitYields(id, now) {
+  let mine = state.selfId, theirs = id;
+  for (const [oid, tr] of tracks) {
+    if (isBotId(oid) || oid === id || tr.dropped || session.isOut(oid)) continue;
+    const e = getPlayer(oid);
+    if (!e || e.kind !== 'remote') continue;                // players of our match only (roster humans)
+    if (now - tr.heardAt <= NET.staleMs) { if (oid < mine) mine = oid; }
+    else if (session.pathLost(oid, tr.heardAt) && oid < theirs) theirs = oid;
+  }
+  return theirs < mine;
+}
+
 function round2(v) { return Math.round(v * 100) / 100; }
 
 /** Send loop + interpolation of all remote entities into state.players. No-op offline. */
@@ -536,20 +573,49 @@ export function update(dt) {
   const me = getPlayer(state.selfId);
   const inMatch = matchRunning(me);
 
-  // own pose history (hit validation), host bot history
-  if (me && now - lastPoseAt >= 1000 / TUNE.poseHz) { lastPoseAt = now; ringPush(selfRing, now, me.pos.x, me.pos.y, me.pos.z); }
-  if (inMatch && session.isHost() && now - lastBotPoseAt >= 1000 / TUNE.poseHz) {
-    lastBotPoseAt = now;
-    for (const e of state.players.values()) {
-      if (e.kind !== 'bot') continue;
-      let r = botRings.get(e.id);
-      if (!r) { r = createRing(NET.historyMs / 1000, TUNE.poseHz); botRings.set(e.id, r); }
-      ringPush(r, now, e.pos.x, e.pos.y, e.pos.z);
-    }
-  }
-
   tick(now);
   interpolate(now, dt, inMatch);
+}
+
+/**
+ * main.js, right after the simulation step of a frame: record the local pose (and, on the host, every bot) with the
+ * frame's time `t` (the time the movement was integrated to), feed the pose history used for hit validation with the
+ * same time, and send the snapshots that are due now, so they leave with the pose they describe.
+ */
+export function capture(t) {
+  if (!state.online) return;
+  const now = performance.now();
+  const me = getPlayer(state.selfId);
+  const inMatch = matchRunning(me);
+  const mid = state.match.id;
+  t = Math.min(now, Number.isFinite(t) ? t : now);
+  if (me) {
+    if (pose.mid === mid && t <= pose.t) t = pose.t + 0.01;      // keep stamps strictly increasing
+    pose.t = t; pose.mid = mid;
+    pose.weapon = me.weapon; pose.x = me.pos.x; pose.y = me.pos.y; pose.z = me.pos.z; pose.yaw = me.yaw; pose.pitch = me.pitch;
+    pose.flags = me.flags; pose.hp = me.hp; pose.armor = me.armor; pose.life = me.alive ? me.life : LIFE.DEAD;
+    if (t - lastPoseAt >= 1000 / TUNE.poseHz) { lastPoseAt = t; ringPush(selfRing, t, me.pos.x, me.pos.y, me.pos.z); }
+  }
+  if (inMatch && session.isHost()) {
+    let n = 0;
+    const ring = t - lastBotPoseAt >= 1000 / TUNE.poseHz;
+    if (ring) lastBotPoseAt = t;
+    for (const e of state.players.values()) {
+      if (e.kind !== 'bot') continue;
+      let o = botScratch[n];
+      if (!o) o = botScratch[n] = { slot: 0, weapon: null, flags: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, hp: 0, armor: 0, life: 0 };
+      o.slot = e.slot; o.weapon = e.weapon; o.flags = e.flags; o.x = e.pos.x; o.y = e.pos.y; o.z = e.pos.z;
+      o.yaw = e.yaw; o.pitch = e.pitch; o.hp = e.hp; o.armor = e.armor; o.life = e.alive ? e.life : LIFE.DEAD;
+      n++;
+      if (ring) {
+        let r = botRings.get(e.id);
+        if (!r) { r = createRing(NET.historyMs / 1000, TUNE.poseHz); botRings.set(e.id, r); }
+        ringPush(r, t, e.pos.x, e.pos.y, e.pos.z);
+      }
+    }
+    botCap.t = t; botCap.mid = mid; botCap.n = n;
+  } else botCap.mid = null;
+  sendSnapshots(now, me, inMatch);
 }
 
 function sendSnapshots(now, me, inMatch) {
@@ -563,7 +629,13 @@ function sendSnapshots(now, me, inMatch) {
     s.seq = snapSeq = (snapSeq + 1) & 0xffff;
     s.t = now;
     s.tag = session.contextTag();
-    if (me && inMatch && s.tag && !away) {
+    if (me && inMatch && s.tag && !away && pose.mid === state.match.id && pose.t > 0) {
+      // the latest captured pose with its own time (a timer send between frames repeats it with the same stamp; the
+      // receiver takes that as a heartbeat, not as a new sample)
+      s.t = pose.t;
+      s.weapon = pose.weapon; s.x = pose.x; s.y = pose.y; s.z = pose.z; s.yaw = pose.yaw; s.pitch = pose.pitch;
+      s.flags = pose.flags; s.hp = pose.hp; s.armor = pose.armor; s.life = pose.life;
+    } else if (me && inMatch && s.tag && !away) {
       s.weapon = me.weapon; s.x = me.pos.x; s.y = me.pos.y; s.z = me.pos.z; s.yaw = me.yaw; s.pitch = me.pitch;
       s.flags = me.flags; s.hp = me.hp; s.armor = me.armor; s.life = me.alive ? me.life : LIFE.DEAD;
     } else {
@@ -573,22 +645,17 @@ function sendSnapshots(now, me, inMatch) {
     if (session.sendBinary(encodePlayerSnap(s)) > 0) counters.psnapOut++;
   }
   const bp = 1000 / NET.botRate;
-  if (inMatch && state.app === APP.MATCH && !away && session.isHost() && session.contextTag() && now >= nextBotAt - bp * TUNE.sendEarly) {
+  // Bots: the batch captured with the last frame, stamped with that frame's time; nothing new since the last batch
+  // (no frame in between) sends nothing, since the receiver only learns liveness from the host's own snapshots.
+  if (inMatch && state.app === APP.MATCH && !away && session.isHost() && session.contextTag() && botCap.mid === state.match.id
+    && botCap.t !== botCap.sentT && now >= nextBotAt - bp * TUNE.sendEarly) {
     nextBotAt = nextBotAt === 0 || now - nextBotAt > bp ? now + bp : nextBotAt + bp;
-    let n = 0;
-    for (const e of state.players.values()) {
-      if (e.kind !== 'bot') continue;
-      let o = botScratch[n];
-      if (!o) o = botScratch[n] = { slot: 0, weapon: null, flags: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, hp: 0, armor: 0, life: 0 };
-      o.slot = e.slot; o.weapon = e.weapon; o.flags = e.flags; o.x = e.pos.x; o.y = e.pos.y; o.z = e.pos.z;
-      o.yaw = e.yaw; o.pitch = e.pitch; o.hp = e.hp; o.armor = e.armor; o.life = e.alive ? e.life : LIFE.DEAD;
-      n++;
-    }
+    const n = botCap.n;
     if (n > 0) {
-      botScratch.length = Math.max(botScratch.length, n);
+      botCap.sentT = botCap.t;
       const list = n === botScratch.length ? botScratch : botScratch.slice(0, n);
       botSeq = (botSeq + 1) & 0xffff;
-      if (session.sendBinary(encodeBotBatch(now, botSeq, list, session.contextTag()), null, CTX_ONLY) > 0) counters.botsOut++;
+      if (session.sendBinary(encodeBotBatch(botCap.t, botSeq, list, session.contextTag()), null, CTX_ONLY) > 0) counters.botsOut++;
     }
   }
 }

@@ -76,6 +76,12 @@
 .zf-results .zf-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .zf-results .zf-stats > .zf-stat:nth-child(5n+1) { padding-left: 0; border-left: 0; }
 .zf-results.is-win .zf-stat dd { color: var(--zf-ink); }
+.zf-results__next { display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: calc(18 * var(--u)); margin-top: calc(26 * var(--u)); padding: calc(12 * var(--u)) 0 calc(12 * var(--u)) calc(16 * var(--u)); border-left: 3px solid var(--zf-accent); background: linear-gradient(90deg, rgba(232, 178, 58, 0.12), rgba(232, 178, 58, 0)); }
+.zf-results__next[hidden] { display: none; }
+.zf-results__next .zf-label { grid-column: 1 / -1; }
+.zf-results__count { font: 700 calc(46 * var(--u))/1 var(--zf-display); font-variant-numeric: tabular-nums; color: var(--zf-ink); }
+.zf-results__next.is-final .zf-results__count { color: var(--zf-accent); }
+.zf-results__next p { margin: 0; font: 500 calc(13 * var(--u))/1.35 var(--zf-body); color: var(--zf-ink-dim); max-width: 34em; }
 
 /* ---------------------------------------------------------------------------------------- pause */
 .zf-pause { z-index: 17; pointer-events: auto; }

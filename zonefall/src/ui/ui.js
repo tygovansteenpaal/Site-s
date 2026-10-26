@@ -192,6 +192,7 @@ export function update(dt) {
   const app = state.app;
   if (app === APP.LOBBY) lobby.tick();
   if (app === APP.MATCH) updateMatch(dt);
+  if (app === APP.RESULTS) screens.updateResultsNext(state.online ? lobbyNet.nextRound() : null);
   uiPressed.clear();
 }
 

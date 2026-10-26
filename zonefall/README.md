@@ -23,7 +23,7 @@ hardware acceleration, plus a mouse and keyboard (a standard gamepad also works)
 3. **Loot.** Walk up to an item and press F. Supply crates hold three items one tier better than the area they stand in; Fort Kessler has the best loot.
 4. **Fight.** Five weapons (AK-47, M4A1, MP5, M700 with a 4x scope, 1911 pistol) plus frag grenades. Recoil follows a fixed, learnable pattern per weapon; pull down to control it. Armor takes up to three plates of 50 points; health regenerates after 5 s without damage.
 5. **Zone.** The safe circle shrinks in six phases. Outside it you take damage every second, more in later phases. The minimap and the compass show the next circle.
-6. **End.** The last player alive wins. After a death you can spectate the remaining players; the results screen offers Play again and Main menu.
+6. **End.** The last player alive wins. After a death you can spectate the remaining players; the results screen offers Play again and Main menu, and counts down when the lobby's next round is about to deploy you.
 
 ## Controls
 
@@ -85,8 +85,10 @@ There is no game server. The page is static files on GitHub Pages, and players c
   match ("left the match"). A browser that was asleep or lost its own connection that long shows "Disconnected" with a
   button back to the lobby instead of playing on alone.
 - **Limits.** Without a TURN relay server, roughly one in ten player pairs behind strict NATs or corporate firewalls
-  cannot connect directly. The lobby shows the relay count and the connection type per player. If the relays cannot
-  be reached at all, the lobby says so and offers a practice match instead.
+  cannot connect directly. Such a pair plays through a third player who reaches both; if that player leaves mid-match
+  and no path is left, the side with the lowest player id keeps the match and the other side sees "Disconnected", so
+  the match still has one result. The lobby shows the relay count and the connection type per player. If the relays
+  cannot be reached at all, the lobby says so and offers a practice match instead.
 
 ## Running it locally
 
