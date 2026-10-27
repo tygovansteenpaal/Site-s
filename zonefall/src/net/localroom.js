@@ -33,10 +33,17 @@ function channelName(appId, roomId, password) {
  * @param {string} roomId
  * @param {{onPeerHandshake?:Function, onJoinError?:Function}} callbacks
  * @param {string} selfId
+ * @param {(name:string)=>{postMessage:Function, onmessage:any, close:Function}} [makeBus] a BroadcastChannel-like bus
+ *   (net/wsbus.js relays through the ZONEFALL server); defaults to a BroadcastChannel between tabs
  */
-export function joinLocalRoom(config, roomId, callbacks = {}, selfId) {
-  if (typeof BroadcastChannel !== 'function') throw new Error('[NET/localroom] BroadcastChannel is not available');
-  const bc = new BroadcastChannel(channelName(config.appId, roomId, config.password));
+export function joinLocalRoom(config, roomId, callbacks = {}, selfId, makeBus = null) {
+  const name = channelName(config.appId, roomId, config.password);
+  let bc;
+  if (makeBus) bc = makeBus(name);
+  else {
+    if (typeof BroadcastChannel !== 'function') throw new Error('[NET/localroom] BroadcastChannel is not available');
+    bc = new BroadcastChannel(name);
+  }
   const peers = new Map();       // id -> {id, joined, handshaking, rejected, lastHeard, hsInbox, hsWaiters, remoteReady, localPassed, chan}
   const actions = new Map();     // name -> {onMessage}
   const pings = new Map();       // n -> resolve

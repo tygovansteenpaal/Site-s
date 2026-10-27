@@ -88,7 +88,8 @@ function countRelays() {
 // ------------------------------------------------------------------------------------------------ connect / leave
 // Relays: the public Nostr list, unless the page is served by the ZONEFALL server app (server/), which publishes its
 // own relay in /zonefall/server.json. Static hosts (Vercel, GitHub Pages) have no such file and keep the public list.
-let serverRelays;
+// A server that also publishes `room` carries all game traffic itself (net/wsbus.js), with no WebRTC between players.
+let serverRelays, serverRoom = null;
 async function relayList() {
   if (serverRelays === undefined) {
     serverRelays = null;
@@ -99,7 +100,8 @@ async function relayList() {
       clearTimeout(t);
       const j = res.ok ? await res.json() : null;
       if (j && Array.isArray(j.relays) && j.relays.length) serverRelays = j.relays.map((u) => new URL(u, location.href).href.replace(/^http/, 'ws'));
-    } catch (e) { serverRelays = null; }
+      if (j && typeof j.room === 'string' && j.room) serverRoom = new URL(j.room, location.href).href.replace(/^http/, 'ws');
+    } catch (e) { serverRelays = null; serverRoom = null; }
   }
   return serverRelays || NET.relays;
 }
@@ -128,13 +130,14 @@ export const turnReady = () => !!turnCache;
 
 /**
  * Join a room. Resolves once at least one relay socket is open; rejects after NET.relayTimeoutMs otherwise.
- * @param {{roomId:string, password?:string|null, transport?:'nostr'|'local'}} opts
+ * @param {{roomId:string, password?:string|null, transport?:'nostr'|'local'|'server'}} opts
  */
 export async function connect(opts) {
   if (!opts || typeof opts.roomId !== 'string' || !opts.roomId) throw new Error('[NET/session] connect needs a roomId');
   if (room) leave();
   const token = ++connectToken;
-  const kind = opts.transport || TUNE.transport;
+  let kind = opts.transport || TUNE.transport;
+  if (kind === 'nostr') { await relayList(); if (serverRoom) kind = 'server'; }
   setStatus('connecting', 'Connecting to matchmaking servers');
 
   const config = { appId: NET.appId };
@@ -147,6 +150,11 @@ export async function connect(opts) {
       self = state.selfId;
       r = mod.joinLocalRoom(config, opts.roomId, callbacks, self);
       sockets = () => ({ local: { readyState: 1 } });
+    } else if (kind === 'server') {
+      const [lr, bus] = await Promise.all([import('./localroom.js'), import('./wsbus.js')]);
+      self = state.selfId;
+      r = lr.joinLocalRoom(config, opts.roomId, callbacks, self, bus.wsBus(serverRoom));
+      sockets = () => ({ server: { readyState: bus.openCount() > 0 ? 1 : 0 } });
     } else {
       const mod = await import('trystero');
       self = mod.selfId;
@@ -203,6 +211,7 @@ export async function connect(opts) {
 }
 
 function relayText() {
+  if (transport === 'server') return 'Connected to the ZONEFALL server';
   return transport === 'local' ? 'Connected (local test transport)' : `Connected to ${relaysOpen} relay${relaysOpen === 1 ? '' : 's'}`;
 }
 
@@ -547,7 +556,7 @@ async function refreshDiagnostics() {
       openChannel(p, 0);
     } else if (!p.channel) openChannel(p, 0);
     if (pc && typeof pc.getStats === 'function') p.pair = await icePair(pc).catch(() => p.pair);
-    else if (transport === 'local') p.pair = 'local';
+    else if (transport === 'local' || transport === 'server') p.pair = transport;
   }
 }
 

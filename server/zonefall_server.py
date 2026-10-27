@@ -5,6 +5,9 @@ What it does
   * Runs a small Nostr relay at /relay. Players' browsers find each other through it instead of the public relays,
     so matchmaking works without internet access and nobody outside your server sees your lobbies. The game
     itself still connects players directly (WebRTC); the server only passes the connection handshake.
+  * Runs a game relay at /room: every message between players (lobby, snapshots, shots) goes through this server
+    over a WebSocket, so it also works on networks that block direct connections (school, office). Players only
+    need to be able to open the page. The game uses it automatically when it is served from here.
   * Publishes /zonefall/server.json, which tells the game to use this relay. The same game on Vercel or GitHub
     Pages has no such file and keeps using the public relays, so both keep working side by side.
 
@@ -33,7 +36,7 @@ from collections import deque
 from flask import Flask, Response, abort, jsonify, redirect, send_from_directory
 from flask_sock import Sock
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # --------------------------------------------------------------------------------------------- paths
 if getattr(sys, "frozen", False):                      # PyInstaller bundle: data next to the executable code
@@ -69,7 +72,7 @@ def root():
 
 @app.get("/zonefall/server.json")
 def server_info():
-    return jsonify({"relays": ["/relay"], "name": socket.gethostname(), "version": VERSION})
+    return jsonify({"relays": ["/relay"], "room": "/room", "name": socket.gethostname(), "version": VERSION})
 
 
 @app.get("/zonefall/")
@@ -176,11 +179,61 @@ def relay(ws):
             clients.pop(ws, None)
 
 
+# --------------------------------------------------------------------------------------------- game relay
+# One channel per lobby (the client names it). Each text frame is passed to every other socket on the same channel;
+# the clients filter by recipient themselves (net/localroom.js protocol).
+channels: dict = {}                                   # channel -> set of ws
+send_locks: dict = {}                                 # ws -> lock (frames from several senders must not interleave)
+MAX_FRAME_BYTES = 256 * 1024
+
+
+@sock.route("/room")
+def room(ws):
+    from flask import request
+    ch = (request.args.get("ch") or "")[:200]
+    if not ch:
+        return
+    with lock:
+        members = channels.setdefault(ch, set())
+        members.add(ws)
+        send_locks[ws] = threading.Lock()
+        stats["room_peak"] = max(stats.get("room_peak", 0), sum(len(m) for m in channels.values()))
+    try:
+        while True:
+            raw = ws.receive()
+            if raw is None:
+                break
+            if not isinstance(raw, str) or len(raw) > MAX_FRAME_BYTES:
+                continue
+            stats["frames"] = stats.get("frames", 0) + 1
+            with lock:
+                others = [(c, send_locks.get(c)) for c in channels.get(ch, ()) if c is not ws]
+            for c, lk in others:
+                if lk is None:
+                    continue
+                try:
+                    with lk:
+                        c.send(raw)
+                except Exception:
+                    pass
+    finally:
+        with lock:
+            send_locks.pop(ws, None)
+            members = channels.get(ch)
+            if members is not None:
+                members.discard(ws)
+                if not members:
+                    channels.pop(ch, None)
+
+
 @app.get("/status")
 def status():
     with lock:
         n = len(clients)
-    return jsonify({"version": VERSION, "relay_clients": n, "peak_clients": stats["peak"], "events": stats["events"]})
+        players = sum(len(m) for m in channels.values())
+        lobbies = len(channels)
+    return jsonify({"version": VERSION, "relay_clients": n, "peak_clients": stats["peak"], "events": stats["events"],
+                    "room_players": players, "room_lobbies": lobbies, "room_frames": stats.get("frames", 0)})
 
 
 # --------------------------------------------------------------------------------------------- HTTPS
@@ -236,6 +289,8 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=None, help="port (default 8443, or 8080 with --http)")
     ap.add_argument("--http", action="store_true", help="plain HTTP (multiplayer then only works on localhost)")
     ap.add_argument("--no-browser", action="store_true", help="do not open the game in a browser")
+    ap.add_argument("--tunnel-port", type=int, default=8080,
+                    help="also serve plain HTTP on this port for a tunnel such as localhost.run (0 = off; HTTPS mode only)")
     args = ap.parse_args()
 
     if not os.path.exists(os.path.join(GAME_ROOT, "zonefall", "index.html")):
@@ -250,11 +305,23 @@ def main() -> None:
         print(f"  On your network:   {scheme}://{a}:{port}/zonefall/")
     if not args.http:
         print("  Other players: accept the certificate warning once (Advanced > Proceed).")
-    print("  Over the internet: forward TCP port %d on your router to this computer and share your public IP." % port)
+    tunnel = 0 if args.http else args.tunnel_port
+    if tunnel:
+        print(f"  Over the internet: run  ssh -R 80:localhost:{tunnel} nokey@localhost.run  and share the https link it prints.")
+    else:
+        print("  Over the internet: forward TCP port %d on your router to this computer and share your public IP." % port)
     print("  Press Ctrl+C to stop.\n")
 
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(f"{scheme}://localhost:{port}/zonefall/")).start()
+    if tunnel:
+        # Same app (same lobbies) on plain HTTP for the tunnel; the tunnel adds HTTPS on its own side.
+        from werkzeug.serving import make_server
+        try:
+            plain = make_server("127.0.0.1", tunnel, app, threaded=True)
+            threading.Thread(target=plain.serve_forever, daemon=True).start()
+        except OSError as e:
+            print(f"  (tunnel port {tunnel} not available: {e})")
     app.run(host=args.host, port=port, ssl_context=ssl_ctx, threaded=True, debug=False, use_reloader=False)
 
 

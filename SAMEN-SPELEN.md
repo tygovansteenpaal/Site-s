@@ -41,7 +41,7 @@ De game verbindt spelers rechtstreeks met elkaar (WebRTC). Er is nog geen TURN-s
 
 ## 2. Via je eigen server (de app)
 
-De host start de ZONEFALL-server. Die computer serveert de game en brengt de spelers met elkaar in contact. Lobbies op jouw server zijn alleen zichtbaar voor spelers op jouw server.
+De host start de ZONEFALL-server. Die computer serveert de game en stuurt al het spelverkeer tussen de spelers door. Er is dus geen directe verbinding tussen de spelers nodig: ook op een school- of bedrijfsnetwerk werkt het, zolang de anderen de pagina kunnen openen. Lobbies op jouw server zijn alleen zichtbaar voor spelers op jouw server.
 
 ### De app downloaden
 
@@ -86,13 +86,24 @@ Laat dit venster open zolang er gespeeld wordt. Sluiten (of Ctrl+C) stopt de ser
 2. Ze zien de eerste keer een waarschuwing over het certificaat, omdat de server een eigen certificaat gebruikt. Kies **Geavanceerd** en daarna **Doorgaan naar ...** (in Safari: **Toon details** en **bezoek deze website**).
 3. Daarna werkt alles zoals online: **Private match** met een code, of **Quick play**. Quick play vindt op jouw server alleen spelers die ook op jouw server zitten.
 
-### Spelen via internet
+### Spelen via internet (zonder port forwarding)
+
+Dit werkt ook op school, waar je de router niet kunt instellen.
+
+1. Start de server en laat het venster open.
+2. Open een tweede Terminal-venster en typ:
+   ```
+   ssh -R 80:localhost:8080 nokey@localhost.run
+   ```
+   Typ `yes` als gevraagd wordt of je wilt verbinden.
+3. Er verschijnt een adres zoals `https://abc123.lhr.life`. Stuur dat adres met `/zonefall/` erachter naar je vrienden, en open het zelf ook. Iedereen speelt via dat adres.
+4. Het adres verandert elke keer dat je de tunnel opnieuw start. Sluit je het venster, dan stopt de tunnel.
+
+### Spelen via internet (met port forwarding)
 
 1. Stel op je router **port forwarding** in: TCP-poort **8443** naar het lokale adres van de computer met de server (het adres achter "On your network").
 2. Zoek je publieke IP-adres op, bijvoorbeeld via een zoekmachine met "wat is mijn ip".
 3. Deel `https://<jouw publieke IP>:8443/zonefall/` met de anderen. Ook zij krijgen de certificaatwaarschuwing eenmalig.
-
-Ook via je eigen server lopen de gameverbindingen rechtstreeks tussen de spelers. Op een netwerk dat dat blokkeert, kan een speler daarom nog steeds niet verbinden.
 
 ### Instellingen
 
@@ -103,6 +114,7 @@ Start je de server vanuit een terminal, dan kun je opties meegeven:
 | `--port 9000` | Andere poort dan 8443 |
 | `--no-browser` | Opent de game niet automatisch |
 | `--http` | Gewoon HTTP in plaats van HTTPS. Alleen `localhost` kan dan online spelen. |
+| `--tunnel-port 0` | Zet de HTTP-poort voor de tunnel (standaard 8080) uit |
 
 Op `https://<adres>:8443/status` zie je hoeveel spelers verbonden zijn.
 
