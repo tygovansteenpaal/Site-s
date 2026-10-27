@@ -1,0 +1,28 @@
+# Builds the ZONEFALL server as a single program for Windows and macOS (Actions > this workflow > Run workflow,
+# or push a tag like server-v1). Download the files under the run's "Artifacts".
+name: ZONEFALL server builds
+on:
+  workflow_dispatch:
+  push:
+    tags: ['server-v*']
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller==6.16.0 -r requirements.txt
+          pyinstaller --noconfirm zonefall_server.spec
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZONEFALL-Server-${{ runner.os }}
+          path: server/dist/*
