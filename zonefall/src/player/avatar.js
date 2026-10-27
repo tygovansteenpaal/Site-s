@@ -539,6 +539,7 @@ function createAvatar(e) {
     neck: B('Bip01_Neck'), head: B('Bip01_Head'),
     lUpper: B('Bip01_L_UpperArm'), lFore: B('Bip01_L_Forearm'), lHand: B('Bip01_L_Hand'),
     rUpper: B('Bip01_R_UpperArm'), rFore: B('Bip01_R_Forearm'), rHand: B('Bip01_R_Hand'),
+    lThigh: B('Bip01_L_Thigh'), lCalf: B('Bip01_L_Calf'), rThigh: B('Bip01_R_Thigh'), rCalf: B('Bip01_R_Calf'),
     lFoot: B('Bip01_L_Foot'), rFoot: B('Bip01_R_Foot'), socket: B('WeaponSocket_R'),
   };
   const handHolder = new THREE.Group(); handHolder.name = 'hand-holder';
@@ -599,6 +600,7 @@ function wearSkin(av, gltf) {
   // The soldier's bones (and the weapon on WeaponSocket_R) hang under its mesh, so the mesh stays in the graph and only
   // stops drawing: an invisible material, no shadow.
   for (const m of av.meshes) { m.mesh.material = HIDDEN; m.mesh.castShadow = false; }
+  av.soldierMeshes = av.meshes.filter((m) => m.kind === 'body' && m.mesh.isSkinnedMesh);
   av.meshes = skin.meshes.map((mesh) => ({ mesh, kind: 'body', base: mesh.material, shadow: null, isArm: skin.isArm }));
   av.root.add(skin.group);
   av.skin = skin;
@@ -838,7 +840,7 @@ function applyLocalMode(av) {
   for (const m of av.meshes) {
     let hide = false;
     if (mode === 'hidden') hide = true;
-    else if (mode === 'ads') hide = m.kind !== 'body' || !m.mesh.isSkinnedMesh;
+    else if (mode === 'ads') hide = m.kind !== 'body' || !m.mesh.isSkinnedMesh || !!av.skin;
     if (hide) {
       if (!m.shadow) m.shadow = shadowOnly(m.base);
       m.mesh.material = m.shadow;
@@ -848,6 +850,9 @@ function applyLocalMode(av) {
       m.mesh.material = av.ghost ? ghostOf(m.base) : m.base;
     }
   }
+  // A skin's hands never sit exactly on the weapon (its arms are longer or thicker than the soldier's), so through the
+  // sights the soldier's own forearms, which do hold it, are drawn instead, as the first-person viewmodel does.
+  if (av.soldierMeshes) for (const m of av.soldierMeshes) m.mesh.material = mode === 'ads' ? armsOnly(m.base, m.mesh.skeleton) : HIDDEN;
   // In first person the weapon belongs to the viewmodel; the avatar's gun keeps only its shadow.
   const hideWeapon = mode === 'hidden';
   for (const inst of av.weapons.values()) {
@@ -1346,6 +1351,8 @@ function procedural(av, e, dt, isLocal, ls, pistol) {
   animateParts(av, W, rl);
   // ---- left hand IK onto the weapon (grip or reload path)
   if (av.weapon && av.ikW > 0.01 && !av.weaponOnBack) leftHandIK(av, pistol, rl);
+  // ---- skydive arms and legs
+  if (av.lsw[LS.freefall] > 0.01) freefallLimbs(av, av.lsw[LS.freefall]);
   // ---- chute risers
   if (av.lsw[LS.chute] > 0.01) chuteArms(av, e, dt, isLocal, av.lsw[LS.chute]);
   // ---- canopy follows the body
@@ -1616,6 +1623,51 @@ function freefallBody(av, e, w) {
   const bank = clamp(av.vr / 7, -1, 1) * 18 * DEG;
   av.model.position.y = 0.9 * w;
   av.model.rotation.set(pitchDown * w, 0, -bank * w, 'YXZ');
+  av.ffDive = dive;
+}
+
+// ---- freefall limbs: the Swim frame gives a flat body; arms and legs are posed here
+// Box position (stable fall): upper arms out to the sides, forearms up so the hands are level with the head, knees
+// bent with the shins raised. Diving (head down, tracking) blends into arms swept back along the body and the legs
+// straight together. Targets are built in the body's own frame (head, left, back) from the bones, so they follow the
+// dive pitch and the bank.
+const ffU = new THREE.Vector3(), ffL = new THREE.Vector3(), ffB = new THREE.Vector3(), ffS = new THREE.Vector3();
+const ffT = new THREE.Vector3(), ffP = new THREE.Vector3();
+function freefallLimbs(av, w) {
+  const b = av.bones;
+  const k = av.ffDive || 0;
+  b.pelvis.getWorldPosition(ffS);
+  b.neck.getWorldPosition(ffU);
+  ffU.sub(ffS).normalize();                                             // towards the head
+  b.lUpper.getWorldPosition(ffL);
+  b.rUpper.getWorldPosition(ffT);
+  ffL.sub(ffT);
+  ffL.addScaledVector(ffU, -ffL.dot(ffU)).normalize();                  // towards the body's left
+  ffB.crossVectors(ffU, ffL);
+  if (ffB.y < 0) ffB.negate();                                          // back, towards the sky
+  const flutter = Math.sin(av.ffT * 7.3) * 0.015;
+  const lerp = (a, c) => a + (c - a) * k;
+  for (const side of [1, -1]) {
+    const left = side > 0;
+    // arms
+    const up = left ? b.lUpper : b.rUpper;
+    up.getWorldPosition(ffS);
+    ffT.copy(ffS)
+      .addScaledVector(ffL, side * lerp(0.4, 0.22))
+      .addScaledVector(ffU, lerp(0.2, -0.6) + flutter)
+      .addScaledVector(ffB, lerp(0.1, 0.16));
+    ffP.copy(ffS).addScaledVector(ffL, side * lerp(0.55, 0.35)).addScaledVector(ffU, lerp(-0.35, 0)).addScaledVector(ffB, lerp(0.05, 0.35));
+    ikTwoBone(up, left ? b.lFore : b.rFore, left ? b.lHand : b.rHand, ffT, ffP, w);
+    // legs
+    const th = left ? b.lThigh : b.rThigh;
+    th.getWorldPosition(ffS);
+    ffT.copy(ffS)
+      .addScaledVector(ffL, side * lerp(0.17, 0.07))
+      .addScaledVector(ffU, lerp(-0.6, -0.86) - flutter)
+      .addScaledVector(ffB, lerp(0.34, 0.1));
+    ffP.copy(ffS).addScaledVector(ffL, side * 0.12).addScaledVector(ffU, -0.45).addScaledVector(ffB, -0.5);
+    ikTwoBone(th, left ? b.lCalf : b.rCalf, left ? b.lFoot : b.rFoot, ffT, ffP, w);
+  }
 }
 
 // ---- chute arms: hands up on the toggles, pulled down by turning and braking
