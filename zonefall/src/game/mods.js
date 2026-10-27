@@ -1,5 +1,5 @@
 // ZONEFALL - mod menu (aimbot, ESP, fly). OWNER: GAME.
-// N shows the menu; J aimbot, K ESP, L fly. Only active in practice and private matches, never in Quick play, so
+// N shows the menu; J aimbot, K ESP, L fly, U infinite ammo, I RPG without cooldown, O gives an RPG. Only active in practice and private matches, never in Quick play, so
 // strangers are never on the receiving end. The aimbot turns the view to the enemy nearest the crosshair while the aim
 // button is held (in line of sight, within TUNE.fovDeg). ESP draws a box, name, distance and health over every player.
 // Fly is player/controller's free flight.
@@ -9,10 +9,11 @@ import * as input from '../engine/input.js';
 import * as world from '../world/world.js';
 import * as camera from '../player/camera.js';
 import * as controller from '../player/controller.js';
+import * as weapons from '../combat/weapons.js';
 
 const TUNE = { fovDeg: 30, maxDist: 400, headY: 1.62, chestY: 1.25, smooth: 22 };
-const KEYS = { menu: 'KeyN', aim: 'KeyJ', esp: 'KeyK', fly: 'KeyL' };
-const on = { aim: false, esp: false, fly: false, head: true };
+const KEYS = { menu: 'KeyN', aim: 'KeyJ', esp: 'KeyK', fly: 'KeyL', ammo: 'KeyU', rpg: 'KeyI', give: 'KeyO' };
+const on = { aim: false, esp: false, fly: false, ammo: false, rpg: false, head: true };
 
 let panel = null, canvas = null, ctx = null, shown = false;
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Vector3(), _t = new THREE.Vector3();
@@ -49,6 +50,9 @@ function build() {
     else if (e.code === KEYS.aim) on.aim = !on.aim;
     else if (e.code === KEYS.esp) on.esp = !on.esp;
     else if (e.code === KEYS.fly) on.fly = !on.fly;
+    else if (e.code === KEYS.ammo) on.ammo = !on.ammo;
+    else if (e.code === KEYS.rpg) on.rpg = !on.rpg;
+    else if (e.code === KEYS.give) giveRpg();
     else return;
     render();
   }, { capture: true });
@@ -60,10 +64,21 @@ function render() {
   const row = (key, label, v) => `<div><span style="opacity:.6">${key}</span>  ${label} <b style="color:${v ? '#9be37a' : '#e0806b'}">${v ? 'AAN' : 'UIT'}</b></div>`;
   panel.innerHTML = '<div style="letter-spacing:.12em;opacity:.7;margin-bottom:6px">MOD MENU</div>'
     + row('J', 'Aimbot (rechtermuis)', on.aim) + row('K', 'ESP', on.esp) + row('L', 'Vliegen', on.fly)
+    + row('U', 'Oneindig ammo', on.ammo) + row('I', 'RPG zonder cooldown', on.rpg)
+    + '<div><span style="opacity:.6">O</span>  RPG pakken</div>'
     + '<div style="opacity:.55;margin-top:6px">Spatie omhoog, C omlaag, Shift snel</div>'
     + (allowed() ? '' : '<div style="color:#e0b26b;margin-top:6px">Alleen in oefenen en private match</div>')
     + '<div style="opacity:.55">N sluit dit menu</div>';
   panel.style.display = shown ? 'block' : 'none';
+}
+
+function giveRpg() {
+  const me = localPlayer();
+  if (!allowed() || !me || !me.alive || me.life !== LIFE.GROUND) return;
+  const inv = state.local.inv;
+  const slot = inv && inv.slots ? (inv.slots.findIndex((x) => x && x.weapon === 'rpg') >= 0 ? inv.slots.findIndex((x) => x && x.weapon === 'rpg')
+    : inv.slots[0] ? (inv.slots[1] ? (inv.active ?? 0) : 1) : 0) : 0;
+  weapons.giveFull('rpg', slot);
 }
 
 // ------------------------------------------------------------------------------------------ aimbot
@@ -133,6 +148,7 @@ export function update() {
   if (!panel) return;
   const fly = on.fly && allowed();
   if (fly !== controller.flying()) controller.setFly(fly);
+  weapons.setMods({ infiniteAmmo: on.ammo && allowed(), rapidRpg: on.rpg && allowed() });
   drawEsp();
   if (shown) {
     const want = allowed() ? '' : 'x';

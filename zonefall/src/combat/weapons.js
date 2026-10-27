@@ -103,6 +103,11 @@ export function getSway() { return vs.sway; }
 /** Hold ADS / fire without input (harness buttons and automated tests). */
 export function setForceAds(on) { forceAds = !!on; }
 export function setForceFire(on) { forceFire = !!on; }
+// game/mods: no ammo use, and the launcher fires as fast as you click
+const mod = { infiniteAmmo: false, rapidRpg: false };
+export function setMods(m = {}) { if ('infiniteAmmo' in m) mod.infiniteAmmo = !!m.infiniteAmmo; if ('rapidRpg' in m) mod.rapidRpg = !!m.rapidRpg; }
+/** Give a weapon into slot 0/1 (or the free slot) with a full magazine and full reserves (game/mods). */
+export function giveFull(id, slot = null) { give(id, slot); fillAmmo(); }
 
 /** True while an action blocks interaction (reload, plate, throw, switch). */
 export function isBusy() { return !!vs.reload || !!vs.plate || !!vs.nade || vs.switchPhase !== 'none'; }
@@ -206,7 +211,7 @@ function recoilFor(W, i, ads) {
 }
 
 function shoot(me, slot, W) {
-  slot.mag--;
+  if (!mod.infiniteAmmo && !(mod.rapidRpg && W.class === 'launcher')) slot.mag--;
   const L = state.local;
   camera.getAimRay(aimO, aimD);
   // Scope sway moves the reticle; the round goes where the reticle is.
@@ -436,7 +441,8 @@ export function update(dt) {
   }
   const canFire = able && Wd && slot && !blockedBySprint && !vs.reload && !vs.plate && !vs.nade && !switching && vs.boltT < 0;
   if (canFire) {
-    const trigger = Wd.mode === 'auto' ? fireDown : semiBuf > 0;
+    const auto = Wd.mode === 'auto' || (mod.rapidRpg && Wd.class === 'launcher');
+    const trigger = auto ? fireDown : semiBuf > 0;
     if (trigger && slot.mag <= 0) {
       if (firePressed) {
         emit(EV.WEAPON_DRY, { id: me.id, weapon: vs.drawn });
@@ -447,9 +453,9 @@ export function update(dt) {
       let n = 0;
       while (fireCd <= 0 && slot.mag > 0 && n < TUNE.maxShotsPerFrame) {
         shoot(me, slot, Wd);
-        fireCd += 60 / Wd.rpm;
+        fireCd += 60 / (mod.rapidRpg && Wd.class === 'launcher' ? 600 : Wd.rpm);   // held: 10 rockets/s
         n++;
-        if (Wd.mode !== 'auto') { semiBuf = 0; break; }
+        if (!auto) { semiBuf = 0; break; }
       }
     }
   } else if (firePressed && able && Wd && slot && slot.mag <= 0 && !vs.reload && !switching && !vs.plate && !vs.nade) {
