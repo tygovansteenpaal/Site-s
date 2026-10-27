@@ -285,9 +285,10 @@ export function update(dt) {
   const L = state.local;
   const inMatch = state.match.phase !== 'idle';
   // the local driver
+  let used = false;                         // the interact press that got us out must not put us straight back in
   if (mine) {
     if (!me || !me.alive || me.life !== LIFE.GROUND || !inMatch) leave(true);
-    else if (input.pressed('interact')) leave(true);
+    else if (input.pressed('interact')) { leave(true); used = true; }
     else drive(mine, Math.min(dt, 0.05), me);
   }
   // entering
@@ -296,7 +297,7 @@ export function update(dt) {
     const c = nearestFree(me);
     if (c) {
       L.vehicle = { id: c.id, label: 'McLaren P1' };
-      if (!L.nearby && input.pressed('interact')) enter(c);
+      if (!used && !L.nearby && input.pressed('interact')) enter(c);
     }
   }
   if (mine) L.vehicle = { id: mine.id, label: 'McLaren P1', driving: true, kmh: Math.round(Math.abs(mine.v) * 3.6) };
