@@ -91,7 +91,7 @@ export const LANDMARKS = Object.freeze([
 ]);
 
 /** Roadside houses scattered along roads (tier 0), placed by WORLD with the map seed, at least 60 m from any POI centre. */
-export const ROADSIDE = Object.freeze({ houses: 12, lootPointsEach: 4 });
+export const ROADSIDE = Object.freeze({ houses: 26, lootPointsEach: 4 });
 
 /**
  * Road network: polylines of [x, z] points. 'asphalt' roads are 8 m wide, 'dirt' tracks 5 m.
@@ -118,6 +118,16 @@ export const FORESTS = Object.freeze([
   [-300, -150, 120], [-120, -330, 110], [-420, 250, 80], [120, -380, 90], [200, 170, 70], [-70, 190, 45], [430, 120, 60],
   [-300, 250, 42], [330, 60, 45], [110, -190, 40], [-140, 150, 30],
 ]);
+
+/**
+ * Inland water at sea level (the ocean surface covers it, so swimming, splashes and the water plane need nothing
+ * extra): a lake south of Harrow in a carved basin, and a river valley winding from it to the south-west coast.
+ * river = centreline [x, z] from the lake to past the shore; width grows from w0 at the lake to w1 at the mouth.
+ */
+export const WATERWAYS = Object.freeze({
+  lake: { x: -28, z: 252, r: 31 },
+  river: { w0: 9, w1: 16, pts: [[-28, 252], [-42, 305], [-62, 362], [-102, 412], [-160, 444], [-214, 472], [-262, 508]] },
+});
 
 export const ALL_SITES = Object.freeze([...POIS, ...LANDMARKS]);
 export const siteById = (id) => ALL_SITES.find((s) => s.id === id) || null;
