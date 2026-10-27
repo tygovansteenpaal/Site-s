@@ -29,11 +29,13 @@ Er kunnen tot 10 spelers in een lobby. Lege plekken worden gevuld met bots.
 
 ### Met willekeurige spelers
 
-Kies **Quick play**. Je komt in een openbare lobby met iedereen die op dat moment zoekt.
+Kies **Quick play**. Je komt in een openbare lobby met iedereen die op dat moment zoekt. Ben je 75 seconden alleen, dan start een match tegen bots (of eerder met **Start now**). Wie daarna Quick play kiest, komt in een andere lobby, want een lopende match kun je niet in.
+
+Wil je met vrienden spelen, gebruik dan **Private match** met een code. Dan zit je gegarandeerd in dezelfde lobby, en start de match pas als de host op **Start now** drukt of als er 2 of meer spelers zijn.
 
 ### Lukt verbinden niet?
 
-De game verbindt spelers rechtstreeks met elkaar. Op sommige school- of bedrijfsnetwerken wordt dat geblokkeerd. Ongeveer één op de tien spelerparen kan elkaar dan niet bereiken. Probeer een ander netwerk (bijvoorbeeld een hotspot van je telefoon) of gebruik de eigen server hieronder op hetzelfde netwerk.
+De game verbindt spelers rechtstreeks met elkaar (WebRTC). Er is nog geen TURN-server die verkeer doorgeeft als dat niet lukt. Achter strenge routers, op 4G of 5G, en op school- of bedrijfsnetwerken komt die directe verbinding soms niet tot stand: je ziet elkaar dan niet in de lobby en iedereen start apart. Probeer een ander netwerk (bijvoorbeeld thuis wifi in plaats van mobiel) of speel via de eigen server hieronder op hetzelfde netwerk.
 
 ---
 
