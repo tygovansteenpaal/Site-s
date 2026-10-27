@@ -105,6 +105,27 @@ async function relayList() {
 }
 export const usingServer = () => !!serverRelays;
 
+// TURN relays for players who cannot connect directly (NET.turnEndpoint). Cached for an hour; failures retry after 60 s.
+let turnCache = null, turnAt = -Infinity;
+async function turnList() {
+  const t = performance.now();
+  if (turnCache && t - turnAt < 3600e3) return turnCache;
+  if (!turnCache && t - turnAt < 60e3) return NET.turn;
+  turnAt = t;
+  if (!NET.turnEndpoint) return NET.turn;
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), NET.turnTimeoutMs);
+    const res = await fetch(NET.turnEndpoint, { signal: ctl.signal, cache: 'no-store' });
+    clearTimeout(timer);
+    const j = res.ok ? await res.json() : null;
+    const list = j && Array.isArray(j.iceServers) ? j.iceServers.filter((s) => s && s.urls) : [];
+    turnCache = list.length ? [...NET.turn, ...list] : null;
+  } catch (e) { turnCache = null; }
+  return turnCache || NET.turn;
+}
+export const turnReady = () => !!turnCache;
+
 /**
  * Join a room. Resolves once at least one relay socket is open; rejects after NET.relayTimeoutMs otherwise.
  * @param {{roomId:string, password?:string|null, transport?:'nostr'|'local'}} opts
@@ -129,8 +150,9 @@ export async function connect(opts) {
     } else {
       const mod = await import('trystero');
       self = mod.selfId;
-      config.relayConfig = { urls: await relayList() };
-      if (NET.turn && NET.turn.length) config.turnConfig = NET.turn;
+      const [urls, turn] = await Promise.all([relayList(), turnList()]);
+      config.relayConfig = { urls };
+      if (turn && turn.length) config.turnConfig = turn;
       r = mod.joinRoom(config, opts.roomId, callbacks);
       sockets = mod.getRelaySockets;
     }

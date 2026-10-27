@@ -319,7 +319,10 @@ export const NET = Object.freeze({
   protocol: 1,
   relays: ['wss://nos.lol', 'wss://relay.primal.net', 'wss://relay.snort.social', 'wss://nostr.mom',
     'wss://relay.nostr.net', 'wss://nostr.oxtr.dev', 'wss://relay.piazza.today', 'wss://nostr.rblb.it'],
-  turn: [],                               // [{urls, username, credential}] when a TURN account exists
+  turn: [],                               // static [{urls, username, credential}]; normally empty, see turnEndpoint
+  // short-lived TURN credentials (api/turn.js on Vercel, Cloudflare Realtime TURN); absolute so GitHub Pages and the
+  // own server use it too. Fetched once per hour, 2.5 s timeout; without it players connect directly only.
+  turnEndpoint: 'https://site-s-tau.vercel.app/api/turn', turnTimeoutMs: 2500,
   snapRate: 20, lobbySnapRate: 5, botRate: 15,
   interpDelay: 100, interpMin: 80, interpMax: 200,
   staleMs: 3000, dropMs: 10000,
