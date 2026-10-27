@@ -3,6 +3,8 @@
 Host ZONEFALL on your own computer (Windows or Mac) and play with friends on your network or over the internet.
 The public version on Vercel / GitHub Pages keeps working next to it.
 
+Stap-voor-stap uitleg in het Nederlands: [SAMEN-SPELEN.md](../SAMEN-SPELEN.md).
+
 ## Start it
 
 **Ready-made program (no Python needed).** In GitHub: Actions > "ZONEFALL server builds" > Run workflow. When it

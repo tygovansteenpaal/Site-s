@@ -6,7 +6,12 @@ Live projects by [Tygo van Steenpaal](https://github.com/tygovansteenpaal), serv
 |---|---|---|
 | **Blokbrawl** | Cartoon 1v1 build-and-shoot game. Walls, ramps, floors, an AR and a shotgun against a bot that builds back. Three.js. | [/blokbrawl](https://tygovansteenpaal.github.io/Site-s/blokbrawl/) |
 | **Huddle** | Team chat in the spirit of Teams: channels, DMs, threads, reactions, mentions, file sharing, search (Ctrl K) and a call screen with camera and screen share. Syncs between open tabs. | [/huddle](https://tygovansteenpaal.github.io/Site-s/huddle/) |
+| **ZONEFALL** | Browser battle royale for up to 10 players plus bots: plane drop, skins, cars, an RPG. Three.js, peer to peer. | [/zonefall](https://tygovansteenpaal.github.io/Site-s/zonefall/) |
 | **Stash** | My own game marketplace: accounts, currency, items, boosting and top ups. Filters, search, cart and order requests by email. | [/stash](https://tygovansteenpaal.github.io/Site-s/stash/) |
+
+## ZONEFALL samen spelen
+
+Hoe je met vrienden speelt, online of via je eigen server (de app voor Windows en Mac): zie [SAMEN-SPELEN.md](SAMEN-SPELEN.md).
 
 ## Run locally
 

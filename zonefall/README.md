@@ -84,6 +84,8 @@ stored in your browser only.
 
 ## How multiplayer works
 
+Step-by-step guide (Dutch) for players, online and with your own server: [SAMEN-SPELEN.md](../SAMEN-SPELEN.md).
+
 There is no game server. The page is static files on GitHub Pages, and players connect to each other directly:
 
 - **Finding each other.** The game uses [Trystero](https://github.com/dmotz/trystero) with its Nostr strategy: peers
