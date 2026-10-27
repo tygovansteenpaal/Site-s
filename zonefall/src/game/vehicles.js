@@ -12,6 +12,7 @@
 // Top speed is higher on asphalt; water floods the engine. The camera chases the car (player/camera.js asks
 // cameraFor()). No shooting from the driver's seat (combat/weapons checks FLAG.DRIVE).
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { on, emit, EV } from '../core/bus.js';
 import { state, debug, localPlayer, getPlayer, LIFE, FLAG, hasFlag, setFlag } from '../core/state.js';
 import { clamp, damp, dampAngle, wrapAngle } from '../core/util.js';
@@ -39,6 +40,7 @@ const TUNE = {
   exit: [-2.1, 0, 0.2],                 // where the driver steps out (left side)
   cam: { dist: 7.2, height: 2.5, look: 1.1, lambda: 6 },
   wheelR: 0.34,
+  drawDistance: 260,                     // m; beyond this a car is hidden
 };
 
 const cars = [];                         // {id, obj, wheels, pos, yaw, v, vy, steer, pitch, roll, driver, spin}
@@ -49,10 +51,62 @@ const _a = new THREE.Vector3(), _b = new THREE.Vector3();
 function err(msg) { return new Error(`[GAME/vehicles] ${msg}`); }
 
 // ------------------------------------------------------------------------------------------ build and spawn
+// The P1 arrives as ~180 small meshes per car. Merge each part (body, every wheel) into one mesh per material once,
+// so a car costs ~10 draw calls instead of ~180; every car clones this merged prototype.
+let carProto = null;
+function mergedModel() {
+  if (carProto) return carProto.clone(true);
+  const model = assets.cloneModel('p1');
+  model.updateMatrixWorld(true);
+  for (const name of ['ZF_body', 'ZF_wheel_lf', 'ZF_wheel_rf', 'ZF_wheel_lr', 'ZF_wheel_rr']) {
+    const part = model.getObjectByName(name);
+    if (!part) continue;
+    const inv = new THREE.Matrix4().copy(part.matrixWorld).invert();
+    const byMat = new Map();
+    const meshes = [];
+    part.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh && !Array.isArray(o.material)) meshes.push(o); });
+    for (const m of meshes) {
+      const src = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry;
+      // plain float attributes (the GLB stores some parts quantized, which mergeGeometries cannot mix)
+      const g = new THREE.BufferGeometry();
+      for (const k of ['position', 'normal', 'uv']) {
+        const a = src.attributes[k];
+        if (!a) continue;
+        const out = new Float32Array(a.count * a.itemSize);
+        const get = ['getX', 'getY', 'getZ', 'getW'];
+        for (let i = 0; i < a.count; i++) for (let c = 0; c < a.itemSize; c++) out[i * a.itemSize + c] = a[get[c]](i);
+        g.setAttribute(k, new THREE.BufferAttribute(out, a.itemSize));
+      }
+      if (!g.attributes.normal) g.computeVertexNormals();
+      if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+      g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+      const mt = m.material;
+      // identical-looking materials (the source repeats them per part) share one draw call
+      const key = [mt.type, mt.color && mt.color.getHexString(), mt.map && mt.map.uuid, mt.normalMap && mt.normalMap.uuid,
+        mt.roughnessMap && mt.roughnessMap.uuid, mt.metalnessMap && mt.metalnessMap.uuid, mt.emissive && mt.emissive.getHexString(),
+        mt.emissiveMap && mt.emissiveMap.uuid, mt.roughness, mt.metalness, mt.transparent, mt.opacity, mt.side, mt.alphaTest].join('|');
+      if (!byMat.has(key)) byMat.set(key, { mat: m.material, geos: [] });
+      byMat.get(key).geos.push(g);
+    }
+    const merged = [];
+    for (const { mat, geos } of byMat.values()) {
+      const g = mergeGeometries(geos, false);
+      if (!g) return assets.cloneModel('p1');          // incompatible parts: keep the original model
+      g.computeBoundingSphere();
+      merged.push(new THREE.Mesh(g, mat));
+    }
+    for (const m of meshes) m.removeFromParent();
+    for (const c of [...part.children]) if (!c.isMesh) c.removeFromParent();
+    for (const m of merged) part.add(m);
+  }
+  carProto = model;
+  return carProto.clone(true);
+}
+
 function makeCar(id) {
   const obj = new THREE.Group();
   obj.name = 'car:' + id;
-  const model = assets.cloneModel('p1');
+  const model = mergedModel();
   model.rotation.y = Math.PI;            // the model's nose points +Z; cars drive along their local -Z like players
   obj.add(model);
   model.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
@@ -315,6 +369,9 @@ export function update(dt) {
     c.pitch = damp(c.pitch, c.gPitch, 10, dt); c.roll = damp(c.roll, c.gRoll, 8, dt);
     place(c, dt);
   }
+  // far cars are not drawn (a car is ~10k triangles and a few dozen draw calls including its shadow)
+  const eye = me ? me.pos : null;
+  for (const c of cars) c.obj.visible = !eye || c === mine || Math.hypot(c.pos.x - eye.x, c.pos.z - eye.z) < TUNE.drawDistance;
 }
 
 /** Chase camera for the local driver: writes camera position and look target; false when not driving. */
