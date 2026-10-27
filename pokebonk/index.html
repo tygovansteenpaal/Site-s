@@ -1,0 +1,948 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PokéBonk farms</title>
+<link rel="icon" type="image/png" href="https://pokebonk.com/assets/portraits/6.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #000; --bg-2: #0a0a0a; --panel: #0a0a0a; --hover: #1a1a1a; --active: #1f1f1f;
+    --line: #1f1f1f; --line-2: #2e2e2e; --ink: #ededed; --ink-2: #a1a1a1; --ink-3: #737373;
+    --ok: #3ecf8e; --warn: #f5a524; --bad: #ff5c5c; --blue: #52a8ff; --shiny: #f7d046;
+    --field: #0a0a0a; --skeleton: #1a1a1a; --kbd: #1a1a1a;
+    --radius: 8px;
+    --font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color-scheme: dark;
+  }
+  /* dark like Vercel by default; light only when chosen with the toggle in the sidebar */
+  :root[data-theme="light"] {
+    --bg: #fafafa; --bg-2: #fff; --panel: #fff; --hover: #f2f2f2; --active: #ebebeb;
+    --line: #ebebeb; --line-2: #dcdcdc; --ink: #171717; --ink-2: #666; --ink-3: #8f8f8f;
+    --ok: #16a34a; --warn: #b8780a; --bad: #e5484d; --blue: #0070f3; --shiny: #c99a06;
+    --field: #fff; --skeleton: #f0f0f0; --kbd: #f2f2f2;
+    color-scheme: light;
+  }
+  .theme-btn { margin-left: auto; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 6px; background: transparent; color: var(--ink-2); cursor: pointer; }
+  .theme-btn:hover { color: var(--ink); background: var(--hover); }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+  a { color: inherit; text-decoration: none; }
+  button, input, select { font: inherit; color: inherit; }
+  svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ---------- layout ---------- */
+  .app { display: grid; grid-template-columns: 248px 1fr; min-height: 100%; }
+  aside { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px;
+    border-right: 1px solid var(--line); background: var(--bg); padding: 12px 8px; }
+  .team { display: flex; align-items: center; gap: 10px; padding: 6px 8px 10px; }
+  /* logo: the game's Charizard inside a slowly turning ring of fire */
+  .team-av { position: relative; width: 30px; height: 30px; flex: none; display: grid; place-items: center; }
+  .team-av::before { content: ""; position: absolute; inset: -2px; border-radius: 50%;
+    background: conic-gradient(from 0deg, #ff3d00, #ff9100, #ffd54f, #ff6d00, #d50000, #ff3d00);
+    animation: flame-spin 4s linear infinite; filter: blur(.4px); box-shadow: 0 0 12px rgba(255, 110, 0, .45); }
+  .team-av::after { content: ""; position: absolute; inset: 1px; border-radius: 50%; background: radial-gradient(circle at 50% 60%, #3a1200, #0b0300 70%); }
+  .team-av img { position: relative; z-index: 1; width: 30px; height: 30px; border-radius: 50%; image-rendering: pixelated; object-fit: cover;
+    animation: flame-glow 2.4s ease-in-out infinite; }
+  @keyframes flame-spin { to { transform: rotate(360deg); } }
+  @keyframes flame-glow { 0%, 100% { filter: drop-shadow(0 0 1px #ff9100); } 50% { filter: drop-shadow(0 0 4px #ff6d00); } }
+  @media (prefers-reduced-motion: reduce) { .team-av::before, .team-av img { animation: none; } }
+  .team-name { font-weight: 600; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .team .i { color: var(--ink-3); }
+  .find { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 8px 0 10px; margin: 0 2px 6px;
+    border: 1px solid var(--line-2); border-radius: var(--radius); background: var(--field); color: var(--ink-3); }
+  .find input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink); }
+  .find input::placeholder { color: var(--ink-3); }
+  kbd { font: 500 11px/1 var(--mono); padding: 3px 6px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--kbd); color: var(--ink-2); }
+  nav { display: flex; flex-direction: column; gap: 2px; }
+  nav a { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 6px; color: var(--ink-2); }
+  nav a:hover { background: var(--hover); color: var(--ink); }
+  nav a.on { background: var(--active); color: var(--ink); font-weight: 500; }
+  nav a .count { margin-left: auto; font: 500 11px var(--mono); color: var(--ink-3); }
+  .sep { height: 1px; background: var(--line); margin: 8px 6px; }
+  .aside-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 10px; color: var(--ink-2); font-size: 13px; border-top: 1px solid var(--line); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+  .dot.bad { background: var(--bad); }
+  .dot.warn { background: var(--warn); }
+
+  .main { min-width: 0; display: flex; flex-direction: column; }
+  .topbar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 24px;
+    border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(8px); }
+  .crumbs { display: flex; align-items: center; gap: 8px; color: var(--ink-2); min-width: 0; }
+  .crumbs b { color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .crumbs .slash { color: var(--line-2); font-size: 18px; }
+  .topbar .updated { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+  .menu-btn { display: none; border: 1px solid var(--line-2); background: transparent; border-radius: 6px; width: 34px; height: 34px; align-items: center; justify-content: center; cursor: pointer; }
+  .content { padding: 24px; max-width: 1400px; width: 100%; }
+  .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+  h2 { font-size: 14px; font-weight: 600; margin: 28px 0 12px; }
+  .sub { color: var(--ink-2); margin-top: 4px; }
+  .muted { color: var(--ink-3); }
+  .mono { font-family: var(--mono); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- building blocks ---------- */
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--panel); }
+  .kpi { padding: 14px 16px; border-right: 1px solid var(--line); }
+  .kpi:last-child { border-right: 0; }
+  .kpi span { display: block; color: var(--ink-2); font-size: 12px; }
+  .kpi b { display: block; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 99px; font-size: 12px; font-weight: 500;
+    border: 1px solid var(--line-2); color: var(--ink-2); white-space: nowrap; }
+  .pill .dot { width: 6px; height: 6px; box-shadow: none; }
+  .chip { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11px; line-height: 18px; background: var(--hover); color: var(--ink-2); text-transform: capitalize; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line-2);
+    background: var(--panel); cursor: pointer; font-weight: 500; }
+  .btn:hover { background: var(--hover); }
+  .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  .btn.primary:hover { opacity: .88; }
+
+  /* filters */
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .field-box { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--field); color: var(--ink-3); }
+  .field-box input { border: 0; outline: 0; background: transparent; color: var(--ink); width: 180px; }
+  select.sel { height: 34px; padding: 0 28px 0 10px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--field); appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center; cursor: pointer; }
+  .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; }
+  .seg button { height: 32px; padding: 0 11px; border: 0; background: var(--field); color: var(--ink-2); cursor: pointer; border-right: 1px solid var(--line-2); }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--active); color: var(--ink); font-weight: 500; }
+  .reset { color: var(--ink-3); background: none; border: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+  /* tables */
+  .tbl-wrap { border: 1px solid var(--line); border-radius: 12px; overflow: auto; background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel); color: var(--ink-2); font-weight: 500; font-size: 12px; cursor: default; }
+  th.sort { cursor: pointer; user-select: none; }
+  th.sort:hover { color: var(--ink); }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr.link { cursor: pointer; }
+  tbody tr.link:hover td { background: var(--hover); }
+  td.r, th.r { text-align: right; }
+  .mon { display: inline-flex; align-items: center; gap: 8px; }
+  .mon img { width: 28px; height: 28px; image-rendering: pixelated; }
+
+  /* farms */
+  .farms { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .farm { padding: 14px 16px; cursor: pointer; transition: border-color .15s; }
+  .farm:hover { border-color: var(--line-2); }
+  .farm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .farm-name { display: flex; align-items: center; gap: 10px; font-weight: 600; min-width: 0; }
+  .farm-name span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .avatar { position: relative; width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: #fff; }
+  .avatar.pic { background: var(--hover); box-shadow: 0 0 0 2px var(--ring); }
+  .avatar.pic img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; image-rendering: pixelated; }
+  .av-shiny { position: absolute; right: -4px; bottom: -4px; font-style: normal; font-size: 10px; line-height: 14px; width: 14px; text-align: center;
+    border-radius: 50%; background: var(--bg); color: var(--shiny); }
+  .farm-run { margin: 12px 0 4px; color: var(--ink-2); font-size: 13px; }
+  .bar { height: 4px; background: var(--hover); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+  .bar i { display: block; height: 100%; background: var(--ok); }
+  .farm-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .farm-stats div b { display: block; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .farm-stats div span { color: var(--ink-3); font-size: 11px; }
+  .farm-log { margin-top: 10px; color: var(--ink-3); font: 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* catches feed */
+  .feed { padding: 4px 0; }
+  .feed-row { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+  .feed-row:last-child { border-bottom: 0; }
+  .feed-row img { width: 32px; height: 32px; image-rendering: pixelated; }
+  .feed-row .when { margin-left: auto; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .cols > div { min-width: 0; }
+
+  /* pokédex */
+  .progress { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; color: var(--ink-2); font-size: 13px; }
+  .progress .bar { flex: 1; height: 6px; margin: 0; }
+  .dex { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .mon-tile { position: relative; padding: 10px 8px 9px; text-align: center; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); cursor: pointer; transition: border-color .15s, background .15s; }
+  .mon-tile:hover { border-color: var(--line-2); background: var(--hover); }
+  .mon-tile img { width: 64px; height: 64px; image-rendering: pixelated; display: block; margin: 0 auto 4px; }
+  .mon-tile.missing img { filter: grayscale(1) brightness(.35); opacity: .7; }
+  .mon-tile.missing .mon-name { color: var(--ink-3); }
+  .mon-no { font: 500 11px var(--mono); color: var(--ink-3); }
+  .mon-name { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mon-badge { position: absolute; top: 6px; right: 6px; font: 600 11px var(--mono); padding: 0 5px; border-radius: 4px; background: var(--active); color: var(--ink); line-height: 18px; }
+  .mon-shiny { position: absolute; top: 6px; left: 6px; color: var(--shiny); }
+  .mon-shiny svg.i { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+  .noimg { width: 64px; height: 64px; margin: 0 auto 4px; border-radius: 50%; border: 2px dashed var(--line-2); }
+  .more { display: flex; justify-content: center; margin-top: 16px; }
+
+  /* drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 20; display: none; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100%); z-index: 21; background: var(--bg-2); border-left: 1px solid var(--line);
+    transform: translateX(100%); transition: transform .2s ease; overflow-y: auto; }
+  .drawer.open { transform: none; }
+  .drawer.open + .scrim, .scrim.open { display: block; }
+  .drawer-head { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg-2); }
+  .drawer-head img { width: 56px; height: 56px; image-rendering: pixelated; }
+  .drawer-body { padding: 16px 20px 32px; }
+  .icon-btn { margin-left: auto; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line-2); border-radius: 6px; background: transparent; cursor: pointer; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; }
+  .kv dt { color: var(--ink-3); }
+  .kv dd { margin: 0; }
+  .who { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+
+  /* account detail */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 24px 0 16px; }
+  .tabs button { height: 36px; padding: 0 12px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--ink-2); cursor: pointer; margin-bottom: -1px; }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--ink); }
+  .lab { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 8px; }
+  .lab div { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); display: flex; justify-content: space-between; }
+
+  /* settings */
+  .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+  .set-card { padding: 4px 0; }
+  .set-card h3 { font-size: 14px; font-weight: 600; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .set-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .set-row:last-child { border-bottom: 0; }
+  .set-row label { flex: 1; }
+  .set-row small { display: block; color: var(--ink-3); font-size: 12px; }
+  .set-row input[type=number], .set-row select { width: 110px; height: 32px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--field); }
+  .switch { position: relative; width: 34px; height: 20px; flex: none; }
+  .switch input { opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; position: absolute; z-index: 1; }
+  .switch span { position: absolute; inset: 0; border-radius: 99px; background: var(--line-2); transition: background .15s; }
+  .switch span::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .switch input:checked + span { background: var(--blue); }
+  .switch input:checked + span::after { transform: translateX(14px); }
+  .switch input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+  .size-row { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+  .size-row button { height: 28px; padding: 0 10px; font-size: 12px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--field); cursor: pointer; }
+  .save-bar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 12px; margin-top: 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+
+  /* log */
+  .log { font: 12px/1.7 var(--mono); padding: 12px 16px; max-height: calc(100vh - 220px); overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  .log .t { color: var(--ink-3); }
+  .log .warn { color: var(--warn); }
+
+  .empty { padding: 40px 16px; text-align: center; color: var(--ink-3); }
+
+  /* login (website only) */
+  .login { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: var(--bg); }
+  .login[hidden] { display: none; }
+  .login-card { width: min(360px, 100%); padding: 28px 24px; }
+  .login-card input { width: 100%; height: 40px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--field); outline: none; }
+  .login-card input:focus { border-color: var(--ink-3); }
+  .login-err { color: var(--bad); text-align: center; min-height: 20px; margin: 10px 0 0; font-size: 13px; }
+
+  /* downloads */
+  .dl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+  .dl { padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .dl h3 { margin: 0; font-size: 15px; }
+  .dl .btn { justify-content: center; margin-top: auto; }
+  .steps { margin: 0; padding-left: 20px; color: var(--ink-2); }
+  .steps li { margin: 6px 0; }
+  .steps code, .mono-box { font-family: var(--mono); font-size: 12px; background: var(--hover); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
+  .offline { display: none; margin-bottom: 16px; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius: 8px; color: var(--bad); }
+
+  /* ---------- phones ---------- */
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; }
+    aside { position: fixed; z-index: 30; left: 0; width: 260px; transform: translateX(-100%); transition: transform .2s; }
+    aside.open { transform: none; }
+    .menu-btn { display: inline-flex; }
+    .topbar { padding: 0 16px; }
+    .content { padding: 16px; }
+    .cols { grid-template-columns: 1fr; }
+    .kpi { border-right: 0; border-bottom: 1px solid var(--line); }
+    .field-box input { width: 120px; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside id="aside">
+    <div class="team">
+      <div class="team-av"><img src="https://pokebonk.com/assets/portraits/6.png" alt=""></div>
+      <div class="team-name">PokéBonk farms</div>
+      <svg class="i" viewBox="0 0 24 24"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>
+    </div>
+    <label class="find">
+      <svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="find" placeholder="Zoek Pokémon of account" autocomplete="off">
+      <kbd>F</kbd>
+    </label>
+    <nav id="nav">
+      <a href="#/" data-page="overview"><svg class="i" viewBox="0 0 24 24"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>Overzicht</a>
+      <a href="#/accounts" data-page="accounts"><svg class="i" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>Accounts<span class="count" id="nav-acc"></span></a>
+      <a href="#/pokedex" data-page="pokedex"><svg class="i" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>Pokédex<span class="count" id="nav-dex"></span></a>
+      <a href="#/runs" data-page="runs"><svg class="i" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Runs<span class="count" id="nav-runs"></span></a>
+      <div class="sep"></div>
+      <a href="#/instellingen" data-page="settings"><svg class="i" viewBox="0 0 24 24"><line x1="21" x2="14" y1="4" y2="4"/><line x1="10" x2="3" y1="4" y2="4"/><line x1="21" x2="12" y1="12" y2="12"/><line x1="8" x2="3" y1="12" y2="12"/><line x1="21" x2="16" y1="20" y2="20"/><line x1="12" x2="3" y1="20" y2="20"/><line x1="14" x2="14" y1="2" y2="6"/><line x1="8" x2="8" y1="10" y2="14"/><line x1="16" x2="16" y1="18" y2="22"/></svg>Instellingen</a>
+      <a href="#/logboek" data-page="log"><svg class="i" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>Logboek</a>
+      <a href="#/downloads" data-page="downloads" id="nav-dl" hidden><svg class="i" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>Downloads</a>
+    </nav>
+    <div class="aside-foot"><span class="dot" id="foot-dot"></span><span id="foot-text">Verbinden…</span>
+      <button class="theme-btn" id="logout-btn" aria-label="Uitloggen" title="Uitloggen" hidden><svg class="i" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg></button>
+      <button class="theme-btn" id="theme-btn" aria-label="Licht of donker thema" title="Licht of donker thema" style="margin-left:0"></button></div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <button class="menu-btn" id="menu-btn" aria-label="Menu"><svg class="i" viewBox="0 0 24 24"><line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/></svg></button>
+      <div class="crumbs"><span>PokéBonk</span><span class="slash">/</span><b id="crumb">Overzicht</b></div>
+      <span class="updated" id="updated"></span>
+    </header>
+    <div class="content">
+      <div class="offline" id="offline">De launcher reageert niet. Draait PokeBonkLauncher.exe nog?</div>
+      <div id="view"></div>
+    </div>
+  </div>
+</div>
+<div class="login" id="login" hidden>
+  <form class="login-card card" id="login-form">
+    <div class="team-av" style="margin:0 auto 14px"><img src="https://pokebonk.com/assets/portraits/6.png" alt=""></div>
+    <h1 style="text-align:center;font-size:20px">PokéBonk farms</h1>
+    <p class="sub" style="text-align:center;margin:4px 0 18px">Log in om je farms te beheren.</p>
+    <input type="password" id="login-pw" placeholder="Wachtwoord" autocomplete="current-password" required>
+    <button class="btn primary" type="submit" style="width:100%;justify-content:center;margin-top:10px">Inloggen</button>
+    <p class="login-err" id="login-err"></p>
+  </form>
+</div>
+<div class="drawer" id="drawer"></div>
+<div class="scrim" id="scrim"></div>
+
+<script>
+// ---------- helpers ----------
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmt = (n) => n == null || Number.isNaN(n) ? '–' : Math.round(n).toLocaleString('nl-NL');
+const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '–';
+const hours = (s) => s == null ? '–' : (s / 3600).toFixed(1) + ' u';
+const clock = (s) => s == null ? '–' : Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+const portrait = (id) => `https://pokebonk.com/assets/portraits/${encodeURIComponent(id)}.png`;
+const imgTag = (id, cls = '') => `<img class="${cls}" src="${portrait(id)}" alt="" loading="lazy" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg'}))">`;
+const ago = (ts) => {
+  if (!ts) return '–';
+  const s = (Date.now() - ts) / 1000;
+  if (s < 60) return 'zojuist';
+  if (s < 3600) return Math.floor(s / 60) + ' min geleden';
+  if (s < 86400) return Math.floor(s / 3600) + ' u geleden';
+  if (s < 86400 * 7) return Math.floor(s / 86400) + ' d geleden';
+  return new Date(ts).toLocaleDateString('nl-NL');
+};
+const dateTime = (ts) => ts ? new Date(ts).toLocaleString('nl-NL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–';
+const COLORS = ['#ff4d6d', '#f5a524', '#3ecf8e', '#52a8ff', '#b07cff', '#ff7ab6', '#2dd4bf', '#f97316', '#a3e635', '#60a5fa'];
+const colorFor = (name) => { let h = 0; for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return COLORS[h % COLORS.length]; };
+// The account's own in-game avatar: the chosen Pokémon ("mon:44s", s = shiny), else the starter the
+// game shows by default, else a letter. The profile frame ("type-psychic") becomes a ring in that type's colour.
+const TYPE_COLORS = { normal: '#a8a77a', fire: '#ee8130', water: '#6390f0', electric: '#f7d02c', grass: '#7ac74c', ice: '#96d9d6',
+  fighting: '#c22e28', poison: '#a33ea1', ground: '#e2bf65', flying: '#a98ff3', psychic: '#f95587', bug: '#a6b91a', rock: '#b6a136',
+  ghost: '#735797', dragon: '#6f35fc', dark: '#705746', steel: '#b7b7ce', fairy: '#d685ad' };
+function profileOf(name) {
+  const live = (S.live?.accounts || []).find((a) => a.name === name);
+  const saved = S.accounts.find((a) => a.name === name);
+  return { avatar: live?.avatar ?? saved?.avatar ?? '', frame: live?.frame ?? saved?.frame ?? '', starter: live?.starter ?? saved?.starter ?? null };
+}
+const avatar = (name, size = 28) => {
+  const p = profileOf(name);
+  const m = /^mon:(\d+)(s?)$/.exec(p.avatar || '');
+  const id = m ? +m[1] : p.starter;
+  const ringType = /^type-(\w+)$/.exec(p.frame || '')?.[1];
+  const ring = ringType && TYPE_COLORS[ringType] ? TYPE_COLORS[ringType] : 'var(--line-2)';
+  const letter = esc(String(name || '?')[0].toUpperCase());
+  if (!id) return `<span class="avatar" style="width:${size}px;height:${size}px;background:${colorFor(name)}">${letter}</span>`;
+  return `<span class="avatar pic" style="width:${size}px;height:${size}px;--ring:${ring}" title="${esc(name)}${m ? '' : ' · starter'}">
+    <img src="${portrait(id)}" alt="" loading="lazy" onerror="this.parentNode.textContent='${letter}';this.parentNode.style.background='${colorFor(name)}'">
+    ${m && m[2] ? `<i class="av-shiny">★</i>` : ''}</span>`;
+};
+const SPARK = '<svg class="i" viewBox="0 0 24 24"><path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0L14.06 8.5a2 2 0 0 0 1.44 1.44l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/></svg>';
+const X_ICON = '<svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+const store = { get(k, d) { try { return JSON.parse(localStorage.getItem('pbdash.' + k)) ?? d; } catch { return d; } },
+                set(k, v) { try { localStorage.setItem('pbdash.' + k, JSON.stringify(v)); } catch {} } };
+
+// ---------- data ----------
+// The same page runs in two places: served by the launcher on this PC (local), or on the
+// website under /pokebonk (cloud: password login, every PC's farms, downloads).
+const SITE = location.pathname.startsWith('/pokebonk');
+const EP = SITE
+  ? { data: '/api/pokebonk/data', accounts: '/api/pokebonk/accounts', runs: '/api/pokebonk/runs', pokemon: '/api/pokebonk/pokemon',
+      log: '/api/pokebonk/log', settings: '/api/pokebonk/settings', login: '/api/pokebonk/login', dlkey: '/api/pokebonk/dlkey', cloud: null }
+  : { data: '/data', accounts: '/api/accounts', runs: '/api/runs', pokemon: '/api/pokemon', log: '/api/log', settings: '/settings', cloud: '/cloud' };
+const S = { live: null, accounts: [], runs: [], species: [], byId: new Map(), online: false, cloud: false, needLogin: false };
+async function getJson(u) {
+  const r = await fetch(u, { cache: 'no-store', credentials: 'same-origin' });
+  if (r.status === 401) { S.needLogin = true; showLogin(); throw new Error('401'); }
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+async function loadLive() {
+  try { S.live = await getJson(EP.data); S.online = true; S.cloud = !!S.live.cloud; }
+  catch { S.online = S.needLogin; }
+  $('#offline').style.display = S.online ? 'none' : 'block';
+  if (S.live?.error) $('#offline').textContent = S.live.error;
+  $('#nav-dl').hidden = !S.cloud;
+  $('#logout-btn').hidden = !S.cloud;
+}
+function showLogin() {
+  $('#login').hidden = false;
+  setTimeout(() => $('#login-pw').focus(), 50);
+}
+$('#login-form').onsubmit = async (e) => {
+  e.preventDefault();
+  $('#login-err').textContent = '';
+  const r = await fetch(EP.login, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('#login-pw').value }) });
+  if (!r.ok) { $('#login-err').textContent = (await r.json().catch(() => ({}))).error || 'Inloggen mislukt'; return; }
+  $('#login').hidden = true; S.needLogin = false;
+  await Promise.all([loadLive(), loadSaved(), loadSpecies()]);
+  updateChrome(); route();
+};
+$('#logout-btn').onclick = async () => { await fetch(EP.login, { method: 'DELETE' }); location.reload(); };
+async function loadSaved() {
+  try { S.accounts = await getJson(EP.accounts); } catch {}
+  try { S.runs = (await getJson(EP.runs)).sort((a, b) => (b.at || 0) - (a.at || 0)); } catch {}
+}
+async function loadSpecies() {
+  try { S.species = await getJson(EP.pokemon); S.byId = new Map(S.species.map((p) => [p.id, p])); } catch {}
+}
+const monName = (id) => S.byId.get(+id)?.name || ('#' + id);
+
+// accounts = saved profiles merged with live window status
+function accountList() {
+  const live = new Map((S.live?.accounts || []).filter((a) => a.name).map((a) => [a.name, a]));
+  const names = new Set([...S.accounts.map((a) => a.name), ...live.keys()]);
+  return [...names].map((name) => {
+    const saved = S.accounts.find((a) => a.name === name) || {};
+    const l = live.get(name);
+    const c = saved.counters || {};
+    return {
+      name, saved, live: l, slot: l?.slot ?? saved.slot,
+      runs: l?.runs ?? c.runs ?? 0, wins: l?.wins ?? c.wins ?? 0, kills: l?.kills ?? c.kills ?? 0,
+      stardust: l?.stardust ?? saved.stardust ?? 0, league: l?.league ?? saved.league?.length ?? 0,
+      caught: Object.keys(saved.captured || {}).length, shinies: (saved.shinies || []).length,
+      playtime: l?.playtime ?? c.playtime ?? 0, lastSeen: saved.lastSeen, status: liveStatus(l),
+    };
+  }).sort((a, b) => (a.slot ?? 99) - (b.slot ?? 99) || a.name.localeCompare(b.name));
+}
+function liveStatus(a) {
+  if (!a) return ['offline', ''];
+  if (a.pending) return ['laden…', ''];
+  if (a.unreachable) return ['reageert niet', 'bad'];
+  if (a.loginScreen) return ['inlogscherm', 'warn'];
+  if (a.bot && !a.bot.on) return ['bot uit', 'warn'];
+  if (a.run && a.run.state === 'play') return ['speelt', 'ok'];
+  if (a.run && (a.run.state === 'dead' || a.run.state === 'over')) return ['run voorbij', ''];
+  if (a.run) return [a.run.state, ''];
+  return ['menu', ''];
+}
+const statusPill = ([t, c]) => `<span class="pill"><span class="dot ${c}"></span>${esc(t)}</span>`;
+
+// species id -> [{name, at, shiny}] across all saved accounts
+function catchIndex() {
+  const idx = new Map();
+  for (const a of S.accounts) {
+    const shiny = new Set(a.shinies || []);
+    const league = new Set(a.league || []);
+    for (const [id, at] of Object.entries(a.captured || {})) {
+      if (!idx.has(+id)) idx.set(+id, []);
+      idx.get(+id).push({ name: a.name, at, shiny: shiny.has(+id), league: league.has(+id) });
+    }
+  }
+  return idx;
+}
+
+// ---------- router ----------
+const routes = { '': overview, accounts, pokedex, runs, instellingen: settings, logboek: logPage, downloads };
+let current = null;
+function route() {
+  const [path, query] = location.hash.replace(/^#\/?/, '').split('?');
+  const [page, arg] = path.split('/').map(decodeURIComponent);
+  const fn = routes[page] || overview;
+  const key = { '': 'overview', accounts: 'accounts', pokedex: 'pokedex', runs: 'runs', instellingen: 'settings', logboek: 'log', downloads: 'downloads' }[page] || 'overview';
+  for (const a of document.querySelectorAll('#nav a')) a.classList.toggle('on', a.dataset.page === key);
+  $('#aside').classList.remove('open');
+  current = () => fn(arg, new URLSearchParams(query || ''));
+  current();
+}
+window.addEventListener('hashchange', () => { closeDrawer(); route(); window.scrollTo(0, 0); });
+const setCrumb = (t) => { $('#crumb').textContent = t; document.title = t + ' · PokéBonk farms'; };
+
+// ---------- pages ----------
+function overview() {
+  setCrumb('Overzicht');
+  const list = accountList();
+  const live = (S.live?.accounts || []);
+  const playing = live.filter((a) => liveStatus(a)[0] === 'speelt').length;
+  const idx = catchIndex();
+  const shinyCount = [...idx.values()].filter((w) => w.some((x) => x.shiny)).length;
+  const catches = [];
+  for (const a of S.accounts) for (const [id, at] of Object.entries(a.captured || {})) catches.push({ id: +id, at, name: a.name, shiny: (a.shinies || []).includes(+id) });
+  catches.sort((a, b) => b.at - a.at);
+
+  const groups = {};
+  for (const r of S.runs.slice(0, 200)) {
+    const key = r.victory ? 'Gewonnen' : `Zone ${r.stage} · ${r.death?.doing || 'onbekend'}`;
+    (groups[key] ||= []).push(r);
+  }
+  const ends = Object.entries(groups).sort((a, b) => b[1].length - a[1].length).slice(0, 8);
+
+  $('#view').innerHTML = `
+    <div class="page-head"><div><h1>Overzicht</h1><div class="sub">Live status van alle farms.</div></div></div>
+    <div class="kpis">
+      <div class="kpi"><span>Spelen nu</span><b>${playing} / ${live.length || list.length}</b></div>
+      <div class="kpi"><span>Runs</span><b>${fmt(list.reduce((t, a) => t + a.runs, 0))}</b></div>
+      <div class="kpi"><span>Overwinningen</span><b>${fmt(list.reduce((t, a) => t + a.wins, 0))}</b></div>
+      <div class="kpi"><span>Soorten gevangen</span><b>${fmt(idx.size)}</b></div>
+      <div class="kpi"><span>Shiny soorten</span><b>${fmt(shinyCount)}</b></div>
+      <div class="kpi"><span>Stardust</span><b>${fmt(list.reduce((t, a) => t + a.stardust, 0))}</b></div>
+    </div>
+    <h2>Farms</h2>
+    <div class="farms">${live.map(farmCard).join('') || '<div class="card empty">Nog geen vensters.</div>'}</div>
+    <div class="cols">
+      <div><h2>Laatste vangsten</h2><div class="card feed">${catches.slice(0, 10).map((c) => `
+        <a class="feed-row" href="#/pokedex?q=${encodeURIComponent(monName(c.id))}">${imgTag(c.id)}
+          <div><div>${esc(monName(c.id))} ${c.shiny ? `<span style="color:var(--shiny)">★</span>` : ''}</div><div class="muted" style="font-size:12px">${esc(c.name)}</div></div>
+          <span class="when">${ago(c.at)}</span></a>`).join('') || '<div class="empty">Nog geen vangsten bewaard.</div>'}</div></div>
+      <div><h2>Waar runs eindigen <span class="muted" style="font-weight:400">· laatste 200</span></h2>
+        <div class="tbl-wrap"><table><thead><tr><th>Einde</th><th class="r">Runs</th><th class="r">Gem. level</th></tr></thead><tbody>
+        ${ends.map(([k, rs]) => `<tr><td>${esc(k)}</td><td class="r num">${rs.length}</td><td class="r num">${fmt(rs.reduce((t, r) => t + (r.level || 0), 0) / rs.length)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Nog geen runs.</td></tr>'}
+        </tbody></table></div></div>
+    </div>`;
+  for (const el of document.querySelectorAll('.farm')) el.onclick = () => { location.hash = '#/accounts/' + encodeURIComponent(el.dataset.name); };
+}
+function farmCard(a) {
+  const st = liveStatus(a);
+  const saved = S.accounts.find((x) => x.name === a.name);
+  const run = a.run && a.run.state !== 'over'
+    ? `Zone ${fmt(a.run.stage)} · ${clock(a.run.t)} · lvl ${fmt(a.run.level)}<div class="bar"><i style="width:${Math.max(0, Math.min(100, a.run.hp / a.run.maxHp * 100)) || 0}%"></i></div>`
+    : `<span class="muted">Geen run bezig</span><div class="bar"></div>`;
+  return `<div class="card farm" data-name="${esc(a.name || '')}">
+    <div class="farm-head"><div class="farm-name">${avatar(a.name || '?')}<span>${esc(a.name || 'Venster ' + a.slot)}</span></div>${statusPill(st)}</div>
+    <div class="farm-run">${run}</div>
+    <div class="farm-stats">
+      <div><b>${fmt(a.runs)}</b><span>runs</span></div><div><b>${fmt(a.wins)}</b><span>wins</span></div>
+      <div><b>${fmt(Object.keys(saved?.captured || {}).length)}</b><span>gevangen</span></div><div><b>${fmt(a.stardust)}</b><span>stardust</span></div>
+    </div>
+    <div class="farm-log">${S.cloud ? esc(a.pc || '') + ' · #' + esc(a.slot) + ' · ' : ''}${esc(a.bot?.log?.[0] || (S.cloud ? '' : '#' + a.slot))}</div>
+  </div>`;
+}
+
+// ---------- downloads (website) ----------
+function downloads() {
+  setCrumb('Downloads');
+  const dl = (file, title, sub) => `<div class="card dl"><h3>${title}</h3><div class="muted">${sub}</div>
+    <button class="btn primary" data-dl="${file}"><svg class="i" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg><span>Downloaden</span></button></div>`;
+  $('#view').innerHTML = `
+    <div class="page-head"><div><h1>Downloads</h1><div class="sub">De launcher voor elke pc. Je accounts komen vanzelf mee nadat je hem koppelt.</div></div></div>
+    <div class="dl-grid">
+      ${dl('PokeBonkLauncher-windows.zip', 'Windows', 'Windows 10 en 11, 64-bit')}
+      ${dl('PokeBonkLauncher-mac-apple-silicon.zip', 'Mac · Apple Silicon', 'M1, M2, M3, M4')}
+      ${dl('PokeBonkLauncher-mac-intel.zip', 'Mac · Intel', 'Oudere Macs met Intel-processor')}
+    </div>
+    <h2>Zo werkt het</h2>
+    <div class="card" style="padding:16px 20px">
+      <ol class="steps">
+        <li>Pak de zip uit en start de launcher (Windows: <code>PokeBonkLauncher.exe</code>, Mac: rechtermuisklik op <code>start.command</code> &gt; Open).</li>
+        <li>De eerste keer vraagt hij het adres van deze website (<code>${esc(location.origin)}</code>) en je wachtwoord.</li>
+        <li>Je accounts staan niet in de download zelf: die haalt de launcher versleuteld op nadat je het wachtwoord hebt ingevuld.</li>
+        <li>Hij haalt dan je accounts op en logt elk venster in. Je instellingen van deze website gelden meteen.</li>
+        <li>Vanaf dan zie je die pc hier bij Overzicht en kun je alles vanaf deze website regelen.</li>
+      </ol>
+      <p class="muted" style="margin:12px 0 0">Speel een account niet op twee pc's tegelijk: het spel logt hem dan op de andere uit.</p>
+    </div>`;
+  for (const b of document.querySelectorAll('[data-dl]')) b.onclick = () => downloadSealed(b);
+}
+
+// The downloads sit in the public repository only encrypted ("PBE1" + 12-byte nonce + AES-GCM
+// ciphertext with its tag). The key comes from the API, so only a signed-in browser can open them.
+async function downloadSealed(btn) {
+  const label = btn.querySelector('span'), file = btn.dataset.dl, setLabel = (t) => { label.textContent = t; };
+  btn.disabled = true;
+  try {
+    setLabel('Sleutel ophalen…');
+    const { key } = await getJson(EP.dlkey);
+    const r = await fetch(`downloads/${file}.enc`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('bestand niet gevonden');
+    const total = +r.headers.get('content-length') || 0, parts = [];
+    let got = 0;
+    for (const reader = r.body.getReader(); ;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value); got += value.length;
+      setLabel(total ? `Downloaden… ${Math.floor(got / total * 100)}%` : `Downloaden… ${(got / 1048576).toFixed(0)} MB`);
+    }
+    const data = new Uint8Array(got);
+    let o = 0; for (const p of parts) { data.set(p, o); o += p.length; }
+    if (new TextDecoder().decode(data.subarray(0, 4)) !== 'PBE1') throw new Error('onbekend bestandsformaat');
+    setLabel('Ontsleutelen…');
+    const k = await crypto.subtle.importKey('raw', Uint8Array.from(atob(key), (c) => c.charCodeAt(0)), 'AES-GCM', false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: data.subarray(4, 16) }, k, data.subarray(16));
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([plain], { type: 'application/zip' })), download: file });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    setLabel('Gedownload');
+  } catch (e) {
+    setLabel(e.message === '401' ? 'Log eerst in' : `Mislukt: ${e.message}`);
+  } finally {
+    setTimeout(() => { btn.disabled = false; setLabel('Downloaden'); }, 4000);
+  }
+}
+
+let accSort = store.get('accSort', { k: 'slot', d: 1 });
+function accounts(name) {
+  if (name) return accountDetail(name);
+  setCrumb('Accounts');
+  const cols = [['name', 'Account'], ['slot', 'Venster'], ['status', 'Status'], ['runs', 'Runs', 1], ['wins', 'Wins', 1], ['winrate', 'Win %', 1],
+    ['stardust', 'Stardust', 1], ['league', 'League', 1], ['caught', 'Gevangen', 1], ['shinies', 'Shinies', 1], ['lastSeen', 'Laatst gezien', 1]];
+  const q = ($('#acc-q')?.value || '').toLowerCase();
+  const list = accountList().map((a) => ({ ...a, winrate: a.runs ? a.wins / a.runs : 0 })).filter((a) => a.name.toLowerCase().includes(q));
+  list.sort((a, b) => {
+    const k = accSort.k, x = k === 'status' ? a.status[0] : a[k], y = k === 'status' ? b.status[0] : b[k];
+    return (typeof x === 'string' ? String(x).localeCompare(String(y)) : (x ?? -1) - (y ?? -1)) * accSort.d;
+  });
+  $('#view').innerHTML = `
+    <div class="page-head"><div><h1>Accounts</h1><div class="sub">Alle accounts die de launcher ooit zag, ook als ze nu niet draaien.</div></div>
+      <div class="field-box"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="acc-q" placeholder="Zoek account" value="${esc(q)}"></div></div>
+    <div class="tbl-wrap"><table><thead><tr>${cols.map(([k, l, r]) => `<th class="sort ${r ? 'r' : ''}" data-k="${k}">${l}${accSort.k === k ? (accSort.d > 0 ? ' ↑' : ' ↓') : ''}</th>`).join('')}</tr></thead>
+    <tbody>${list.map((a) => `<tr class="link" data-name="${esc(a.name)}">
+      <td><span class="mon">${avatar(a.name)}${esc(a.name)}</span></td><td class="mono">${a.slot != null ? '#' + a.slot : '–'}</td><td>${statusPill(a.status)}</td>
+      <td class="r num">${fmt(a.runs)}</td><td class="r num">${fmt(a.wins)}</td><td class="r num">${pct(a.wins, a.runs)}</td><td class="r num">${fmt(a.stardust)}</td>
+      <td class="r num">${fmt(a.league)}</td><td class="r num">${fmt(a.caught)}</td><td class="r num">${fmt(a.shinies)}</td><td class="r muted">${a.live && !a.live.unreachable ? 'nu' : ago(a.lastSeen)}</td>
+    </tr>`).join('') || `<tr><td colspan="${cols.length}" class="empty">Geen accounts gevonden.</td></tr>`}</tbody></table></div>`;
+  for (const th of document.querySelectorAll('th.sort')) th.onclick = () => { accSort = { k: th.dataset.k, d: accSort.k === th.dataset.k ? -accSort.d : (th.classList.contains('r') ? -1 : 1) }; store.set('accSort', accSort); accounts(); };
+  for (const tr of document.querySelectorAll('tr.link')) tr.onclick = () => { location.hash = '#/accounts/' + encodeURIComponent(tr.dataset.name); };
+  const inp = $('#acc-q'); inp.oninput = () => { accounts(); const i = $('#acc-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); };
+}
+
+let accTab = 'caught';
+function accountDetail(name) {
+  setCrumb(name);
+  const a = accountList().find((x) => x.name === name);
+  if (!a) { $('#view').innerHTML = `<div class="card empty">Account “${esc(name)}” is (nog) niet bewaard.</div>`; return; }
+  const s = a.saved, c = s.counters || {};
+  const caught = Object.entries(s.captured || {}).map(([id, at]) => ({ id: +id, at })).sort((x, y) => y.at - x.at);
+  const shinies = new Set(s.shinies || []);
+  const myRuns = S.runs.filter((r) => r.who === name);
+  const tab = {
+    caught: () => caught.length ? `<div class="dex">${caught.map((m) => `
+        <div class="mon-tile" data-id="${m.id}">${shinies.has(m.id) ? `<span class="mon-shiny">${SPARK}</span>` : ''}${imgTag(m.id)}
+          <div class="mon-no">#${String(m.id).padStart(4, '0')}</div><div class="mon-name">${esc(monName(m.id))}</div>
+          <div class="muted" style="font-size:11px">${dateTime(m.at)}</div></div>`).join('')}</div>` : '<div class="card empty">Nog niets gevangen.</div>',
+    runs: () => runTable(myRuns.slice(0, 200), false),
+    lab: () => `<div class="lab">${Object.entries(s.lab || {}).map(([k, v]) => `<div><span>${esc(k)}</span><b class="num">${fmt(v)}</b></div>`).join('') || '<div class="muted">Geen lab-upgrades.</div>'}</div>`,
+  };
+  $('#view').innerHTML = `
+    <div class="page-head"><div style="display:flex;align-items:center;gap:14px">${avatar(name, 52)}<div><h1>${esc(name)}</h1>
+      <div class="sub">${a.slot != null ? 'Venster #' + a.slot + ' · ' : ''}${a.live && !a.live.unreachable ? 'nu actief' : 'laatst gezien ' + ago(a.lastSeen)}${s.created ? ' · aangemaakt ' + new Date(s.created).toLocaleDateString('nl-NL') : ''}</div></div></div>
+      ${statusPill(a.status)}</div>
+    <div class="kpis">
+      <div class="kpi"><span>Runs</span><b>${fmt(a.runs)}</b></div><div class="kpi"><span>Wins</span><b>${fmt(a.wins)} <small class="muted" style="font-size:13px">${pct(a.wins, a.runs)}</small></b></div>
+      <div class="kpi"><span>Gevangen soorten</span><b>${fmt(caught.length)}</b></div><div class="kpi"><span>Shinies</span><b>${fmt(shinies.size)}</b></div>
+      <div class="kpi"><span>League</span><b>${fmt(a.league)}</b></div><div class="kpi"><span>Stardust</span><b>${fmt(a.stardust)}</b></div>
+      <div class="kpi"><span>Max level</span><b>${fmt(c.maxLevel)}</b></div><div class="kpi"><span>Speeltijd</span><b>${hours(a.playtime)}</b></div>
+    </div>
+    <div class="tabs">${[['caught', `Gevangen (${caught.length})`], ['runs', `Runs (${myRuns.length})`], ['lab', 'Lab']].map(([k, l]) => `<button data-t="${k}" class="${accTab === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div id="tab">${tab[accTab]()}</div>`;
+  for (const b of document.querySelectorAll('.tabs button')) b.onclick = () => { accTab = b.dataset.t; accountDetail(name); };
+  bindTiles();
+}
+
+// ---------- pokédex ----------
+let dex = store.get('dex', { q: '', acc: '', st: 'all', type: '', gen: '', sort: 'no', seenOnly: true });
+let dexLimit = 240;
+function pokedex(_, params) {
+  setCrumb('Pokédex');
+  if (params?.get('q') != null) { dex.q = params.get('q'); dex.st = 'all'; dex.acc = ''; dex.seenOnly = false; history.replaceState(null, '', '#/pokedex'); }
+  const idx = catchIndex();
+  const accs = [...new Set(S.accounts.map((a) => a.name))].sort();
+  const seen = new Set(S.accounts.flatMap((a) => a.seen || []));
+  const pickAcc = dex.acc ? S.accounts.find((a) => a.name === dex.acc) : null;
+  const types = [...new Set(S.species.flatMap((p) => p.types || []))].sort();
+  const gens = [...new Set(S.species.map((p) => p.gen))].filter(Boolean).sort((a, b) => a - b);
+
+  const caughtBy = (id) => (idx.get(id) || []).filter((w) => !dex.acc || w.name === dex.acc);
+  let list = S.species.filter((p) => {
+    const who = caughtBy(p.id);
+    if (dex.seenOnly && !dex.acc && !seen.has(p.id) && !idx.has(p.id)) return false;
+    if (dex.q && !p.name.toLowerCase().includes(dex.q.toLowerCase()) && String(p.id) !== dex.q.replace('#', '')) return false;
+    if (dex.type && !(p.types || []).includes(dex.type)) return false;
+    if (dex.gen && p.gen !== +dex.gen) return false;
+    if (dex.st === 'caught' && !who.length) return false;
+    if (dex.st === 'missing' && who.length) return false;
+    if (dex.st === 'shiny' && !who.some((w) => w.shiny)) return false;
+    if (dex.st === 'league' && !(pickAcc ? (pickAcc.league || []).includes(p.id) : S.accounts.some((a) => (a.league || []).includes(p.id)))) return false;
+    if (dex.st === 'legend' && !p.legendary && !p.mythical) return false;
+    return true;
+  });
+  const lastAt = (id) => Math.max(0, ...caughtBy(id).map((w) => w.at));
+  if (dex.sort === 'name') list.sort((a, b) => a.name.localeCompare(b.name));
+  else if (dex.sort === 'most') list.sort((a, b) => caughtBy(b.id).length - caughtBy(a.id).length || a.id - b.id);
+  else if (dex.sort === 'recent') list.sort((a, b) => lastAt(b.id) - lastAt(a.id) || a.id - b.id);
+  else list.sort((a, b) => a.id - b.id);
+
+  const total = dex.seenOnly && !dex.acc ? S.species.filter((p) => seen.has(p.id) || idx.has(p.id)).length : S.species.length;
+  const have = S.species.filter((p) => caughtBy(p.id).length && (!dex.seenOnly || dex.acc || seen.has(p.id) || idx.has(p.id))).length;
+  const SEG = [['all', 'Alle'], ['caught', 'Gevangen'], ['missing', 'Niet gevangen'], ['shiny', 'Shiny'], ['league', 'League'], ['legend', 'Legendarisch']];
+
+  $('#view').innerHTML = `
+    <div class="page-head"><div><h1>Pokédex</h1><div class="sub">Welke Pokémon je accounts gevangen hebben. Klik op een Pokémon voor wie en wanneer.</div></div></div>
+    <div class="filters">
+      <div class="field-box"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="dex-q" placeholder="Naam of nummer" value="${esc(dex.q)}"></div>
+      <select class="sel" id="dex-acc"><option value="">Alle accounts</option>${accs.map((n) => `<option ${dex.acc === n ? 'selected' : ''} value="${esc(n)}">${esc(n)}</option>`).join('')}</select>
+      <div class="seg" id="dex-st">${SEG.map(([k, l]) => `<button data-v="${k}" class="${dex.st === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <select class="sel" id="dex-type"><option value="">Alle types</option>${types.map((t) => `<option ${dex.type === t ? 'selected' : ''} value="${esc(t)}">${esc(t)}</option>`).join('')}</select>
+      <select class="sel" id="dex-gen"><option value="">Alle generaties</option>${gens.map((g) => `<option ${+dex.gen === g ? 'selected' : ''} value="${g}">Generatie ${g}</option>`).join('')}</select>
+      <select class="sel" id="dex-sort">${[['no', 'Nummer'], ['name', 'Naam'], ['most', 'Meest gevangen'], ['recent', 'Laatst gevangen']].map(([k, l]) => `<option ${dex.sort === k ? 'selected' : ''} value="${k}">Sorteer: ${l}</option>`).join('')}</select>
+      <label class="field-box" style="cursor:pointer"><input type="checkbox" id="dex-seen" ${dex.seenOnly ? 'checked' : ''} style="width:auto">Alleen in het spel gezien</label>
+      <button class="reset" id="dex-reset">Filters wissen</button>
+    </div>
+    <div class="progress"><span><b style="color:var(--ink)">${fmt(have)}</b> / ${fmt(total)} gevangen${dex.acc ? ' door ' + esc(dex.acc) : ''}</span>
+      <div class="bar"><i style="width:${total ? have / total * 100 : 0}%"></i></div><span>${fmt(list.length)} getoond</span></div>
+    <div class="dex">${list.slice(0, dexLimit).map((p) => {
+      const who = caughtBy(p.id);
+      return `<div class="mon-tile ${who.length ? '' : 'missing'}" data-id="${p.id}">
+        ${who.some((w) => w.shiny) ? `<span class="mon-shiny">${SPARK}</span>` : ''}${who.length && !dex.acc ? `<span class="mon-badge">${who.length}×</span>` : ''}
+        ${imgTag(p.id)}<div class="mon-no">#${String(p.id).padStart(4, '0')}</div><div class="mon-name">${esc(p.name)}</div></div>`;
+    }).join('') || '<div class="card empty" style="grid-column:1/-1">Niets gevonden met deze filters.</div>'}</div>
+    ${list.length > dexLimit ? `<div class="more"><button class="btn" id="dex-more">Meer laden (${fmt(list.length - dexLimit)} over)</button></div>` : ''}`;
+
+  const save = () => { store.set('dex', dex); dexLimit = 240; pokedex(); };
+  $('#dex-q').oninput = (e) => { dex.q = e.target.value; store.set('dex', dex); pokedex(); const i = $('#dex-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); };
+  $('#dex-acc').onchange = (e) => { dex.acc = e.target.value; save(); };
+  $('#dex-type').onchange = (e) => { dex.type = e.target.value; save(); };
+  $('#dex-gen').onchange = (e) => { dex.gen = e.target.value; save(); };
+  $('#dex-sort').onchange = (e) => { dex.sort = e.target.value; save(); };
+  $('#dex-seen').onchange = (e) => { dex.seenOnly = e.target.checked; save(); };
+  for (const b of document.querySelectorAll('#dex-st button')) b.onclick = () => { dex.st = b.dataset.v; save(); };
+  $('#dex-reset').onclick = () => { dex = { q: '', acc: '', st: 'all', type: '', gen: '', sort: 'no', seenOnly: true }; save(); };
+  const more = $('#dex-more'); if (more) more.onclick = () => { dexLimit += 480; pokedex(); };
+  bindTiles();
+}
+function bindTiles() { for (const t of document.querySelectorAll('.mon-tile')) t.onclick = () => openMon(+t.dataset.id); }
+
+function openMon(id) {
+  const p = S.byId.get(id) || { id, name: '#' + id, types: [] };
+  const who = (catchIndex().get(id) || []).sort((a, b) => a.at - b.at);
+  const league = S.accounts.filter((a) => (a.league || []).includes(id)).map((a) => a.name);
+  const played = S.runs.filter((r) => +r.sp === id);
+  const wins = played.filter((r) => r.victory).length;
+  $('#drawer').innerHTML = `
+    <div class="drawer-head">${imgTag(id)}<div><div class="mon-no">#${String(id).padStart(4, '0')}</div><div style="font-size:18px;font-weight:600">${esc(p.name)}</div>
+      <div style="display:flex;gap:4px;margin-top:4px">${(p.types || []).map((t) => `<span class="chip">${esc(t)}</span>`).join('')}${p.legendary ? '<span class="chip">legendarisch</span>' : ''}${p.mythical ? '<span class="chip">mythisch</span>' : ''}</div></div>
+      <button class="icon-btn" id="drawer-x" aria-label="Sluiten">${X_ICON}</button></div>
+    <div class="drawer-body">
+      <dl class="kv"><dt>Generatie</dt><dd>${esc(p.gen ?? '–')}</dd><dt>Gevangen door</dt><dd>${who.length} account${who.length === 1 ? '' : 's'}</dd>
+        <dt>In League van</dt><dd>${league.length ? league.map(esc).join(', ') : '–'}</dd><dt>Runs mee gespeeld</dt><dd>${played.length}${played.length ? ` · ${wins} gewonnen (${pct(wins, played.length)})` : ''}</dd></dl>
+      <h2>Gevangen door</h2>
+      ${who.map((w) => `<a class="who" href="#/accounts/${encodeURIComponent(w.name)}"><span class="mon">${avatar(w.name)}${esc(w.name)}${w.shiny ? ' <span style="color:var(--shiny)" title="shiny">★</span>' : ''}</span><span class="muted">${dateTime(w.at)}</span></a>`).join('') || '<div class="muted">Nog door geen enkel account gevangen.</div>'}
+    </div>`;
+  $('#drawer').classList.add('open'); $('#scrim').classList.add('open');
+  $('#drawer-x').onclick = closeDrawer;
+}
+function closeDrawer() { $('#drawer').classList.remove('open'); $('#scrim').classList.remove('open'); }
+$('#scrim').onclick = closeDrawer;
+
+// ---------- runs ----------
+let rf = store.get('runs', { acc: '', mon: '', res: '', zone: '', period: '7', cause: '' });
+let runLimit = 100;
+function runs() {
+  setCrumb('Runs');
+  const accs = [...new Set(S.runs.map((r) => r.who).filter(Boolean))].sort();
+  const mons = [...new Set(S.runs.map((r) => +r.sp).filter(Boolean))].sort((a, b) => monName(a).localeCompare(monName(b)));
+  const causes = [...new Set(S.runs.map((r) => r.death?.doing).filter(Boolean))].sort();
+  const since = rf.period ? Date.now() - +rf.period * 86400000 : 0;
+  const list = S.runs.filter((r) =>
+    (!rf.acc || r.who === rf.acc) && (!rf.mon || +r.sp === +rf.mon) &&
+    (!rf.res || (rf.res === 'win' ? r.victory : !r.victory)) && (!rf.zone || String(r.stage) === rf.zone) &&
+    (!rf.cause || r.death?.doing === rf.cause) && (r.at || 0) >= since);
+  const wins = list.filter((r) => r.victory).length;
+  const avg = (f) => list.length ? list.reduce((t, r) => t + (f(r) || 0), 0) / list.length : null;
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(l)}</option>`;
+  $('#view').innerHTML = `
+    <div class="page-head"><div><h1>Runs</h1><div class="sub">Elke afgemaakte run, bewaard in data\\runs.jsonl.</div></div></div>
+    <div class="filters">
+      <select class="sel" id="rf-acc">${opt('', 'Alle accounts', rf.acc)}${accs.map((a) => opt(a, a, rf.acc)).join('')}</select>
+      <select class="sel" id="rf-mon">${opt('', 'Alle Pokémon', rf.mon)}${mons.map((m) => opt(m, monName(m), rf.mon)).join('')}</select>
+      <select class="sel" id="rf-res">${opt('', 'Elke uitslag', rf.res)}${opt('win', 'Gewonnen', rf.res)}${opt('loss', 'Gestorven', rf.res)}</select>
+      <select class="sel" id="rf-zone">${opt('', 'Elke zone', rf.zone)}${[1, 2, 3, 4].map((z) => opt(z, 'Zone ' + z, rf.zone)).join('')}</select>
+      <select class="sel" id="rf-cause">${opt('', 'Elke doodsoorzaak', rf.cause)}${causes.map((c) => opt(c, 'Tijdens ' + c, rf.cause)).join('')}</select>
+      <div class="seg" id="rf-period">${[['1', 'Vandaag'], ['7', '7 dagen'], ['30', '30 dagen'], ['', 'Alles']].map(([v, l]) => `<button data-v="${v}" class="${rf.period === v ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <button class="reset" id="rf-reset">Filters wissen</button>
+    </div>
+    <div class="kpis" style="margin-bottom:16px">
+      <div class="kpi"><span>Runs</span><b>${fmt(list.length)}</b></div><div class="kpi"><span>Gewonnen</span><b>${fmt(wins)} <small class="muted" style="font-size:13px">${pct(wins, list.length)}</small></b></div>
+      <div class="kpi"><span>Gem. zone</span><b>${avg((r) => r.stage)?.toFixed(1) ?? '–'}</b></div><div class="kpi"><span>Gem. level</span><b>${fmt(avg((r) => r.level))}</b></div>
+      <div class="kpi"><span>Gem. kills</span><b>${fmt(avg((r) => r.kills))}</b></div><div class="kpi"><span>Gem. duur</span><b>${clock(avg((r) => r.time))}</b></div>
+    </div>
+    ${runTable(list.slice(0, runLimit), true)}
+    ${list.length > runLimit ? `<div class="more"><button class="btn" id="rf-more">Meer laden (${fmt(list.length - runLimit)} over)</button></div>` : ''}`;
+  const set = (k) => (e) => { rf[k] = e.target.value; store.set('runs', rf); runLimit = 100; runs(); };
+  for (const k of ['acc', 'mon', 'res', 'zone', 'cause']) $('#rf-' + k).onchange = set(k);
+  for (const b of document.querySelectorAll('#rf-period button')) b.onclick = () => { rf.period = b.dataset.v; store.set('runs', rf); runs(); };
+  $('#rf-reset').onclick = () => { rf = { acc: '', mon: '', res: '', zone: '', period: '7', cause: '' }; store.set('runs', rf); runs(); };
+  const more = $('#rf-more'); if (more) more.onclick = () => { runLimit += 200; runs(); };
+}
+function runTable(list, showWho) {
+  if (!list.length) return '<div class="card empty">Geen runs met deze filters.</div>';
+  return `<div class="tbl-wrap"><table><thead><tr><th>Wanneer</th>${showWho ? '<th>Account</th>' : ''}<th>Pokémon</th><th>Modus</th><th>Uitslag</th>
+    <th class="r">Zone</th><th class="r">Level</th><th class="r">Kills</th><th class="r">Duur</th><th>Einde</th></tr></thead><tbody>
+    ${list.map((r) => `<tr>
+      <td class="muted">${dateTime(r.at)}</td>${showWho ? `<td><a class="mon" href="#/accounts/${encodeURIComponent(r.who || '')}">${avatar(r.who || '?')}${esc(r.who || '–')}</a></td>` : ''}
+      <td><span class="mon">${r.sp ? imgTag(r.sp) : ''}${esc(r.sp ? monName(r.sp) : '–')}</span></td><td class="muted">${esc(r.mode || 'normal')}</td>
+      <td>${r.victory ? '<span class="pill"><span class="dot ok"></span>gewonnen</span>' : '<span class="pill"><span class="dot bad"></span>gestorven</span>'}</td>
+      <td class="r num">${fmt(r.stage)}</td><td class="r num">${fmt(r.level)}</td><td class="r num">${fmt(r.kills)}</td><td class="r num">${clock(r.time)}</td>
+      <td class="muted">${r.victory ? '–' : esc(r.death?.doing ? r.death.doing + (r.death.bossLeft != null ? ` · guardian ${Math.round(r.death.bossLeft * 100)}%` : '') : 'onbekend')}</td>
+    </tr>`).join('')}</tbody></table></div>`;
+}
+
+// ---------- settings ----------
+let setDirty = false;
+function settings() {
+  setCrumb('Instellingen');
+  const s = S.live?.settings;
+  if (!s) { $('#view').innerHTML = '<div class="card empty">Instellingen laden…</div>'; return; }
+  const sw = (id, label, hint) => `<div class="set-row"><label for="${id}">${label}${hint ? `<small>${hint}</small>` : ''}</label><span class="switch"><input type="checkbox" id="${id}"><span></span></span></div>`;
+  const num = (id, label, hint, attrs) => `<div class="set-row"><label for="${id}">${label}${hint ? `<small>${hint}</small>` : ''}</label><input type="number" id="${id}" ${attrs}></div>`;
+  $('#view').innerHTML = `
+    <div class="page-head"><div><h1>Instellingen</h1><div class="sub">Geldt voor alle farms tegelijk. Na opslaan passen de vensters het binnen ±20 s toe.</div></div></div>
+    <form id="settings"><div class="settings">
+      <div class="card set-card"><h3>Vensters</h3>
+        <div class="size-row">${[['516,300', 'Kleinst'], ['600,380', 'Klein'], ['800,500', 'Normaal']].map(([v, l]) => `<button type="button" data-size="${v}">${l} ${v.replace(',', '×')}</button>`).join('')}</div>
+        ${num('windowWidth', 'Breedte (px)', 'Edge gaat niet smaller dan ±516', 'min="200" max="2000" step="10"')}
+        ${num('windowHeight', 'Hoogte (px)', '', 'min="150" max="1500" step="10"')}
+        ${sw('tileWindows', 'Naast elkaar leggen', 'In een raster over het scherm')}</div>
+      <div class="card set-card"><h3>Belasting</h3>
+        ${num('fps', 'FPS', '0 = onbeperkt', 'min="0" max="60" step="1"')}
+        ${num('renderScale', 'Resolutie', '0.2 – 1, lager is lichter', 'min="0.2" max="1" step="0.05"')}
+        ${sw('bot.lowGfx', 'Lage graphics', 'Spelkwaliteit low, effecten uit')}</div>
+      <div class="card set-card"><h3>Bot</h3>
+        ${sw('botOn', 'Bot aan')}
+        <div class="set-row"><label for="bot.preset">Modus</label><select id="bot.preset">${Object.entries(s.presets).map(([k, n]) => `<option value="${esc(k)}">${esc(n)}</option>`).join('')}</select></div>
+        ${sw('bot.autoRestart', 'Automatisch nieuwe run')}${sw('bot.autoTune', 'Zelf bijleren', 'Probeert instellingen uit en houdt wat werkt')}
+        ${sw('bot.rotate', 'Pokémon afwisselen')}${num('bot.rotateEvery', 'Runs per Pokémon', '', 'min="1" max="50" step="1"')}</div>
+      <div class="card set-card"><h3>Spel</h3>
+        ${sw('bot.useBoosts', 'Boosts meenemen', 'Uit je rugzak, worden verbruikt')}${sw('bot.allowCursed', 'Cursed toestaan', "Moeilijker, meer KO's")}
+        ${sw('bot.throwBalls', 'Pokéballen gooien')}${sw('bot.shop', 'Winkel (Meowth)')}${sw('bot.buyLab', 'Lab-upgrades kopen')}
+        ${num('bot.minStardust', 'Stardust bewaren', 'Niet uitgeven onder dit bedrag', 'min="0" step="10"')}
+        ${sw('bot.claimQuests', 'Quests ophalen')}${sw('bot.claimTasks', 'Taken ophalen')}</div>
+    </div>
+    <div class="save-bar"><button type="submit" class="btn primary">Toepassen op alle farms</button><span class="muted" id="save-msg"></span></div></form>
+    ${S.cloud ? '' : '<h2>Online koppeling</h2><div class="card set-card" id="cloud-card"><div class="set-row muted">Laden…</div></div>'}`;
+  if (!S.cloud) renderCloudCard();
+  const form = $('#settings');
+  const get = (o, p) => p.split('.').reduce((x, k) => x?.[k], o);
+  for (const el of form.querySelectorAll('input, select')) { const v = get(s, el.id); if (v === undefined) continue; if (el.type === 'checkbox') el.checked = !!v; else el.value = v; }
+  setDirty = false;
+  form.oninput = () => { setDirty = true; };
+  for (const b of form.querySelectorAll('[data-size]')) b.onclick = () => { const [w, h] = b.dataset.size.split(','); $('#windowWidth').value = w; $('#windowHeight').value = h; setDirty = true; };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const out = { bot: {} };
+    for (const el of form.querySelectorAll('input, select')) {
+      const v = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value;
+      if (el.id.startsWith('bot.')) out.bot[el.id.slice(4)] = v; else out[el.id] = v;
+    }
+    $('#save-msg').textContent = 'Opslaan…';
+    try {
+      const r = await fetch(EP.settings, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PokeBonk': '1' }, body: JSON.stringify(out) });
+      if (!r.ok) throw new Error();
+      S.live.settings = await r.json(); setDirty = false;
+      $('#save-msg').textContent = 'Opgeslagen. De farms passen het binnen ±20 s toe.';
+    } catch { $('#save-msg').textContent = 'Opslaan mislukt: draait de launcher nog?'; }
+  };
+}
+
+// Local only: link this launcher to the website, so it syncs and shares its accounts.
+async function renderCloudCard() {
+  let c = {};
+  try { c = await getJson(EP.cloud); } catch {}
+  const box = $('#cloud-card');
+  if (!box) return;
+  box.innerHTML = `
+    <div class="set-row"><label>Status<small>${c.linked ? `Gekoppeld aan ${esc(c.url)}` : 'Niet gekoppeld: deze pc werkt alleen lokaal.'}</small></label>
+      <span class="pill"><span class="dot ${c.linked ? (c.error ? 'bad' : 'ok') : ''}"></span>${c.linked ? (c.error ? 'fout' : 'online') : 'lokaal'}</span></div>
+    ${c.linked ? `<div class="set-row"><label>Laatste synchronisatie<small>${c.error ? esc(c.error) : 'Elke minuut: farms, accounts, runs en instellingen'}</small></label><span class="muted">${c.lastSync ? ago(c.lastSync) : '–'}</span></div>` : ''}
+    <div class="set-row"><label for="cloud-url">Website<small>Bijvoorbeeld https://pokebonk-farms.vercel.app</small></label><input id="cloud-url" style="width:260px;height:32px;padding:0 8px;border:1px solid var(--line-2);border-radius:6px;background:var(--field)" value="${esc(c.url || '')}" placeholder="https://…"></div>
+    <div class="set-row"><label for="cloud-pw">Wachtwoord<small>Hetzelfde als om op de website in te loggen</small></label><input id="cloud-pw" type="password" style="width:260px;height:32px;padding:0 8px;border:1px solid var(--line-2);border-radius:6px;background:var(--field)" placeholder="${c.linked ? '(ongewijzigd)' : ''}"></div>
+    <div class="set-row"><span class="muted" id="cloud-msg"></span><span style="display:flex;gap:8px">${c.linked ? '<button class="btn" id="cloud-off" type="button">Ontkoppelen</button>' : ''}<button class="btn primary" id="cloud-save" type="button">${c.linked ? 'Opslaan' : 'Koppelen'}</button></span></div>`;
+  const send = async (payload) => {
+    $('#cloud-msg').textContent = 'Bezig…';
+    const r = await fetch(EP.cloud, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PokeBonk': '1' }, body: JSON.stringify(payload) });
+    const out = await r.json().catch(() => ({}));
+    $('#cloud-msg').textContent = out.error || (payload.url ? 'Gekoppeld.' : 'Ontkoppeld.');
+    if (!out.error) setTimeout(renderCloudCard, 800);
+  };
+  $('#cloud-save').onclick = () => send({ url: $('#cloud-url').value.trim(), password: $('#cloud-pw').value });
+  const off = $('#cloud-off'); if (off) off.onclick = () => send({ url: '', password: '' });
+}
+
+// ---------- log ----------
+let logQ = '';
+async function logPage() {
+  setCrumb('Logboek');
+  let lines = [];
+  try { lines = await getJson(EP.log); } catch {}
+  const shown = lines.filter((l) => !logQ || l.toLowerCase().includes(logQ.toLowerCase())).reverse();
+  const had = $('#log-q') === document.activeElement;
+  $('#view').innerHTML = `
+    <div class="page-head"><div><h1>Logboek</h1><div class="sub">Wat de launcher deed, nieuwste bovenaan. Ook in launcher.log naast de exe.</div></div>
+      <div class="field-box"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="log-q" placeholder="Filter, bv. account 3" value="${esc(logQ)}"></div></div>
+    <div class="card log">${shown.map((l) => { const m = l.match(/^(\S+ ?\S*?) (\[.*?\])?(.*)$/); const warn = /reageert niet|gecrasht|fout|gesloten|melding/.test(l);
+      return `<div class="${warn ? 'warn' : ''}"><span class="t">${esc(m ? m[1] : '')}</span> ${esc(m ? (m[2] || '') + m[3] : l)}</div>`; }).join('') || '<div class="muted">Leeg.</div>'}</div>`;
+  const inp = $('#log-q'); inp.oninput = () => { logQ = inp.value; logPage(); };
+  if (had) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+}
+
+// ---------- chrome ----------
+function updateChrome() {
+  const live = S.live?.accounts || [];
+  const playing = live.filter((a) => liveStatus(a)[0] === 'speelt').length;
+  $('#foot-dot').className = 'dot ' + (S.online ? (playing ? 'ok' : 'warn') : 'bad');
+  $('#foot-text').textContent = S.online ? `Online · ${playing}/${live.length} spelen` : 'Launcher offline';
+  $('#updated').textContent = S.live ? 'Bijgewerkt ' + new Date(S.live.updated).toLocaleTimeString('nl-NL') : '';
+  $('#nav-acc').textContent = accountList().length || '';
+  $('#nav-runs').textContent = S.runs.length || '';
+  $('#nav-dex').textContent = catchIndex().size || '';
+}
+// pages with inputs are not redrawn while the user is typing or editing in them
+function refreshView() {
+  const typing = document.activeElement && /INPUT|SELECT/.test(document.activeElement.tagName);
+  const page = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0];
+  // only the live pages; the Pokédex, runs and accounts change slowly and redraw on navigation
+  if (typing || $('#drawer').classList.contains('open') || !['', 'logboek'].includes(page)) return;
+  current?.();
+}
+
+$('#menu-btn').onclick = () => $('#aside').classList.toggle('open');
+const SUN = '<svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>';
+const MOON = '<svg class="i" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $('#theme-btn').innerHTML = t === 'light' ? MOON : SUN;
+  store.set('theme', t);
+}
+applyTheme(store.get('theme', 'dark'));
+$('#theme-btn').onclick = () => applyTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+const find = $('#find');
+find.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const q = find.value.trim();
+  const acc = accountList().find((a) => a.name.toLowerCase() === q.toLowerCase());
+  location.hash = acc ? '#/accounts/' + encodeURIComponent(acc.name) : '#/pokedex?q=' + encodeURIComponent(q);
+  find.blur();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeDrawer();
+  if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) { e.preventDefault(); find.focus(); }
+});
+
+(async () => {
+  await Promise.all([loadLive(), loadSaved(), loadSpecies()]);
+  updateChrome(); route();
+  // the website polls less often: every request there costs database calls
+  setInterval(async () => { if (S.needLogin) return; await loadLive(); updateChrome(); refreshView(); }, S.cloud ? 15000 : 5000);
+  setInterval(async () => { if (S.needLogin) return; await loadSaved(); updateChrome(); }, S.cloud ? 60000 : 30000);
+})();
+</script>
+</body>
+</html>
