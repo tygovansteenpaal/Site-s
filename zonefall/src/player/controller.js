@@ -277,6 +277,7 @@ export function update(dt) {
   if (!(dt > 0)) return;
   if (me.life !== st.lastLife) onLifeChanged(me, st.lastLife);
   if (hasFlag(me, FLAG.DRIVE)) { st.lastLife = me.life; return; }   // game/vehicles moves the entity
+  if (st.fly && me.life === LIFE.GROUND) { updateFly(me, dt); st.lastLife = me.life; writeLocal(me); return; }
 
   switch (me.life) {
     case LIFE.PLANE: updatePlane(me); break;
@@ -320,6 +321,33 @@ export function applyImpulse(v) {
   me.vel.x += v[0]; me.vel.y += v[1]; me.vel.z += v[2];
   if (v[1] > 0.5 && me.life === LIFE.GROUND) { st.grounded = false; st.coyote = 0; }
   if (st.stance === 'slide') endSlide(me);
+}
+
+// ------------------------------------------------------------------------------------------ fly (game/mods)
+const FLY = { speed: 14, fast: 3.2, minAGL: 0.2 };
+/** Free flight without collision: WASD along the view, jump up, crouch down, sprint faster. */
+export function setFly(on) {
+  const was = !!st.fly;
+  st.fly = !!on;
+  if (was && !st.fly) { st.noFallOnce = true; st.grounded = false; }    // dropping out of the air costs no health
+}
+export const flying = () => !!st.fly;
+
+function updateFly(me, dt) {
+  const ax = input.moveAxes(tmpAxes);
+  const k = FLY.speed * (input.down('sprint') ? FLY.fast : 1);
+  const cy = Math.cos(me.yaw), sy = Math.sin(me.yaw), cp = Math.cos(me.pitch), sp = Math.sin(me.pitch);
+  const up = (input.down('jump') ? 1 : 0) - (input.down('crouch') ? 1 : 0);
+  me.vel.set((-sy * cp * ax.y + cy * ax.x) * k, (sp * ax.y + up) * k, (-cy * cp * ax.y - sy * ax.x) * k);
+  me.pos.addScaledVector(me.vel, dt);
+  const g = ground(me.pos.x, me.pos.z, me.pos.y + 2);
+  if (me.pos.y < g.y + FLY.minAGL) me.pos.y = g.y + FLY.minAGL;
+  st.grounded = false;
+  st.stance = 'stand';
+  st.sprinting = false;
+  st.mantle = null;
+  st.apexY = me.pos.y;
+  me.speed = Math.hypot(me.vel.x, me.vel.z);
 }
 
 /** Move instantly to [x, y, z] (debug, spawn). */
@@ -529,7 +557,8 @@ function airCollide(me) {
   if (wasChute) emit(EV.PLAYER_CHUTE, { id: me.id, open: false });
   const fall = wasChute ? 0 : Math.max(0, st.apexY - floor);
   emit(EV.PLAYER_LAND, { id: me.id, pos: [me.pos.x, me.pos.y, me.pos.z], speed: impact, fall });
-  if (!wasChute && depth <= TUNE.swimDepth) applyFallDamage(fall);
+  if (!wasChute && depth <= TUNE.swimDepth && !st.noFallOnce) applyFallDamage(fall);
+  st.noFallOnce = false;
   st.apexY = floor;
   st.landPenalty = impact > TUNE.hardLandSpeed ? TUNE.landPenaltyTime : 0;
   return true;

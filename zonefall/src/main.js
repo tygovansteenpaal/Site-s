@@ -37,6 +37,7 @@ import * as lobby from './net/lobby.js';
 import * as match from './game/match.js';
 import * as plane from './game/plane.js';
 import * as vehicles from './game/vehicles.js';
+import * as mods from './game/mods.js';
 import * as zone from './game/zone.js';
 import * as loot from './game/loot.js';
 import * as bots from './game/bots.js';
@@ -172,6 +173,7 @@ async function boot() {
   lobby.init();
   plane.init(gfx.scene);
   vehicles.init(gfx.scene);
+  mods.init();
   zone.init(gfx.scene);
   loot.init(gfx.scene);
   bots.init();
@@ -274,6 +276,7 @@ function frame(dt, now, hidden = false) {
     const simulate = state.app === APP.MATCH && !(state.paused && state.match.mode === 'practice');
     if (simulate) {
       camera.look(dt);       // mouse -> yaw/pitch before anything aims or moves
+      mods.aim(dt);          // mod menu aimbot (practice and private matches only)
       match.update(dt);      // timeline, phases, win check
       plane.update(dt);
       controller.update(dt); // local movement
@@ -289,6 +292,7 @@ function frame(dt, now, hidden = false) {
 
     avatar.update(dt);
     camera.update(dt);       // final camera transform (all apps: menu flyover, match, results)
+    mods.update();           // mod menu: fly toggle, ESP overlay
     viewmodel.update(dt);
     vfx.update(dt);
     world.update(dt, gfx.camera.position);
