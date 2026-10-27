@@ -290,7 +290,7 @@ async function city() {
   fs.mkdirSync(path.join(OUT, 'props/city'), { recursive: true });
   fs.writeFileSync(path.join(OUT, 'props/city/city.json'), JSON.stringify({ size: [+(hi[0] - lo[0]).toFixed(2), +(hi[1] - lo[1]).toFixed(2)], buildings: fp }));
   console.log(`city: ${(hi[0] - lo[0]).toFixed(1)} x ${(hi[1] - lo[1]).toFixed(1)} m, ${fp.length} buildings`);
-  await doc.transform(weld(), simplify({ simplifier: MeshoptSimplifier, ratio: 0.5, error: 0.003, lockBorder: true }));
+  // no simplification: at this scale even a small error collapses facade panels and cornices into holes
   await finish(doc, path.join(OUT, 'props/city/city.glb'), { texSize: 1024 });
 }
 
