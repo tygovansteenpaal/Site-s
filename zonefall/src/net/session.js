@@ -90,7 +90,20 @@ function countRelays() {
 // own relay in /zonefall/server.json. Static hosts (Vercel, GitHub Pages) have no such file and keep the public list.
 // A server that also publishes `room` carries all game traffic itself (net/wsbus.js), with no WebRTC between players.
 let serverRelays, serverRoom = null;
+// `?server=<address>` (kept in invite links): the game loads from this host (the website), but the lobby and all
+// game traffic go through that ZONEFALL server, e.g. one reached through a tunnel that is too slow for the game files.
+function remoteServerRoom() {
+  const v = Q.get('server');
+  if (!v) return null;
+  try {
+    const u = new URL(/^[a-z]+:\/\//i.test(v) ? v : `https://${v}`);
+    if (!/^(https?|wss?):$/.test(u.protocol)) return null;
+    return `${u.protocol === 'http:' || u.protocol === 'ws:' ? 'ws' : 'wss'}://${u.host}/room`;
+  } catch { return null; }
+}
+
 async function relayList() {
+  if (serverRelays === undefined && remoteServerRoom()) { serverRelays = null; serverRoom = remoteServerRoom(); }
   if (serverRelays === undefined) {
     serverRelays = null;
     try {
