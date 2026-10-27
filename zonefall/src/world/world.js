@@ -148,10 +148,15 @@ function placeCity() {
     if (!o.isMesh) return;
     o.castShadow = !/lanes|Streets|side_walks|Curb|Decal/i.test(o.name);
     o.receiveShadow = true;
+    // quantized meshes carry their dequantization in the node's position and scale: bake it before freezing
+    o.updateMatrix();
     o.matrixAutoUpdate = false;
     // the source materials are near mirror-smooth (wet-looking streets under the island sky): matte them down
     for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
       if (!m || m.userData.zfMatte || /glass/i.test(m.name)) continue;
+      // blended facades, doors, foliage and street assets write no depth, so sky, water and terrain drawn later
+      // showed straight through the walls: cut them out with an alpha test and draw them as opaque
+      if (m.transparent) { m.transparent = false; m.alphaTest = 0.5; m.depthWrite = true; m.needsUpdate = true; }
       m.roughness = Math.max(m.roughness ?? 1, 0.78);
       m.metalness = Math.min(m.metalness ?? 0, 0.25);
       m.userData.zfMatte = true;
