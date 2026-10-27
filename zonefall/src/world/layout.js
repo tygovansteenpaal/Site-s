@@ -11,7 +11,9 @@ export const TUNE = {
   setback: 3.2,               // front-yard depth between road shoulder and facade
   buildingGap: 3.0,
   roadClear: 2.5,             // extra clearance from a road edge to any footprint corner
-  roadsideMinSpacing: 110,
+  roadsideMinSpacing: 70,
+  outposts: 34,               // countryside cover clusters between the sites
+  outpostSpacing: 58,
 };
 
 const rngFor = (label) => new Rng(mixSeed(MAP.seed, hashString(label)));
@@ -633,7 +635,7 @@ function roadside(L) {
   const rng = rngFor('roadside');
   const allRoads = roads.filter((r) => r.id !== 'RQ');
   let placed = 0;
-  for (let a = 0; a < 600 && placed < ROADSIDE.houses; a++) {
+  for (let a = 0; a < 2500 && placed < ROADSIDE.houses; a++) {
     const r = rng.pick(allRoads);
     const s = rng.range(0, r.len);
     const p = roadPoint(r, s);
@@ -655,6 +657,50 @@ function roadside(L) {
     yard(L, rec, rng);
     if (rng.chance(0.6)) L.props.push({ key: 'covered_car', x: x + Math.cos(yaw) * (sz.w / 2 + 3), z: z - Math.sin(yaw) * (sz.w / 2 + 3), yaw: yaw + Math.PI / 2, site: null });
     placed++;
+  }
+}
+
+/**
+ * Countryside cover between the sites, so open ground is never a long walk without something to hide behind:
+ * a field shed with a couple of loot spots, a pair of wrecked cars, a stack of crates and barrels, or a broken
+ * concrete barrier line. Spots are open land (no site, road, forest, water or steep slope), well apart.
+ */
+function countryside(L) {
+  const rng = rngFor('countryside');
+  const placed = [];
+  const level = (x, z, rad) => {
+    const hs = [[0, 0], [rad, 0], [-rad, 0], [0, rad], [0, -rad]].map(([dx, dz]) => heightAt(x + dx, z + dz));
+    return Math.min(...hs) > 2.5 && Math.max(...hs) - Math.min(...hs) < 1.6;
+  };
+  for (let a = 0; a < 3000 && placed.length < TUNE.outposts; a++) {
+    const ang = rng.range(0, Math.PI * 2), rad = Math.sqrt(rng.next()) * 430;
+    const x = Math.cos(ang) * rad, z = Math.sin(ang) * rad;
+    if (ALL_SITES.some((st) => Math.hypot(st.x - x, st.z - z) < st.r + 26)) continue;
+    if (placed.some((p) => Math.hypot(p.x - x, p.z - z) < TUNE.outpostSpacing)) continue;
+    if (L.buildings.some((b) => Math.hypot(b.x - x, b.z - z) < 30)) continue;
+    if (forestAt(x, z) > 0.45 || onRoad(x, z, 9) || !level(x, z, 5)) continue;
+    const yaw = rng.range(0, Math.PI * 2), c = Math.cos(yaw), sn = Math.sin(yaw);
+    const at = (lx, lz) => [x + lx * c + lz * sn, z - lx * sn + lz * c];
+    const kind = rng.pick(['shed', 'shed', 'wrecks', 'stack', 'barriers']);
+    if (kind === 'shed') {
+      const b = { site: null, kind: 'shed', x, z, yaw, w: 6 + Math.round(rng.range(0, 2)), d: 7 + Math.round(rng.range(0, 2)), storeys: 1, variant: rng.int(0, 2) };
+      if (!fits(L, b, 6) || !clearOfRoads(x, z, b.w, b.d, yaw)) continue;
+      const rec = addBuilding(L, b);
+      rec.lootTarget = 2;
+      const [px, pz] = at(b.w / 2 + 1.6, rng.range(-2, 2));
+      L.props.push({ key: rng.pick(['barrel_red', 'barrel_blue', 'crate_wood']), x: px, z: pz, yaw: rng.range(0, 6), site: null });
+    } else if (kind === 'wrecks') {
+      for (const [lx, lz, dy] of [[0, 0, 0], [3.4, 2.6, 0.5]]) { const [px, pz] = at(lx, lz); L.props.push({ key: 'covered_car', x: px, z: pz, yaw: yaw + dy, site: null }); }
+      for (const [lx, lz] of [[-2.6, 1], [-2.9, 1.9]]) { const [px, pz] = at(lx, lz); L.props.push({ key: 'tyre', x: px, z: pz, yaw: rng.range(0, 6), site: null }); }
+    } else if (kind === 'stack') {
+      for (const [lx, lz] of [[0, 0], [1.05, 0], [0.5, 1.0], [-1.2, 0.3]]) { const [px, pz] = at(lx, lz); L.props.push({ key: 'crate_wood', x: px, z: pz, yaw: yaw + rng.range(-0.2, 0.2), site: null }); }
+      for (const [lx, lz] of [[2.4, -0.6], [2.9, 0.3]]) { const [px, pz] = at(lx, lz); L.props.push({ key: rng.pick(['barrel_blue', 'barrel_red']), x: px, z: pz, yaw: rng.range(0, 6), site: null }); }
+    } else {
+      for (let i = 0; i < 5; i++) { const [px, pz] = at(i * 1.7 - 3.4, Math.sin(i * 1.3) * 0.5); L.props.push({ key: 'barrier', x: px, z: pz, yaw: yaw + rng.range(-0.25, 0.25), site: null }); }
+    }
+    addPaint({ shape: 'disc', ch: 0, x, z, r: 6, edge: 3, w: 0.5, noise: 0.7 });
+    L.outdoor.push({ x, z, site: null });
+    placed.push({ x, z });
   }
 }
 
@@ -703,6 +749,7 @@ export function buildLayout() {
   fuel(L); city(L); lighthouse(L); bunkerSite(L);
   pinecrest(L); timber(L); motel(L);
   roadside(L);
+  countryside(L);
   powerLines(L);
   // scattered props along roads and in the countryside
   const rng = rngFor('scatter');

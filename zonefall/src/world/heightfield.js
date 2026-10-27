@@ -9,16 +9,25 @@
 // Roads are Chaikin-smoothed polylines with a smoothed longitudinal profile sampled from the pre-road terrain.
 // Ground paint (dirt, straw, forest floor, mud) is a list of analytic primitives evaluated identically by the
 // splat-control rasterizer (GPU look) and by surfaceAt (footsteps, impacts).
-import { MAP, ALL_SITES, ROADS, ROAD_WIDTH, FORESTS, siteById } from '../core/mapdata.js';
+import { MAP, ALL_SITES, ROADS, ROAD_WIDTH, FORESTS, WATERWAYS, siteById } from '../core/mapdata.js';
 import { SURFACE } from '../config.js';
 import { mixSeed, hashString } from '../core/rng.js';
-import { makeSimplex, fbm, ridged, smoother01, sstep, mix, smax, segDist } from './noise.js';
+import { makeSimplex, fbm, ridged, smooth01, smoother01, sstep, mix, smax, segDist } from './noise.js';
 
 export const TUNE = {
-  shoulder: 3,               // flat road shoulder each side (m)
-  roadBlend: { asphalt: 12, dirt: 8 },
-  cutBlend: 2.2,             // extra blend metres per metre of cut or fill, so deep cuttings get gentle banks
+  shoulder: 3,               // road shoulder each side (m): placement clearance, paint and lookups
+  flatShoulder: 1.6,         // level verge beside the carriageway before the bank starts
+  talusBase: 2.2,            // bank width (m) where the road sits at grade
+  talusPerM: 1.9,            // + bank metres per metre of cut or fill: ~1:1.9 embankments and cuttings
+  ditch: { depth: 0.42, at: 1.25, w: 0.7 },  // drainage ditch beside asphalt in cuttings and at grade
   maxBlend: 34,
+  // Mountains: ridged ranges rise only where the land is free of sites, roads and water (distance field below), so
+  // valleys carry the roads and towns and the high ground fills the space between them. Rock bands come from a
+  // terrace curve mixed into the upper slopes.
+  mountain: { amp: 66, scale: 230, free: [-4, 46], inland: [30, 140], terrace: 9, terraceMix: 0.42, freeCell: 8 },
+  // Lake and river (WATERWAYS): the bed falls to `bed` over `shelf` metres from the waterline; the banks climb back
+  // to the land over bank + bankPerM per metre of height (capped), so deep valleys get wide slopes.
+  water: { bed: -5.5, shelf: 11, shore: 0.3, bank: 14, bankPerM: 2.4, maxBank: 80 },
   profileStep: 4,            // road profile sample spacing (m)
   profileSigma: { asphalt: 22, dirt: 12 },
   maxGrade: { asphalt: 0.11, dirt: 0.2 },
@@ -185,6 +194,110 @@ export function roadHeight(r, s) { return profileAt(r, s); }
 // ------------------------------------------------------------------------------------------ height
 const SITES = ALL_SITES.map((s) => ({ ...s, r08: s.r * 0.8 }));
 
+// ------------------------------------------------------------------------------------------ inland water
+const RIVER = (() => {
+  const r = makeRoad('W1', 'water', WATERWAYS.river.pts, WATERWAYS.river.w0, 2);
+  return r;
+})();
+const LAKE = WATERWAYS.lake;
+/** Signed distance (m) to the waterline of the lake or river: negative on the water. */
+export function waterEdge(x, z) {
+  const a = Math.atan2(z - LAKE.z, x - LAKE.x);
+  const lr = LAKE.r * (1 + 0.16 * NC(Math.cos(a) * 1.4 + 9, Math.sin(a) * 1.4 - 5));
+  const dl = Math.hypot(x - LAKE.x, z - LAKE.z) - lr;
+  let dr = 1e9;
+  const R = RIVER, W = WATERWAYS.river;
+  for (let i = 0; i < R.xs.length - 1; i++) {
+    const d = segDist(x, z, R.xs[i], R.zs[i], R.xs[i + 1], R.zs[i + 1], tmp);
+    if (d - W.w1 > dr) continue;
+    const sAlong = R.cum[i] + (R.cum[i + 1] - R.cum[i]) * tmp[0];
+    const half = mix(W.w0, W.w1, sAlong / R.len) / 2 * (1 + 0.15 * NC(sAlong / 30, 3.3));
+    if (d - half < dr) dr = d - half;
+  }
+  // smooth union so the river mouth opens into the lake without a notch
+  const k = 10, hh = Math.max(k - Math.abs(dl - dr), 0) / k;
+  return Math.min(dl, dr) - hh * hh * k * 0.25;
+}
+
+// The banks never dig into a site's core or under a pad (Downtown's street plane would float over the valley).
+function waterProtect(x, z) {
+  let k = 1;
+  for (const s of SITES) { const d = Math.hypot(x - s.x, z - s.z); if (d < s.r) k = Math.min(k, sstep(s.r * 0.86, s.r, d)); }
+  for (const P of PADS) {
+    const dx = Math.max(P.x0 - x, 0, x - P.x1), dz = Math.max(P.z0 - z, 0, z - P.z1);
+    k = Math.min(k, sstep(3, 24, Math.sqrt(dx * dx + dz * dz)));
+  }
+  return k;
+}
+
+function carveWater(x, z, h) {
+  const W = TUNE.water;
+  const e = waterEdge(x, z);
+  if (e > W.maxBank) return h;
+  let c;
+  if (e <= 0) c = Math.min(h, -W.shore - (-W.bed - W.shore) * smoother01(-e / W.shelf));
+  else {
+    const bank = Math.min(W.maxBank, W.bank + Math.max(0, h - 1) * W.bankPerM);
+    if (e >= bank) return h;
+    c = Math.min(h, mix(W.shore, h, smooth01(e / bank)));
+  }
+  return mix(h, c, waterProtect(x, z));
+}
+
+// ------------------------------------------------------------------------------------------ free-land field
+// Distance (m) from every point to the nearest site edge, road edge or waterline, sampled on a coarse grid at load
+// and read bilinearly: the mountain mask.
+const FREE = (() => {
+  const c = TUNE.mountain.freeCell, n = Math.ceil(MAP.size / c) + 1, off = MAP.half;
+  const f = new Float32Array(n * n);
+  for (let j = 0; j < n; j++) {
+    const z = -off + j * c;
+    for (let i = 0; i < n; i++) {
+      const x = -off + i * c;
+      let d = 1e9;
+      for (const st of SITES) { const v = Math.hypot(x - st.x, z - st.z) - st.r; if (v < d) d = v; }
+      for (const r of roads) {
+        for (let k = 0; k < r.xs.length - 1; k++) {
+          // roads count at 1.8x distance: they may run close under high ground (cuttings), towns and water may not
+          const v = (segDist(x, z, r.xs[k], r.zs[k], r.xs[k + 1], r.zs[k + 1], tmp) - r.half) * 1.8;
+          if (v < d) d = v;
+        }
+      }
+      const w = waterEdge(x, z);
+      if (w < d) d = w;
+      f[j * n + i] = d;
+    }
+  }
+  return { c, n, off, f };
+})();
+function freeAt(x, z) {
+  const F = FREE, fx = (x + F.off) / F.c, fz = (z + F.off) / F.c;
+  const i = Math.max(0, Math.min(F.n - 2, Math.floor(fx))), j = Math.max(0, Math.min(F.n - 2, Math.floor(fz)));
+  const tx = Math.min(1, Math.max(0, fx - i)), tz = Math.min(1, Math.max(0, fz - j));
+  const a = F.f[j * F.n + i], b = F.f[j * F.n + i + 1], c = F.f[(j + 1) * F.n + i], d = F.f[(j + 1) * F.n + i + 1];
+  return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz;
+}
+
+/** Mountain height added at (x, z) (0 near sites, roads, water and the coast). */
+function mountains(x, z, inland) {
+  const M = TUNE.mountain;
+  const free = freeAt(x, z);
+  if (free <= M.free[0] || inland <= M.inland[0]) return 0;
+  const mask = sstep(M.free[0], M.free[1], free) * sstep(M.inland[0], M.inland[1], inland);
+  const r = ridged(ND, x / M.scale + 3.7, z / M.scale - 8.1, 4);
+  const amp = M.amp * (0.6 + 0.4 * fbm(NA, x / 420 + 20, z / 420 - 13, 2));
+  const shape = Math.pow(sstep(0.1, 0.66, r), 1.15);   // ridged() has its median near 0.28
+  let hm = amp * mask * shape;
+  if (hm > 4) {
+    // rock bands: a terrace curve with a wandering phase, mixed into the upper slopes only
+    const t = (hm + 3.2 * NC(x / 46, z / 46)) / M.terrace;
+    const fl = Math.floor(t), fr = t - fl;
+    const terr = M.terrace * (fl + sstep(0.6, 0.93, fr)) - 3.2 * NC(x / 46, z / 46);
+    hm = mix(hm, Math.max(0, terr), M.terraceMix * sstep(6, 20, hm));
+  }
+  return hm;
+}
+
 function inlandDistance(x, z) {
   const r = Math.sqrt(x * x + z * z);
   const theta = Math.atan2(z, x);
@@ -245,15 +358,34 @@ function rectFlatten(x, z, h) {
   for (const P of PADS) {
     const dx = Math.max(P.x0 - x, 0, x - P.x1), dz = Math.max(P.z0 - z, 0, z - P.z1);
     const d = Math.sqrt(dx * dx + dz * dz);
-    const wide = P.blend * 4 * (1 + 0.25 * NC(x / 70, z / 70));
-    if (d >= wide) continue;
-    h = mix(h, P.h, 0.75 * smoother01(1 - d / wide));
-    if (d < P.blend) h = mix(P.h, h, smoother01(d / P.blend));
+    if (d <= 0) { h = P.h; continue; }
+    const sig = P.blend * 1.6 * (1 + 0.3 * NC(x / 70, z / 70));
+    if (d > sig * 3) continue;
+    const u = d / sig;
+    h = mix(h, P.h, Math.exp(-u * u * 1.4));
   }
   return h;
 }
 
-// Wide, irregular attraction toward each site's height so the flattened discs sit in the land instead of on a ring.
+// Each site holds its height across its core (0.9 r, wavy) and lets go of it with a Gaussian tail, so there is no
+// edge anywhere: the land eases into the town over roughly another radius instead of meeting a ring or a step.
+function siteBlend(x, z, h) {
+  for (let i = 0; i < SITES.length; i++) {
+    const s = SITES[i];
+    const dx = x - s.x, dz = z - s.z;
+    const d = Math.sqrt(dx * dx + dz * dz);
+    if (d > s.r * 2.4) continue;
+    const a = Math.atan2(dz, dx), ca = Math.cos(a), sa = Math.sin(a);
+    const rin = s.r * 0.9 * (1 + 0.05 * NC(ca * 2 + i * 3.1, sa * 2 - i));
+    if (d <= rin) { h = s.h; continue; }
+    const sig = s.r * 0.58 * (1 + 0.3 * NC(ca * 1.6 - i * 1.7, sa * 1.6 + i * 2.3));
+    const u = (d - rin) / sig;
+    h = mix(h, s.h, Math.exp(-u * u * 1.4));
+  }
+  return h;
+}
+
+// (superseded by siteBlend; kept for reference by tests)
 function siteApproach(x, z, h) {
   for (let i = 0; i < SITES.length; i++) {
     const s = SITES[i];
@@ -315,15 +447,16 @@ export function heightPre(x, z, noPit = false) {
   const d = inlandDistance(x, z);
   const nat = natural(x, z, d);
   let h = coastal(x, z, d, nat);
+  if (d > 0) h += mountains(x, z, d);
   h = signalHill(x, z, h);
-  if (d > 0) h = siteApproach(x, z, h);
   h = rectFlatten(x, z, h);
-  h = siteDiscs(x, z, h);
+  h = siteBlend(x, z, h);
   if (!noPit) {
     const gd = Math.hypot(x - GREY.x, z - GREY.z);
     if (gd < 66) h = pitHeight(x, z, gd, h);
   }
   if (z > MAP.harbor.z - 2 && x > MAP.harbor.x0 - 40 && x < MAP.harbor.x1 + 40) h = harbour(x, z, h);
+  h = carveWater(x, z, h);
   return h;
 }
 
@@ -426,20 +559,30 @@ export function heightAt(x, z) {
   const cell = cellAt(x, z);
   if (!cell || cell.length === 0) return h;
   // apply every road corridor that reaches this point (the strongest wins where they overlap)
-  let bestW = 0, bestH = h;
+  // Each road sits on a level verge, then a bank (embankment or cutting) at a fixed ratio down or up to the land.
+  let bestW = 0, bestH = h, bestD = 0, bestR = null;
   for (let k = 0; k < cell.length; k += 2) {
     const r = roads[cell[k]], i = cell[k + 1];
     const d = segDist(x, z, r.xs[i], r.zs[i], r.xs[i + 1], r.zs[i + 1], tmp);
-    const flat = r.half + TUNE.shoulder;
+    const flat = r.half + TUNE.flatShoulder;
     if (d >= flat + TUNE.maxBlend) continue;
     const s = r.cum[i] + (r.cum[i + 1] - r.cum[i]) * tmp[0];
     const rh = profileAt(r, s);
-    const blend = Math.min(TUNE.maxBlend, (TUNE.roadBlend[r.type] || 10) + Math.abs(h - rh) * TUNE.cutBlend);
+    const blend = Math.min(TUNE.maxBlend, TUNE.talusBase + Math.abs(h - rh) * TUNE.talusPerM);
     if (d >= flat + blend) continue;
-    const w = d <= flat ? 1 : 1 - smoother01((d - flat) / blend);
-    if (w > bestW + 1e-6 || (w >= 0.999 && bestW >= 0.999 && r.type === 'asphalt')) { bestW = w; bestH = rh; }
+    const w = d <= flat ? 1 : 1 - smooth01((d - flat) / blend);
+    if (w > bestW + 1e-6 || (w >= 0.999 && bestW >= 0.999 && r.type === 'asphalt')) { bestW = w; bestH = rh; bestD = d; bestR = r; }
   }
-  return bestW > 0 ? mix(h, bestH, bestW) : h;
+  if (bestW <= 0) return h;
+  let out = mix(h, bestH, bestW);
+  // drainage ditch beside asphalt where the land is level with or above the road (never in towns)
+  if (bestR.type === 'asphalt' && h > bestH - 0.3) {
+    const D = TUNE.ditch, u = (bestD - bestR.half - TUNE.flatShoulder - D.at) / D.w;
+    if (u > -3 && u < 3 && !SITES.some((st) => Math.hypot(x - st.x, z - st.z) < st.r + 12)) {
+      out -= D.depth * sstep(-0.3, 0.5, h - bestH) * Math.exp(-u * u);
+    }
+  }
+  return out;
 }
 
 /** Surface normal by central differences, written into out ([x,y,z] array or {x,y,z}). */

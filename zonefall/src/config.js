@@ -109,17 +109,17 @@ export const RENDER = Object.freeze({
 export const QUALITY = Object.freeze({
   low: {
     dprCap: 1.0, dprMin: 0.6, shadowMapSize: 1024, shadowRange: 50, post: false, smaa: false, bloom: false, ao: false,
-    viewDistance: 520, fogDensity: 0.0028, foliage: 0.35, grass: 0, treeLodDistance: 110, propDistance: 140,
+    viewDistance: 700, fogDensity: 0.0028, foliage: 0.35, grass: 0, treeLodDistance: 110, propDistance: 300,
     maxAnimatedAvatars: 4, anisotropy: 2, terrainRes: 128, particles: 0.5, decals: 32, budgetDrawCalls: 120, budgetTris: 450e3,
   },
   medium: {
     dprCap: 1.25, dprMin: 0.75, shadowMapSize: 2048, shadowRange: 90, post: true, smaa: true, bloom: true, ao: false,
-    viewDistance: 900, fogDensity: 0.0019, foliage: 0.7, grass: 0.5, treeLodDistance: 200, propDistance: 230,
+    viewDistance: 1100, fogDensity: 0.0019, foliage: 0.7, grass: 0.5, treeLodDistance: 200, propDistance: 480,
     maxAnimatedAvatars: 8, anisotropy: 4, terrainRes: 256, particles: 0.8, decals: 64, budgetDrawCalls: 200, budgetTris: 900e3,
   },
   high: {
     dprCap: 1.5, dprMin: 0.85, shadowMapSize: 4096, shadowRange: 140, post: true, smaa: true, bloom: true, ao: true,
-    viewDistance: 1300, fogDensity: 0.0014, foliage: 1.0, grass: 1.0, treeLodDistance: 320, propDistance: 330,
+    viewDistance: 1500, fogDensity: 0.0014, foliage: 1.0, grass: 1.0, treeLodDistance: 320, propDistance: 650,
     maxAnimatedAvatars: 16, anisotropy: 8, terrainRes: 512, particles: 1, decals: 128, budgetDrawCalls: 300, budgetTris: 1.6e6,
   },
 });

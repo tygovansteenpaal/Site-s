@@ -11,9 +11,9 @@ import { gridHeight } from './terrain.js';
 
 const TUNE = {
   depthTexSize: 512,
-  shallow: new THREE.Color(0.055, 0.30, 0.29),
-  deep: new THREE.Color(0.010, 0.055, 0.075),
-  roughness: 0.055,
+  shallow: new THREE.Color(0.06, 0.21, 0.205),   // muted North Sea green rather than tropical turquoise
+  deep: new THREE.Color(0.012, 0.045, 0.06),
+  roughness: 0.2,                                  // was 0.055: a mirror that flared the whole sky and sun
   snap: 50,
 };
 
@@ -136,7 +136,7 @@ export function buildWater(scene, quality) {
       .replace('#include <opaque_fragment>', /* glsl */`
         #include <opaque_fragment>
         float zfFres = pow( 1.0 - saturate( dot( normal, normalize( vViewPosition ) ) ), 5.0 );
-        gl_FragColor.a = mix( gl_FragColor.a, 1.0, zfFres * 0.9 );`)
+        gl_FragColor.a = mix( gl_FragColor.a, 1.0, zfFres * 0.6 );`)
       .replace('#include <fog_fragment>', /* glsl */`
         #include <fog_fragment>
         #ifdef USE_FOG

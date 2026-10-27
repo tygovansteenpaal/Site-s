@@ -879,10 +879,10 @@ export function updateFoliage(dt, viewPos, camera) {
   impostor.mesh.instanceMatrix.needsUpdate = true;
   impostor.attr.needsUpdate = true;
   impostor.mesh.visible = far > 0;
-  // bushes: visible count scales with quality.foliage, culled at 45 % of the tree LOD distance
+  // bushes: visible count scales with quality.foliage, culled at 70 % of the tree LOD distance
   const nb = hedges.length + Math.floor((bushes.length - hedges.length) * Math.min(1, qual.foliage / 1.0));
   let bc = 0;
-  const bushR = Math.max(70, lodFar * 0.45);
+  const bushR = Math.max(110, lodFar * 0.7);
   for (let i = 0; i < nb; i++) {
     const b = bushes[i];
     if (Math.abs(b.x - viewPos.x) > bushR || Math.abs(b.z - viewPos.z) > bushR) continue;
