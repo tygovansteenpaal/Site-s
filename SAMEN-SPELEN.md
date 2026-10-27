@@ -96,7 +96,11 @@ Dit werkt ook op school, waar je de router niet kunt instellen.
    ssh -R 80:localhost:8080 nokey@localhost.run
    ```
    Typ `yes` als gevraagd wordt of je wilt verbinden.
-3. Er verschijnt een adres zoals `https://abc123.lhr.life`. Stuur dat adres met `/zonefall/` erachter naar je vrienden, en open het zelf ook. Iedereen speelt via dat adres.
+3. Er verschijnt een adres zoals `https://abc123.lhr.life`. De gratis tunnel is te traag om de game zelf (47 MB) te laden. Laad de game daarom van de website, en laat alleen het spelverkeer via je server lopen:
+   ```
+   https://site-s-tau.vercel.app/zonefall/?server=abc123.lhr.life
+   ```
+   Open dat adres, maak een Private match en stuur de invite link. Daar zit het server-adres al in.
 4. Het adres verandert elke keer dat je de tunnel opnieuw start. Sluit je het venster, dan stopt de tunnel.
 
 ### Spelen via internet (met port forwarding)

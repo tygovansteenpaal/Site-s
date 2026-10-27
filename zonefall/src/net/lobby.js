@@ -177,10 +177,12 @@ function setStatus(status, text) {
 function shareLink(code) {
   try {
     const u = new URL(location.href);
+    const server = u.searchParams.get('server');
     u.search = '';
     u.hash = '';
     if (/\/dev\/[^/]*$/.test(u.pathname)) u.pathname = u.pathname.replace(/\/dev\/[^/]*$/, '/');
     u.pathname = u.pathname.replace(/index\.html$/, '');
+    if (server) u.searchParams.set('server', server);
     u.searchParams.set('room', code);
     return u.toString();
   } catch { return `?room=${code}`; }
