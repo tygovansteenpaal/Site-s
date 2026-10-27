@@ -12,7 +12,7 @@ hardware acceleration, plus a mouse and keyboard (a standard gamepad also works)
 
 | Mode | What happens |
 |---|---|
-| **Quick play** | Joins a public lobby for your region. With two or more players a 45 s countdown starts (10 s at six players). If nobody else shows up within 20 s you deploy against 9 bots. Up to 10 humans per match; bots fill the rest. |
+| **Quick play** | Joins a public lobby for your region. With two or more players a 45 s countdown starts (10 s at six players). If nobody else shows up within 75 s you deploy against 9 bots (Start now skips the wait). Up to 10 humans per match; bots fill the rest. |
 | **Private match** | Create a lobby and share its 5-character code or the invite link (`?room=CODE`). The host can press START NOW at any time; empty slots become bots. |
 | **Practice vs bots** | Offline match against 9 bots. It pauses whenever you open the menu or release the mouse. |
 
