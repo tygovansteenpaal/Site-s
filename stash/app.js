@@ -76,13 +76,16 @@
   }
 
   function card(o) {
+    const g = game(o.game);
     return `<a class="card" href="#/o/${o.id}">
       ${cover(o)}
       <div class="card-body">
+        <div class="card-game">${gtag(g)}${esc(g.name)}</div>
         <div class="card-title">${esc(o.title)}</div>
+        <div class="card-seller">${esc(D.store.owner)}${icon('badge-check')}</div>
         <div class="card-meta">
           <span class="price">${price(o.price)}${o.unit ? `<small>/ ${esc(o.unit)}</small>` : ''}</span>
-          <span class="deliv">${icon('zap')}${esc(o.delivery)}</span>
+          <span class="deliv">${icon('clock')}${esc(o.delivery)}</span>
         </div>
       </div>
     </a>`;
@@ -106,46 +109,43 @@
   function home() {
     const games = D.games.filter(g => D.listings.some(l => l.game === g.id));
     const fast = D.listings.filter(l => /instant|min/i.test(l.delivery)).slice(0, 8);
-    const tickerItems = D.listings.slice(0, 8).map(l => `<span><b>${esc(game(l.game).short)}</b> ${esc(l.title)} / ${price(l.price)}</span>`).join('');
+    // one tile per game, linked to the category it has the most offers in
+    const tiles = games.map(g => {
+      const mine = D.listings.filter(l => l.game === g.id);
+      const top = D.categories.map(c => [c, mine.filter(l => l.cat === c.id).length]).sort((a, b) => b[1] - a[1])[0][0];
+      return `<a class="tile" href="#/c/${top.id}?game=${g.id}">${gtag(g)}<span><b>${esc(g.name)}</b><small>${esc(top.name)}</small></span></a>`;
+    }).join('');
     return `
-      <section class="hero"><div class="wrap hero-grid">
-        <h1><span class="ln"><i>LEVEL UP</i></span><span class="ln"><i>WITHOUT</i></span><span class="ln"><i>THE GRIND<em>.</em></i></span></h1>
-        <div class="hero-side">
-          <p>Accounts, coins, items and boosting from one seller. No middlemen, no bots answering your messages. You talk to me, I deliver.</p>
-          <div class="hero-actions"><a class="btn primary" href="#/c/accounts">Browse accounts ${icon('arrow-right')}</a><a class="btn" href="#/faq">How it works</a></div>
-          <div class="stats">
-            <div><span class="label">Listings</span><b>${D.listings.length}</b></div>
-            <div><span class="label">Games</span><b>${games.length}</b></div>
-            <div><span class="label">Sellers</span><b>1</b></div>
-          </div>
-        </div>
+      <section class="hero"><div class="wrap hero-in">
+        <h1>Level up without the grind</h1>
+        <p>Accounts, coins, items and boosting from one seller. No middlemen, no bots answering your messages.</p>
+        <a class="btn primary big" href="#/c/accounts">Browse accounts</a>
       </div></section>
-      <div class="ticker"><div class="ticker-track">${tickerItems}${tickerItems}</div></div>
 
       <section class="wrap section">
-        <div class="section-head"><h2><small>01</small>Shop by category</h2></div>
-        <div class="panels">${D.categories.map(c => {
-          const gs = [...new Set(D.listings.filter(l => l.cat === c.id).map(l => l.game))];
-          return `<div class="panel"><h3><a href="#/c/${c.id}">${esc(c.name)}</a><span class="label">${D.listings.filter(l => l.cat === c.id).length}</span></h3><p>${esc(c.blurb)}</p>
-            <ul>${gs.map(gid => `<li><a href="#/c/${c.id}?game=${gid}">${gtag(game(gid))}${esc(game(gid).name)}</a></li>`).join('')}</ul></div>`;
-        }).join('')}
-          <div class="panel"><h3><a href="#/faq">Questions</a></h3><p>How paying, delivery and warranty work.</p><ul><li><a href="#/faq">${icon('circle-help')}Read the FAQ</a></li><li><a href="mailto:${esc(D.store.contact)}">${icon('mail')}Email me</a></li></ul></div>
-        </div>
+        <div class="section-head"><h2>Popular games</h2></div>
+        <div class="tiles">${tiles}</div>
       </section>
 
       <section class="wrap section">
-        <div class="section-head"><h2><small>02</small>Fast delivery</h2><a href="#/c/accounts">See all</a></div>
+        <div class="section-head"><h2>Fast delivery</h2><a href="#/c/accounts">See all</a></div>
         <div class="grid">${fast.map(card).join('')}</div>
       </section>
 
       <section class="wrap section">
-        <div class="section-head"><h2><small>03</small>How it works</h2></div>
-        <ol class="steps">
-          <li><b>Pick your offer</b><span>Add what you want to your cart. Quantities for coins and boosts.</span></li>
-          <li><b>Send the request</b><span>Fill in your details. Your order request lands in my inbox.</span></li>
-          <li><b>Pay</b><span>I confirm stock and send payment details for the method you chose.</span></li>
-          <li><b>Get it delivered</b><span>Delivery starts right after payment. Warranty starts on delivery.</span></li>
-        </ol>
+        <div class="section-head"><h2>How buying on Stash works</h2></div>
+        <div class="how">
+          <ol class="steps">
+            <li>${icon('mouse-pointer-click')}<b>Pick your offer</b><span>Add what you want to your cart. Quantities for coins and boosts.</span></li>
+            <li>${icon('send')}<b>Send the request</b><span>Fill in your details. Your order request lands in my inbox.</span></li>
+            <li>${icon('wallet')}<b>Pay</b><span>I confirm stock and send payment details for the method you chose.</span></li>
+            <li>${icon('package-check')}<b>Get it delivered</b><span>Delivery starts right after payment. Warranty starts on delivery.</span></li>
+          </ol>
+          <div class="how-foot">Questions first? <a href="#/faq">Read the FAQ</a> or <a href="mailto:${esc(D.store.contact)}">email me</a>.</div>
+        </div>
+      </section>
+
+      <section class="wrap section">
         <div class="trust">
           <div>${icon('shield-check')}<h3>Warranty on accounts</h3><p>Lose access inside the warranty window and you get a replacement or a refund.</p></div>
           <div>${icon('user-round')}<h3>One seller</h3><p>Every order goes through me. Same person from first message to delivery.</p></div>
@@ -192,7 +192,7 @@
               <option value="high" ${sort === 'high' ? 'selected' : ''}>Price: high to low</option>
             </select></div>
           ${chips ? `<div class="chips">${chips}</div>` : ''}
-          ${list.length ? `<div class="grid">${list.map(card).join('')}</div>` : `<div class="none"><h3>NOTHING HERE</h3><p>No offers match these filters.</p></div>`}
+          ${list.length ? `<div class="grid">${list.map(card).join('')}</div>` : `<div class="none"><h3>Nothing here</h3><p>No offers match these filters.</p></div>`}
         </section>
       </div>
     </div>`;
@@ -242,7 +242,7 @@
 
   function cartPage() {
     if (!cart.length) {
-      return `<div class="wrap"><div class="done"><span class="label">Cart</span><h1>EMPTY<span style="color:var(--accent)">.</span></h1><p>Nothing in here yet.</p><div class="actions"><a class="btn primary" href="#/">Start shopping</a></div></div></div>`;
+      return `<div class="wrap"><div class="done"><span class="label">Cart</span><h1>Your cart is empty</h1><p>Nothing in here yet.</p><div class="actions"><a class="btn primary" href="#/">Start shopping</a></div></div></div>`;
     }
     const total = cart.reduce((s, l) => s + lineTotal(offer(l.id), l.qty), 0);
     let saved = {};
@@ -287,7 +287,7 @@
     const mail = order ? mailto(order) : `mailto:${D.store.contact}`;
     return `<div class="wrap"><div class="done">
       <span class="label">Order request ready</span>
-      <h1>ALMOST<br>THERE<span style="color:var(--accent)">.</span></h1>
+      <h1>Almost there</h1>
       <p>Your email app should have opened with the order filled in. Hit send and I will reply with payment details.</p>
       <p>Your order code:</p>
       <span class="code">${esc(code)}</span>
@@ -309,7 +309,7 @@
   }
 
   function notFound() {
-    return `<div class="wrap"><div class="done"><span class="label">404</span><h1>NOT IN<br>STOCK<span style="color:var(--accent)">.</span></h1><p>This page does not exist, or the offer was sold.</p><div class="actions"><a class="btn primary" href="#/">Back to shop</a></div></div></div>`;
+    return `<div class="wrap"><div class="done"><span class="label">404</span><h1>Not in stock</h1><p>This page does not exist, or the offer was sold.</p><div class="actions"><a class="btn primary" href="#/">Back to shop</a></div></div></div>`;
   }
 
   // ==========================================================================
