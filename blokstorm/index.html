@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BLOKSTORM</title>
+  <meta name="description" content="BLOKSTORM: blokken battle royale in je browser. Acht eilanden, elke 4 seconden een nieuw item, de beste loot in het midden.">
+  <meta name="theme-color" content="#0b0c0c">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Crect width='16' height='16' fill='%230b0c0c'/%3E%3Crect x='3' y='3' width='10' height='10' fill='%2320e7b7'/%3E%3Crect x='6' y='6' width='4' height='4' fill='%230b0c0c'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+      "trystero": "https://cdn.jsdelivr.net/npm/@trystero-p2p/nostr@0.25.4/+esm"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="game" tabindex="0" aria-label="BLOKSTORM spelbeeld"></canvas>
+
+  <div id="ui">
+    <!-- MENU -->
+    <section id="menu" class="screen">
+      <div class="col">
+        <p class="tag">Blokken battle royale</p>
+        <h1 class="logo">BLOK<br>STORM</h1>
+        <p class="lead">Acht eilanden. Elke 4 seconden een nieuw item. De beste loot ligt in het midden, en na een minuut sluit de cirkel.</p>
+        <label class="field"><span>Naam</span><input id="name" maxlength="14" autocomplete="off" spellcheck="false"></label>
+        <div class="actions">
+          <button id="btnSolo" class="btn primary" type="button">Oefenen met bots</button>
+          <button id="btnHost" class="btn" type="button">Lobby maken</button>
+          <div class="join">
+            <input id="code" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" aria-label="Lobbycode">
+            <button id="btnJoin" class="btn" type="button">Meedoen</button>
+          </div>
+          <button id="btnLook" class="btn ghost" type="button">Uiterlijk aanpassen</button>
+          <button id="btnSettings" class="btn ghost" type="button">Instellingen</button>
+        </div>
+        <p id="menuMsg" class="msg" role="status"></p>
+        <div id="progress"><div class="pline"><b id="pLevel">Level 1</b><span id="pCoins">0 munten</span></div><div class="pbar"><i id="pBar"></i></div></div>
+        <p id="stats" class="hint"></p>
+      </div>
+      <ul class="keys">
+        <li><b>WASD</b> lopen</li><li><b>Spatie</b> springen</li><li><b>Shift</b> sluipen</li><li><b>2x W</b> rennen</li>
+        <li><b>Links</b> slaan en hakken</li><li><b>Rechts</b> plaatsen en gebruiken</li><li><b>1-9</b> item kiezen</li><li><b>Q</b> weggooien</li><li><b>E</b> inventaris</li><li><b>Tab</b> spelerslijst</li>
+      </ul>
+    </section>
+
+    <!-- LOOKS -->
+    <section id="looks" class="screen" hidden>
+      <div class="col wide">
+        <p class="tag">Uiterlijk</p>
+        <h2>Maak je poppetje</h2>
+        <p class="hint" id="lookCoins"></p>
+        <div id="lookRows" class="rows"></div>
+        <div class="actions row">
+          <button id="btnLookRandom" class="btn" type="button">Willekeurig</button>
+          <button id="btnLookDone" class="btn primary" type="button">Klaar</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- LOBBY -->
+    <section id="lobby" class="screen" hidden>
+      <header class="bar">
+        <div><p class="tag">Lobby</p><h2 id="lobbyCode">OEFENEN</h2></div>
+        <p id="lobbyHint" class="hint"></p>
+      </header>
+      <div class="lobbyGrid">
+        <div class="panel">
+          <p class="tag">Spelers <span id="lobbyCount"></span></p>
+          <ul id="lobbyPlayers" class="players"></ul>
+          <div id="botRow" class="stepper">
+            <span>Bots</span>
+            <button id="botMinus" class="btn small" type="button" aria-label="Minder bots">-</button>
+            <b id="botCount">0</b>
+            <button id="botPlus" class="btn small" type="button" aria-label="Meer bots">+</button>
+          </div>
+          <p class="tag">Map</p>
+          <div id="mapList" class="swatches"></div>
+          <p class="hint" id="mapLine"></p>
+        </div>
+        <div class="panel">
+          <p class="tag">Kies je klasse</p>
+          <p class="hint">Iedereen start met 5 planken. De klasse bepaalt wat je erbij krijgt.</p>
+          <div id="classList" class="classes"></div>
+        </div>
+      </div>
+      <footer class="bar">
+        <div class="actions row">
+          <button id="btnLeave" class="btn ghost" type="button">Verlaten</button>
+          <button id="btnLobbyLook" class="btn" type="button">Uiterlijk</button>
+        </div>
+        <div class="actions row">
+          <button id="btnReady" class="btn" type="button">Klaar</button>
+          <button id="btnStart" class="btn primary" type="button">Start</button>
+        </div>
+      </footer>
+    </section>
+
+    <!-- HUD -->
+    <section id="hud" hidden>
+      <div id="cross"></div>
+      <div id="hitmark" hidden></div>
+      <div id="swing" hidden><i></i></div>
+      <div id="top">
+        <div class="stat"><span>Over</span><b id="hudAlive">8</b></div>
+        <div class="stat" id="zoneStat"><span id="hudZoneLabel">Cirkel sluit over</span><b id="hudZone">1:00</b></div>
+        <div class="stat"><span>Kills</span><b id="hudKills">0</b></div>
+      </div>
+      <canvas id="radar" width="112" height="112" aria-hidden="true"></canvas>
+      <ul id="feed"></ul>
+      <div id="center"></div>
+      <div id="warn" hidden>Buiten de cirkel</div>
+      <div id="bottom">
+        <div id="itemName"></div>
+        <div id="itemHint"></div>
+        <div id="vitalsTop">
+          <div id="armor"></div>
+          <div id="effects"></div>
+        </div>
+        <div id="vitals">
+          <div id="hp" title="Levens"></div>
+          <div id="stam" title="Stamina"></div>
+        </div>
+        <div id="drip"><i id="dripFill"></i><span>Nieuw item</span></div>
+        <div id="hotbar"></div>
+      </div>
+      <div id="charge" hidden><i></i></div>
+      <div id="tip" class="frame" hidden><p class="tag">Tip</p><span id="tipText"></span></div>
+      <div id="board" hidden><p class="tag">Spelers</p><ol id="boardList" class="rank"></ol></div>
+      <div id="spec" hidden><p class="tag">Uitgeschakeld</p><b id="specName"></b><span>Klik om van speler te wisselen</span></div>
+      <div id="lockHint" hidden>Klik om te spelen</div>
+    </section>
+
+    <!-- END -->
+    <section id="end" class="screen center" hidden>
+      <div class="panel frame">
+        <p class="tag" id="endTag">Ronde voorbij</p>
+        <h2 id="endTitle">Winnaar</h2>
+        <ol id="endRank" class="rank"></ol>
+        <p class="msg" id="endPay"></p>
+        <p class="hint" id="endHint">Terug naar de lobby</p>
+      </div>
+    </section>
+
+    <!-- INVENTORY -->
+    <section id="inv" class="screen center" hidden>
+      <div class="panel frame">
+        <p class="tag">Inventaris</p>
+        <h2>Items ordenen</h2>
+        <p class="hint">Klik een vakje en daarna een ander vakje om ze te wisselen. Het nummer is de toets waarmee je het item kiest.</p>
+        <div id="invSlots" class="invslots"></div>
+        <div class="actions row">
+          <button id="btnInvDrop" class="btn ghost" type="button">Gekozen item weggooien</button>
+          <button id="btnInvClose" class="btn primary" type="button">Sluiten</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAUSE -->
+    <section id="pause" class="screen center" hidden>
+      <div class="panel frame">
+        <p class="tag" id="pauseTag">Pauze</p>
+        <h2>Instellingen</h2>
+        <label class="slider"><span>Muisgevoeligheid <b id="valSens"></b></span><input id="setSens" type="range" min="0.2" max="3" step="0.05"></label>
+        <label class="slider"><span>Kijkhoek (FOV) <b id="valFov"></b></span><input id="setFov" type="range" min="60" max="110" step="1"></label>
+        <label class="slider"><span>Volume <b id="valVol"></b></span><input id="setVol" type="range" min="0" max="1" step="0.05"></label>
+        <label class="slider"><span>Pixelgrootte <b id="valScale"></b></span><input id="setScale" type="range" min="1" max="4" step="1"></label>
+        <p class="tag">Toetsen</p>
+        <div id="keyList" class="keylist"></div>
+        <button id="btnKeysReset" class="btn ghost small" type="button">Toetsen terugzetten</button>
+        <div class="actions row">
+          <button id="btnQuit" class="btn ghost" type="button">Stoppen</button>
+          <button id="btnResume" class="btn primary" type="button">Verder spelen</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="fatal" role="alert" hidden><div class="panel frame"><h2>BLOKSTORM is gestopt</h2><pre id="fatalText"></pre><button class="btn primary" type="button" onclick="location.reload()">Opnieuw laden</button></div></div>
+  <noscript><div id="fatal"><div class="panel"><h2>JavaScript nodig</h2><p>BLOKSTORM draait in je browser en heeft JavaScript en WebGL nodig.</p></div></div></noscript>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
