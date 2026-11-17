@@ -3,110 +3,198 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Tygo van Steenpaal - Work</title>
-  <meta name="description" content="Live projects by Tygo van Steenpaal: Blokbrawl, Huddle and Stash.">
+  <title>Tygo van Steenpaal - Games</title>
+  <meta name="description" content="Browser games by Tygo van Steenpaal: Zonefall, Blokstorm, Ability Chess, Velvet 21, Skysplinter, Fluorescent, Stackfall and Paddock.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=DM+Mono:wght@400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0e0e0e; --bg-2: #161616; --text: #f2f2f2; --muted: #8a8a8a;
-      --line: #2a2a2a; --accent: #ed3833;
-      --display: 'Anton', Impact, sans-serif; --mono: 'DM Mono', ui-monospace, monospace;
+      --bg: #101216; --tile: #181b21; --tile-2: #1f232b; --text: #f1eee6; --muted: #959aa4; --line: #2a2e37;
+      --accent: #ed3833;
+      --display: 'Anton', Impact, sans-serif; --mono: 'DM Mono', ui-monospace, monospace; --sans: 'Instrument Sans', system-ui, sans-serif;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html { background: var(--bg); color: var(--text); }
-    body { font-family: var(--mono); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; min-height: 100vh; display: flex; flex-direction: column; }
+    body { font-family: var(--sans); font-size: 15px; line-height: 1.5; -webkit-font-smoothing: antialiased; min-height: 100vh; display: flex; flex-direction: column; overflow-x: hidden; }
     a { color: inherit; text-decoration: none; }
-    .wrap { width: 100%; max-width: 1360px; margin: 0 auto; padding: 0 32px; }
+    button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+    .wrap { width: 100%; max-width: 1400px; margin: 0 auto; padding: 0 32px; }
 
-    header { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; padding: 28px 0; font-size: 12px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+    header { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; padding: 26px 0; font: 12px/1.5 var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
     header b { color: var(--text); font-weight: 500; }
     header .r { text-align: right; }
+    header a:hover { color: var(--text); }
     header .dot { display: inline-block; width: 8px; height: 8px; background: var(--accent); margin-right: 8px; animation: bl 1.2s steps(1) infinite; }
     @keyframes bl { 50% { opacity: 0; } }
 
-    .hero { padding: 6vh 0 4vh; border-bottom: 1px solid var(--line); }
-    .hero h1 { font-family: var(--display); font-weight: 400; font-size: clamp(64px, 15vw, 230px); line-height: .86; letter-spacing: -.005em; }
-    .hero h1 span { display: inline-block; overflow: hidden; vertical-align: bottom; }
-    .hero h1 span i { display: inline-block; font-style: normal; transform: translateY(105%); animation: rise .9s cubic-bezier(.2,.8,.2,1) forwards; }
-    .hero h1 span:nth-child(2) i { animation-delay: .08s; }
+    /* hero */
+    .hero { padding: 4vh 0 0; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 24px; }
+    .hero h1 { font-family: var(--display); font-weight: 400; font-size: clamp(80px, 17vw, 260px); line-height: .84; letter-spacing: -.005em; }
     .hero h1 em { font-style: normal; color: var(--accent); }
-    @keyframes rise { to { transform: none; } }
-    .hero p { margin-top: 28px; max-width: 46ch; color: var(--muted); }
-    .hero p b { color: var(--text); font-weight: 500; }
+    .hero .count { text-align: right; font: 12px var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; padding-bottom: 14px; }
+    .hero .count b { display: block; font: 400 clamp(56px, 7vw, 104px)/1 var(--display); color: var(--text); letter-spacing: 0; }
+    .lede { max-width: 52ch; color: var(--muted); font-size: 17px; margin: 22px 0 34px; }
+    .lede b { color: var(--text); font-weight: 500; }
 
-    .list { list-style: none; }
-    .row { border-bottom: 1px solid var(--line); }
-    .row a { display: grid; grid-template-columns: 80px 1.2fr 1.4fr 160px; gap: 24px; align-items: center; padding: 28px 0; position: relative; }
-    .row a::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 100%; background: var(--bg-2); transform: scaleY(0); transform-origin: bottom; transition: transform .35s cubic-bezier(.6,0,.2,1); z-index: -1; }
-    .row a:hover::before { transform: scaleY(1); }
-    .idx { color: var(--accent); font-weight: 500; font-size: 12px; letter-spacing: .08em; }
-    .name { font-family: var(--display); font-size: clamp(40px, 6vw, 88px); line-height: 1; transition: transform .35s cubic-bezier(.6,0,.2,1); }
-    .row a:hover .name { transform: translateX(12px); }
-    .desc { color: var(--muted); max-width: 44ch; }
-    .desc b { display: block; color: var(--text); font-weight: 500; margin-bottom: 4px; }
-    .go { justify-self: end; font-size: 12px; letter-spacing: .08em; font-weight: 500; display: flex; gap: 10px; align-items: center; }
-    .go span { display: inline-block; transition: transform .25s; }
-    .row a:hover .go span { transform: translateX(6px); }
+    /* film strip */
+    .strip { position: relative; overflow: hidden; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 0; }
+    .strip-track { display: flex; gap: 14px; width: max-content; animation: roll 60s linear infinite; }
+    .strip:hover .strip-track { animation-play-state: paused; }
+    .strip a { display: block; width: 300px; aspect-ratio: 16 / 10; overflow: hidden; position: relative; flex: none; }
+    .strip img { width: 100%; height: 100%; object-fit: cover; display: block; filter: saturate(1.05); transition: transform .5s; }
+    .strip a:hover img { transform: scale(1.06); }
+    .strip a span { position: absolute; left: 10px; bottom: 8px; font: 400 22px var(--display); text-shadow: 0 2px 10px rgba(0,0,0,.7); }
+    @keyframes roll { to { transform: translateX(calc(-50% - 7px)); } }
 
-    footer { margin-top: auto; padding: 28px 0; display: flex; justify-content: space-between; gap: 24px; font-size: 12px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+    /* filters */
+    .bar { display: flex; align-items: center; gap: 8px; padding: 34px 0 18px; flex-wrap: wrap; }
+    .bar .lbl { font: 12px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 10px; }
+    .bar button { font: 500 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; padding: 9px 14px; border: 1px solid var(--line); color: var(--muted); }
+    .bar button:hover { color: var(--text); border-color: #444a55; }
+    .bar button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+    /* tiles */
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; padding-bottom: 60px; }
+    .tile { --c: var(--accent); background: var(--tile); display: flex; flex-direction: column; position: relative; transition: background .25s; }
+    .tile:hover { background: var(--tile-2); }
+    .tile::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--c); transform: scaleX(0); transform-origin: left; transition: transform .35s cubic-bezier(.6,0,.2,1); }
+    .tile:hover::after { transform: scaleX(1); }
+    .tile .shot { aspect-ratio: 16 / 10; overflow: hidden; position: relative; }
+    .tile .shot img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .6s cubic-bezier(.2,.8,.2,1); }
+    .tile:hover .shot img { transform: scale(1.045); }
+    .tile .new { position: absolute; top: 14px; left: 14px; background: var(--c); color: #111; font: 500 11px var(--mono); letter-spacing: .1em; padding: 5px 8px; }
+    .tile .body { padding: 20px 22px 22px; display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; flex: 1; align-content: start; }
+    .tile .idx { font: 500 12px var(--mono); letter-spacing: .08em; color: var(--c); grid-column: 1 / -1; }
+    .tile h2 { font: 400 clamp(34px, 3.2vw, 50px)/1 var(--display); letter-spacing: .005em; }
+    .tile .go { align-self: end; font: 500 12px var(--mono); letter-spacing: .08em; display: flex; gap: 8px; padding-bottom: 6px; }
+    .tile .go span { transition: transform .25s; }
+    .tile:hover .go span { transform: translateX(5px); }
+    .tile p { color: var(--muted); grid-column: 1 / -1; max-width: 48ch; }
+    .tile .meta { grid-column: 1 / -1; font: 12px var(--mono); letter-spacing: .04em; color: #6f7581; text-transform: uppercase; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .tile .meta i { font-style: normal; color: var(--c); padding: 0 6px; }
+
+    .tile.feature { grid-column: 1 / -1; flex-direction: row; }
+    .tile.feature .shot { flex: 1.7; aspect-ratio: auto; min-height: 460px; }
+    .tile.feature .body { flex: 1; padding: 34px; align-content: end; }
+    .tile.feature h2 { font-size: clamp(56px, 6vw, 96px); }
+    .tile.feature p { font-size: 17px; }
+    .tile.hide { display: none; }
+
+    footer { margin-top: auto; padding: 26px 0; display: flex; justify-content: space-between; gap: 24px; font: 12px var(--mono); letter-spacing: .08em; color: var(--muted); text-transform: uppercase; border-top: 1px solid var(--line); }
     footer a:hover { color: var(--text); }
 
-    @media (max-width: 860px) {
+    @media (max-width: 1080px) { .grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 760px) {
       .wrap { padding: 0 16px; }
-      header { grid-template-columns: 1fr 1fr; }
-      header .c { display: none; }
-      .row a { grid-template-columns: 1fr auto; grid-template-areas: 'idx go' 'name name' 'desc desc'; gap: 10px; }
-      .idx { grid-area: idx; } .name { grid-area: name; } .desc { grid-area: desc; } .go { grid-area: go; }
+      header { grid-template-columns: 1fr 1fr; } header .c { display: none; }
+      .hero { grid-template-columns: 1fr; } .hero .count { text-align: left; }
+      .grid { grid-template-columns: 1fr; }
+      .tile.feature { flex-direction: column; } .tile.feature .shot { min-height: 0; aspect-ratio: 16 / 10; }
+      .strip a { width: 220px; }
     }
-    @media (prefers-reduced-motion: reduce) { *, *::before { animation: none !important; transition: none !important; } .hero h1 span i { transform: none; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <span><b>Tygo van Steenpaal</b><br>Software developer / designer</span>
+      <span><b>Tygo van Steenpaal</b><br>Games for the browser</span>
       <span class="c">Based in<br>the Netherlands</span>
       <span class="r"><span class="dot"></span><b>Always shipping</b><br><a href="https://github.com/tygovansteenpaal">GitHub</a> / <a href="https://www.linkedin.com/in/tygo-van-steen-37715a3a9">LinkedIn</a></span>
     </header>
 
     <section class="hero">
-      <h1><span><i>LIVE</i></span> <span><i>WORK<em>.</em></i></span></h1>
-      <p><b>Four things I built and shipped.</b> All of them run straight in your browser. No installs, no sign-ups.</p>
+      <h1>GAMES<em>.</em></h1>
+      <div class="count"><b id="count">07</b>playable now</div>
     </section>
-
-    <ul class="list">
-      <li class="row"><a href="blokbrawl/">
-        <span class="idx">001</span>
-        <span class="name">BLOKBRAWL</span>
-        <span class="desc"><b>Cartoon 1v1 build fight</b>Walls, ramps and floors against a bot that builds back. First to five.</span>
-        <span class="go">PLAY <span>-&gt;</span></span>
-      </a></li>
-      <li class="row"><a href="huddle/">
-        <span class="idx">002</span>
-        <span class="name">HUDDLE</span>
-        <span class="desc"><b>Team chat, built from scratch</b>Channels, direct messages, threads, reactions and a call screen.</span>
-        <span class="go">OPEN <span>-&gt;</span></span>
-      </a></li>
-      <li class="row"><a href="stash/">
-        <span class="idx">003</span>
-        <span class="name">STASH</span>
-        <span class="desc"><b>My own game marketplace</b>Accounts, items, currency and boosting. One seller: me.</span>
-        <span class="go">SHOP <span>-&gt;</span></span>
-      </a></li>
-      <li class="row"><a href="blokstorm/">
-        <span class="idx">004</span>
-        <span class="name">BLOKSTORM</span>
-        <span class="desc"><b>Block battle royale</b>Eight sky islands, a new item every 4 seconds, classes, capes and a closing circle. Up to 8 players.</span>
-        <span class="go">PLAY <span>-&gt;</span></span>
-      </a></li>
-    </ul>
+    <p class="lede"><b>Everything here runs straight in your browser.</b> No installs, no accounts. Most of them you can play with friends through a room code.</p>
   </div>
+
+  <div class="strip" aria-hidden="true"><div class="strip-track" id="strip"></div></div>
+
+  <main class="wrap">
+    <div class="bar" id="filters">
+      <span class="lbl">Filter</span>
+      <button class="on" data-f="all">All</button>
+      <button data-f="multi">Multiplayer</button>
+      <button data-f="3d">3D</button>
+      <button data-f="bot">Vs. computer</button>
+    </div>
+    <div class="grid" id="grid"></div>
+  </main>
 
   <footer class="wrap">
     <span>&copy; 2026 Tygo van Steenpaal</span>
     <a href="https://github.com/tygovansteenpaal/Site-s">Source</a>
   </footer>
+
+  <script>
+    const GAMES = [
+      { id: 'zonefall', name: 'ZONEFALL', url: 'zonefall/', color: '#e8b130', tags: ['multi', '3d', 'bot'],
+        sub: 'Battle royale', desc: 'Drop onto Kessler Isle, loot weapons, take a car and be the last one standing while the zone closes in.',
+        meta: ['3D', 'Battle royale', 'Online or with bots'] },
+      { id: 'blokstorm', name: 'BLOKSTORM', url: 'blokstorm/', color: '#b98cff', tags: ['multi', '3d', 'bot'], fresh: true,
+        sub: 'Block battle royale', desc: 'Eight sky islands around a gold platform. A new random item every 4 seconds, classes, capes and a closing circle.',
+        meta: ['3D', 'Battle royale', 'Up to 8 players + bots'] },
+      { id: 'abilitychess', name: 'ABILITY CHESS', url: 'https://abilitychess.vercel.app/', color: '#c9a25a', tags: ['multi', 'bot'], fresh: true,
+        sub: 'Chess with cards', desc: 'Regular chess until your third move. Then you draft an ability: freeze a knight, drop a meteor, take two moves. 50 cards, 5 modes.',
+        meta: ['2D', 'Strategy', 'Online, local or bot'] },
+      { id: 'velvet21', name: 'VELVET 21', url: 'https://velvet21-drab.vercel.app/', color: '#d24a3c', tags: ['multi', '3d'],
+        sub: '3D casino', desc: 'Walk into one shared casino, take a seat at a blackjack table with friends or play roulette in the middle. Fake chips only.',
+        meta: ['3D', 'Blackjack + roulette', 'Up to 5 per table'] },
+      { id: 'skysplinter', name: 'SKYSPLINTER', url: 'https://skysplinter.vercel.app/', color: '#f0a050', tags: ['multi', '3d'],
+        sub: 'Sky island PvP', desc: 'Voxel islands floating in the clouds and fast, old-school PvP combat. Knock your friends off the edge.',
+        meta: ['3D', 'Voxel PvP', '2 to 8 players'] },
+      { id: 'fluorescent', name: 'FLUORESCENT', url: 'https://fluorescent-game.vercel.app/', color: '#d8c04a', tags: ['multi', '3d', 'bot'],
+        sub: 'Horror', desc: 'Endless yellow offices. Survivors look for five fuses and the exit. One of you is the monster.',
+        meta: ['3D', 'Asymmetric horror', '2 to 6 players'] },
+      { id: 'stackfall', name: 'STACKFALL', url: 'https://stackfall-game-six.vercel.app/', color: '#6cbf45', tags: ['multi', '3d', 'bot'],
+        sub: 'Island free-for-all', desc: 'Everyone starts on their own island with chests. Build bridges, fight, the last one left wins.',
+        meta: ['3D', 'Free-for-all', '2 to 8 players'] },
+      { id: 'paddock', name: 'PADDOCK', url: 'https://paddock-race.vercel.app/', color: '#ff5a36', tags: ['multi', '3d'],
+        sub: 'Horse racing', desc: 'Open a room, share the link, bet fake money on your favourite and watch the same race live together.',
+        meta: ['3D', 'Racing + betting', 'With friends'] },
+    ];
+
+    const grid = document.getElementById('grid');
+    const strip = document.getElementById('strip');
+    document.getElementById('count').textContent = String(GAMES.length).padStart(2, '0');
+    const ext = (u) => /^https?:/.test(u);
+
+    GAMES.forEach((g, i) => {
+      const a = document.createElement('a');
+      a.className = 'tile' + (i === 0 ? ' feature' : '');
+      a.href = g.url;
+      if (ext(g.url)) a.rel = 'noopener';
+      a.dataset.tags = g.tags.join(' ');
+      a.style.setProperty('--c', g.color);
+      a.innerHTML = `
+        <div class="shot"><img src="assets/games/${g.id}.jpg" alt="${g.name} screenshot" loading="${i < 3 ? 'eager' : 'lazy'}">${g.fresh ? '<span class="new">NEW</span>' : ''}</div>
+        <div class="body">
+          <span class="idx">${String(i + 1).padStart(3, '0')} / ${g.sub}</span>
+          <h2>${g.name}</h2><span class="go">PLAY <span>-&gt;</span></span>
+          <p>${g.desc}</p>
+          <span class="meta">${g.meta.join('<i>/</i>')}</span>
+        </div>`;
+      grid.appendChild(a);
+    });
+
+    // film strip: two copies for a seamless loop
+    for (let k = 0; k < 2; k++) for (const g of GAMES) {
+      const a = document.createElement('a');
+      a.href = g.url; a.tabIndex = -1;
+      a.innerHTML = `<img src="assets/games/${g.id}.jpg" alt="" loading="lazy"><span>${g.name}</span>`;
+      strip.appendChild(a);
+    }
+
+    document.querySelectorAll('#filters button').forEach((b) => {
+      b.onclick = () => {
+        document.querySelectorAll('#filters button').forEach((x) => x.classList.toggle('on', x === b));
+        const f = b.dataset.f;
+        grid.querySelectorAll('.tile').forEach((t) => t.classList.toggle('hide', f !== 'all' && !t.dataset.tags.split(' ').includes(f)));
+      };
+    });
+  </script>
 </body>
 </html>
